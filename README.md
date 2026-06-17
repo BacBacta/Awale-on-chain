@@ -21,6 +21,17 @@ cd packages/engine && npm ci && npm test  # TS engine + Solidity-parity vectors
 forge script script/GenVectors.s.sol      # (re)generate parity vectors
 ```
 
+### Deployment
+
+`script/Deploy.s.sol` deploys `ReplayVerifier → Treasury → MatchEscrow`, allowlists
+the network's stablecoins, sets parameters, and hands ownership to governance.
+Config is chain-id driven (Celo mainnet `42220`, Celo Sepolia `11142220`, else a
+local mock). Copy `contracts/.env.example` to `.env` and fill it in, then:
+
+```bash
+forge script script/Deploy.s.sol --rpc-url $CELO_SEPOLIA_RPC --broadcast --verify
+```
+
 ## Engine parity
 
 The off-chain engine ([packages/engine](packages/engine/src/awale.ts)) is a line-for-line port of the Solidity one. A differential test replays Solidity-generated vectors through the TypeScript engine and asserts a rolling hash over **every** intermediate state matches — guaranteeing the off-chain server and the on-chain `ReplayVerifier` can never disagree.
@@ -37,7 +48,9 @@ Each contract has an internal [Pashov-style review](audits/). These are **not** 
 - [x] `Treasury` — protocol-fee custody with governed withdrawals + tests
 - [x] TypeScript engine + Solidity parity vectors
 - [x] CI (Foundry tests, fmt, Slither, parity) + per-contract security reviews
+- [x] Deployment script (chain-id config, allowlist, ownership handover) + test
 - [ ] `HarvestVault`, `Cosmetics`
+- [ ] Testnet deploy (Celo Sepolia) + Celoscan verification + device test
 - [ ] Mini-app front end (Next.js + viem)
 - [ ] Game server (Node/TypeScript)
 

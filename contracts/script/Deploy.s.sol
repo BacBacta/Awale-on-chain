@@ -1,0 +1,113 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {Script, console2} from "forge-std/Script.sol";
+import {ReplayVerifier} from "../src/ReplayVerifier.sol";
+import {Treasury} from "../src/Treasury.sol";
+import {MatchEscrow} from "../src/MatchEscrow.sol";
+import {MockERC20} from "../test/mocks/MockERC20.sol";
+
+/// @notice Deploys the Awalé core: ReplayVerifier -> Treasury -> MatchEscrow,
+///         allowlists the network's stablecoins, sets parameters, then hands
+///         ownership to governance.
+///
+/// Config is chain-id driven:
+///   - 42220     Celo mainnet  — real USDm/USDC/USDT token addresses
+///   - 11142220  Celo Sepolia  — token addresses from env (USDM/USDC/USDT_ADDRESS)
+///   - else      local/anvil   — deploys a mock stablecoin
+///
+/// Env:
+///   PRIVATE_KEY (required)  deployer key
+///   OWNER       (optional)  governance owner; defaults to the deployer
+///   RAKE_BPS / CHALLENGE_WINDOW / MATCH_TTL (optional) override the defaults
+///
+/// Run (Celo Sepolia):
+///   forge script script/Deploy.s.sol --rpc-url $CELO_SEPOLIA_RPC --broadcast --verify
+contract Deploy is Script {
+    uint16 internal constant DEFAULT_RAKE_BPS = 250; // 2.5%
+    uint64 internal constant DEFAULT_CHALLENGE_WINDOW = 10 minutes;
+    uint64 internal constant DEFAULT_MATCH_TTL = 1 days;
+
+    // Celo mainnet stablecoin token addresses (architecture appendix)
+    address internal constant CELO_USDM = 0x765DE816845861e75A25fCA122bb6898B8B1282a;
+    address internal constant CELO_USDC = 0xcebA9300f2b948710d2653dD7B07f33A8B32118C;
+    address internal constant CELO_USDT = 0x48065fbBE25f71C9282ddf5e1cD6D6A887483D5e;
+
+    struct Deployment {
+        ReplayVerifier verifier;
+        Treasury treasury;
+        MatchEscrow escrow;
+        address[] allowedTokens;
+        address owner;
+    }
+
+    function run() external returns (Deployment memory d) {
+        uint256 pk = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(pk);
+        d.owner = vm.envOr("OWNER", deployer);
+
+        uint16 rakeBps = uint16(vm.envOr("RAKE_BPS", uint256(DEFAULT_RAKE_BPS)));
+        uint64 challengeWindow = uint64(vm.envOr("CHALLENGE_WINDOW", uint256(DEFAULT_CHALLENGE_WINDOW)));
+        uint64 matchTtl = uint64(vm.envOr("MATCH_TTL", uint256(DEFAULT_MATCH_TTL)));
+
+        vm.startBroadcast(pk);
+
+        d.allowedTokens = _resolveTokens();
+
+        d.verifier = new ReplayVerifier();
+        d.treasury = new Treasury(d.owner);
+        // deployer owns the escrow during setup, then ownership is handed over
+        d.escrow =
+            new MatchEscrow(address(d.verifier), address(d.treasury), rakeBps, challengeWindow, matchTtl, deployer);
+
+        for (uint256 i = 0; i < d.allowedTokens.length; i++) {
+            d.escrow.setTokenAllowed(d.allowedTokens[i], true);
+        }
+
+        if (d.owner != deployer) {
+            d.escrow.transferOwnership(d.owner);
+        }
+
+        vm.stopBroadcast();
+
+        _logDeployment(d, rakeBps, challengeWindow, matchTtl);
+    }
+
+    /// @dev Pick the stablecoins to allowlist for the current network.
+    function _resolveTokens() internal returns (address[] memory tokens) {
+        if (block.chainid == 42220) {
+            tokens = new address[](3);
+            tokens[0] = CELO_USDM;
+            tokens[1] = CELO_USDC;
+            tokens[2] = CELO_USDT;
+        } else if (block.chainid == 11142220) {
+            // Celo Sepolia: addresses are env-supplied (no canonical constants here)
+            tokens = new address[](3);
+            tokens[0] = vm.envAddress("USDM_ADDRESS");
+            tokens[1] = vm.envAddress("USDC_ADDRESS");
+            tokens[2] = vm.envAddress("USDT_ADDRESS");
+        } else {
+            // local/anvil: deploy a single mock stablecoin so e2e flows work
+            MockERC20 mock = new MockERC20("Mock USD", "mUSD", 18);
+            tokens = new address[](1);
+            tokens[0] = address(mock);
+        }
+    }
+
+    function _logDeployment(Deployment memory d, uint16 rakeBps, uint64 challengeWindow, uint64 matchTtl)
+        internal
+        pure
+    {
+        console2.log("== Awale deployment ==");
+        console2.log("ReplayVerifier:", address(d.verifier));
+        console2.log("Treasury:      ", address(d.treasury));
+        console2.log("MatchEscrow:   ", address(d.escrow));
+        console2.log("owner:         ", d.owner);
+        console2.log("rakeBps:       ", rakeBps);
+        console2.log("challengeWindow:", challengeWindow);
+        console2.log("matchTtl:      ", matchTtl);
+        for (uint256 i = 0; i < d.allowedTokens.length; i++) {
+            console2.log("allowed token: ", d.allowedTokens[i]);
+        }
+    }
+}
