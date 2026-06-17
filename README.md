@@ -49,7 +49,8 @@ Each contract has an internal [Pashov-style review](audits/). These are **not** 
 - [x] TypeScript engine + Solidity parity vectors
 - [x] CI (Foundry tests, fmt, Slither, parity) + per-contract security reviews
 - [x] Deployment script (chain-id config, allowlist, ownership handover) + test
-- [ ] `HarvestVault`, `Cosmetics`
+- [x] `HarvestVault` — no-loss league (lending supply, yield harvest, Merkle prizes) + mock & fork tests
+- [ ] `Cosmetics` (ERC-1155 + ERC-2981)
 - [ ] Testnet deploy (Celo Sepolia) + Celoscan verification + device test
 - [ ] Mini-app front end (Next.js + viem)
 - [ ] Game server (Node/TypeScript)

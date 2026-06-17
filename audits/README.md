@@ -20,6 +20,7 @@ risk matrix, findings graded Critical → Gas, and a resolution status per findi
 | `ReplayVerifier` | [ReplayVerifier.md](ReplayVerifier.md) | Informational |
 | `MatchEscrow` | [MatchEscrow.md](MatchEscrow.md) | Low (acknowledged) |
 | `Treasury` | [Treasury.md](Treasury.md) | Low (acknowledged) |
+| `HarvestVault` | [HarvestVault.md](HarvestVault.md) | Medium (acknowledged: market solvency) |
 
 ## Severity model
 
