@@ -9,6 +9,7 @@ A real-money, skill-based Awalé (Oware) game built as a [MiniPay](https://www.m
 | [docs/architecture.md](docs/architecture.md) | Full technical architecture (on-chain / off-chain), grounded in the MiniPay developer references. |
 | [contracts/](contracts/) | Foundry project: smart contracts and the deterministic Awalé rule engine. |
 | [packages/engine/](packages/engine/) | TypeScript port of the rule engine for the game server, with a Solidity-parity test. |
+| [packages/game-server/](packages/game-server/) | Authoritative off-chain server: match orchestration, session-key move verification, ELO matchmaking, settlement client. |
 | [audits/](audits/) | Pashov-style security review per contract (self-conducted; not an external audit). |
 
 ## Contracts
@@ -36,6 +37,19 @@ forge script script/Deploy.s.sol --rpc-url $CELO_SEPOLIA_RPC --broadcast --verif
 
 The off-chain engine ([packages/engine](packages/engine/src/awale.ts)) is a line-for-line port of the Solidity one. A differential test replays Solidity-generated vectors through the TypeScript engine and asserts a rolling hash over **every** intermediate state matches — guaranteeing the off-chain server and the on-chain `ReplayVerifier` can never disagree.
 
+## Game server
+
+[packages/game-server](packages/game-server/) is the authoritative off-chain core. It is
+authoritative over *sequencing* but never over *moves*: it holds no session keys, so each
+move must carry a signature by the mover's per-match session key over the **exact on-chain
+move digest**, which the server verifies before applying it through the shared engine. A
+parity test pins the server's EIP-712 digests against `ReplayVerifier.moveDigest` /
+`MatchEscrow.resultDigest`, so server-collected signatures are guaranteed to verify on-chain.
+
+```bash
+cd packages/game-server && npm ci && npm test
+```
+
 ## Security
 
 Each contract has an internal [Pashov-style review](audits/). These are **not** a substitute for an independent external audit, which is required before mainnet. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the test suites, `forge fmt`, Slither static analysis, and the cross-language parity check on every push.
@@ -51,8 +65,9 @@ Each contract has an internal [Pashov-style review](audits/). These are **not** 
 - [x] Deployment script (chain-id config, allowlist, ownership handover) + test
 - [x] `HarvestVault` — no-loss league (lending supply, yield harvest, Merkle prizes) + mock & fork tests
 - [x] `Cosmetics` — ERC-1155 board/seed skins with ERC-2981 royalties + tests
+- [x] Game server core (match orchestration, session-key verification, ELO, settlement client) + EIP-712 parity
 - [ ] Testnet deploy (Celo Sepolia) + Celoscan verification + device test
-- [ ] Game server (Node/TS) · mini-app front (Next.js + viem) · indexer + /stats
+- [ ] Mini-app front (Next.js + viem) · indexer + /stats · keepers
 - [ ] Mini-app front end (Next.js + viem)
 - [ ] Game server (Node/TypeScript)
 

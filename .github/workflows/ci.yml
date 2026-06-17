@@ -34,7 +34,8 @@ jobs:
       - name: Regenerate parity vectors and verify they are committed in sync
         run: |
           forge script script/GenVectors.s.sol
-          git diff --exit-code test/fixtures/vectors.json
+          forge script script/GenSigVectors.s.sol
+          git diff --exit-code test/fixtures/vectors.json test/fixtures/sig-vectors.json
 
   slither:
     name: Contracts — Slither
@@ -79,4 +80,29 @@ jobs:
         run: npm run typecheck
 
       - name: Test (unit + Solidity parity vectors)
+        run: npm test
+
+  game-server:
+    name: Game server (TypeScript) — typecheck, tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/game-server
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: packages/game-server/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test (unit + EIP-712 parity with contracts)
         run: npm test
