@@ -21,6 +21,7 @@ risk matrix, findings graded Critical → Gas, and a resolution status per findi
 | `MatchEscrow` | [MatchEscrow.md](MatchEscrow.md) | Low (acknowledged) |
 | `Treasury` | [Treasury.md](Treasury.md) | Low (acknowledged) |
 | `HarvestVault` | [HarvestVault.md](HarvestVault.md) | Medium (acknowledged: market solvency) |
+| `Cosmetics` | [Cosmetics.md](Cosmetics.md) | Low (acknowledged) |
 
 ## Severity model
 

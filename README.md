@@ -50,8 +50,9 @@ Each contract has an internal [Pashov-style review](audits/). These are **not** 
 - [x] CI (Foundry tests, fmt, Slither, parity) + per-contract security reviews
 - [x] Deployment script (chain-id config, allowlist, ownership handover) + test
 - [x] `HarvestVault` — no-loss league (lending supply, yield harvest, Merkle prizes) + mock & fork tests
-- [ ] `Cosmetics` (ERC-1155 + ERC-2981)
+- [x] `Cosmetics` — ERC-1155 board/seed skins with ERC-2981 royalties + tests
 - [ ] Testnet deploy (Celo Sepolia) + Celoscan verification + device test
+- [ ] Game server (Node/TS) · mini-app front (Next.js + viem) · indexer + /stats
 - [ ] Mini-app front end (Next.js + viem)
 - [ ] Game server (Node/TypeScript)
 
