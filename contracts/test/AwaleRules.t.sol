@@ -7,11 +7,7 @@ import {AwaleRules} from "../src/AwaleRules.sol";
 /// @dev External wrapper so `vm.expectRevert` can catch reverts raised inside
 ///      the (otherwise inlined) library functions.
 contract AwaleHarness {
-    function apply_(AwaleRules.GameState memory s, uint8 h)
-        external
-        pure
-        returns (AwaleRules.GameState memory)
-    {
+    function apply_(AwaleRules.GameState memory s, uint8 h) external pure returns (AwaleRules.GameState memory) {
         return AwaleRules.applyMove(s, h);
     }
 

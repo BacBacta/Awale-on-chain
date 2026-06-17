@@ -136,11 +136,7 @@ library AwaleRules {
 
     /// @dev Sow all seeds from house `idx` counter-clockwise, skipping the origin.
     /// @return out the board after sowing, and the index of the last sown seed
-    function _sow(uint8[12] memory pits, uint8 idx)
-        private
-        pure
-        returns (uint8[12] memory out, uint8 lastPos)
-    {
+    function _sow(uint8[12] memory pits, uint8 idx) private pure returns (uint8[12] memory out, uint8 lastPos) {
         for (uint8 i = 0; i < PITS; i++) {
             out[i] = pits[i];
         }

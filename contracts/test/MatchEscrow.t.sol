@@ -24,6 +24,7 @@ contract MatchEscrowTest is Test {
 
     uint16 internal constant RAKE_BPS = 250; // 2.5%
     uint64 internal constant WINDOW = 600; // 10 minutes
+    uint64 internal constant TTL = 1 days; // unsettled-match expiry
     uint128 internal constant STAKE = 10_000_000; // 10 USDC (6 decimals)
 
     uint8[] internal _moves;
@@ -31,8 +32,11 @@ contract MatchEscrowTest is Test {
 
     function setUp() public {
         verifier = new ReplayVerifier();
-        escrow = new MatchEscrow(address(verifier), treasury, RAKE_BPS, WINDOW, owner);
+        escrow = new MatchEscrow(address(verifier), treasury, RAKE_BPS, WINDOW, TTL, owner);
         usdc = new MockERC20("USD Coin", "USDC", 6);
+
+        vm.prank(owner);
+        escrow.setTokenAllowed(address(usdc), true);
 
         session0 = vm.addr(pk0);
         session1 = vm.addr(pk1);
@@ -59,11 +63,7 @@ contract MatchEscrowTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _signMove(uint256 pk, uint256 matchId, uint256 ply, uint8 house)
-        internal
-        view
-        returns (bytes memory)
-    {
+    function _signMove(uint256 pk, uint256 matchId, uint256 ply, uint8 house) internal view returns (bytes memory) {
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, verifier.moveDigest(matchId, ply, house));
         return abi.encodePacked(r, s, v);
     }
@@ -87,12 +87,7 @@ contract MatchEscrowTest is Test {
             s = AwaleRules.applyMove(s, house);
         }
         t = ReplayVerifier.Transcript({
-            matchId: matchId,
-            session0: session0,
-            session1: session1,
-            startTurn: startTurn,
-            moves: _moves,
-            sigs: _sigs
+            matchId: matchId, session0: session0, session1: session1, startTurn: startTurn, moves: _moves, sigs: _sigs
         });
         winner = s.winner;
     }
@@ -290,6 +285,97 @@ contract MatchEscrowTest is Test {
 
     function test_constructor_revertRakeTooHigh() public {
         vm.expectRevert(bytes("MatchEscrow: rake too high"));
-        new MatchEscrow(address(verifier), treasury, 1001, WINDOW, owner);
+        new MatchEscrow(address(verifier), treasury, 1001, WINDOW, TTL, owner);
+    }
+
+    // ----------------------- audit-driven hardening --------------------- //
+
+    // [M-01] only allowlisted tokens may be staked
+    function test_createMatch_revertTokenNotAllowed() public {
+        MockERC20 rando = new MockERC20("Rando", "RND", 18);
+        rando.mint(alice, 1e21);
+        vm.startPrank(alice);
+        rando.approve(address(escrow), type(uint256).max);
+        vm.expectRevert(bytes("MatchEscrow: token not allowed"));
+        escrow.createMatch(address(rando), STAKE, session0);
+        vm.stopPrank();
+    }
+
+    // [M-02] rake is snapshotted at creation; a later setRake cannot change it
+    function test_rakeSnapshot_unaffectedByLaterSetRake() public {
+        uint256 id = _createAndJoin(); // created at RAKE_BPS = 250
+        vm.prank(owner);
+        escrow.setRake(1000); // owner hikes rake to the 10% cap afterwards
+
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        escrow.settleSigned(id, 0, _signResult(pk0, id, 0), _signResult(pk1, id, 0));
+
+        uint256 pot = uint256(STAKE) * 2;
+        uint256 expectedPrize = pot - (pot * RAKE_BPS) / 10_000; // still the original 2.5%
+        assertEq(usdc.balanceOf(alice), aliceBefore + expectedPrize, "uses snapshotted rake");
+    }
+
+    // [M-03] an unsettled match can always be reclaimed after the TTL
+    function test_voidExpired_refundsBothAfterTtl() public {
+        uint256 id = _createAndJoin();
+        uint256 aBefore = usdc.balanceOf(alice);
+        uint256 bBefore = usdc.balanceOf(bob);
+
+        vm.expectRevert(bytes("MatchEscrow: not expired"));
+        vm.prank(alice);
+        escrow.voidExpired(id);
+
+        vm.warp(block.timestamp + TTL + 1);
+        vm.prank(bob);
+        escrow.voidExpired(id);
+
+        assertEq(usdc.balanceOf(alice), aBefore + STAKE, "alice refunded");
+        assertEq(usdc.balanceOf(bob), bBefore + STAKE, "bob refunded");
+        assertEq(usdc.balanceOf(treasury), 0, "no rake on a void");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Voided));
+    }
+
+    // [H-01] a premature proposal (game not over) is defeated: challenge with a
+    //        valid non-terminal transcript voids the match and refunds both.
+    function test_challenge_voidsPrematureProposal() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+
+        // a short, valid, NON-terminal transcript (a handful of opening moves)
+        ReplayVerifier.Transcript memory t = _buildPartialTranscript(id, startTurn, 6);
+
+        // liar claims to have won a game that is still in progress
+        vm.prank(alice);
+        escrow.proposeResult(id, 0);
+
+        uint256 aBefore = usdc.balanceOf(alice);
+        uint256 bBefore = usdc.balanceOf(bob);
+        escrow.challenge(id, t);
+
+        assertEq(usdc.balanceOf(alice), aBefore + STAKE, "alice refunded, not paid the pot");
+        assertEq(usdc.balanceOf(bob), bBefore + STAKE, "bob refunded");
+        assertEq(usdc.balanceOf(treasury), 0, "no rake");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Voided));
+    }
+
+    function _buildPartialTranscript(uint256 matchId, uint8 startTurn, uint256 plies)
+        internal
+        returns (ReplayVerifier.Transcript memory t)
+    {
+        delete _moves;
+        delete _sigs;
+        AwaleRules.GameState memory s = AwaleRules.initialState();
+        s.turn = startTurn;
+        for (uint256 ply = 0; ply < plies && !s.over; ply++) {
+            uint8 house = _lowest(AwaleRules.legalMovesMask(s));
+            uint256 pk = s.turn == 0 ? pk0 : pk1;
+            _moves.push(house);
+            _sigs.push(_signMove(pk, matchId, ply, house));
+            s = AwaleRules.applyMove(s, house);
+        }
+        require(!s.over, "transcript unexpectedly terminal");
+        t = ReplayVerifier.Transcript({
+            matchId: matchId, session0: session0, session1: session1, startTurn: startTurn, moves: _moves, sigs: _sigs
+        });
     }
 }

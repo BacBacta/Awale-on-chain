@@ -35,8 +35,12 @@ contract ReplayVerifier {
     bytes32 private constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
-    bytes32 private constant MOVE_TYPEHASH =
-        keccak256("Move(uint256 matchId,uint256 ply,uint8 house)");
+    bytes32 private constant MOVE_TYPEHASH = keccak256("Move(uint256 matchId,uint256 ply,uint8 house)");
+
+    /// @dev Upper bound on transcript length, guarding the replay loop against
+    ///      an unbounded-gas griefing submission. Awalé games without repetition
+    ///      terminate in far fewer plies; cyclic draws are adjudicated off-chain.
+    uint256 internal constant MAX_PLIES = 4096;
 
     /// @param matchId      identifier shared with MatchEscrow
     /// @param session0     session key (ephemeral address) of player 0 (South)
@@ -55,13 +59,7 @@ contract ReplayVerifier {
 
     constructor() {
         DOMAIN_SEPARATOR = keccak256(
-            abi.encode(
-                DOMAIN_TYPEHASH,
-                keccak256("AwaleReplayVerifier"),
-                keccak256("1"),
-                block.chainid,
-                address(this)
-            )
+            abi.encode(DOMAIN_TYPEHASH, keccak256("AwaleReplayVerifier"), keccak256("1"), block.chainid, address(this))
         );
     }
 
@@ -78,6 +76,7 @@ contract ReplayVerifier {
     function verify(Transcript calldata t) public view returns (AwaleRules.GameState memory state) {
         require(t.startTurn < 2, "ReplayVerifier: bad startTurn");
         require(t.moves.length == t.sigs.length, "ReplayVerifier: length mismatch");
+        require(t.moves.length <= MAX_PLIES, "ReplayVerifier: too many plies");
         require(t.session0 != address(0) && t.session1 != address(0), "ReplayVerifier: zero session key");
         require(t.session0 != t.session1, "ReplayVerifier: duplicate session key");
 
@@ -99,11 +98,7 @@ contract ReplayVerifier {
     /// @notice Canonical hash binding a match to its move sequence and first mover.
     /// @dev Stored by MatchEscrow at optimistic settlement; a challenger submits
     ///      the full transcript and the contract checks it hashes to this value.
-    function transcriptHash(uint256 matchId, uint8 startTurn, uint8[] calldata moves)
-        public
-        pure
-        returns (bytes32)
-    {
+    function transcriptHash(uint256 matchId, uint8 startTurn, uint8[] calldata moves) public pure returns (bytes32) {
         return keccak256(abi.encode(matchId, startTurn, moves));
     }
 }

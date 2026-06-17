@@ -33,9 +33,9 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         Open, // created, awaiting a second player
         Active, // both staked, game in progress off-chain
         Proposed, // a single-party result is in its challenge window
-        Resolved, // paid out
-        Cancelled // open match withdrawn before anyone joined
-
+        Resolved, // paid out to a winner (or split on a draw)
+        Cancelled, // open match withdrawn before anyone joined
+        Voided // refunded to both players (premature proposal or expiry)
     }
 
     struct Match {
@@ -48,7 +48,9 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         Status status;
         uint8 startTurn; // committed first mover (0 or 1)
         uint8 proposedWinner; // 0, 1, or DRAW — valid while Proposed
+        uint16 rakeBps; // rake snapshotted at creation (owner cannot change it mid-match)
         uint64 challengeDeadline; // timestamp the challenge window closes
+        uint64 activeDeadline; // timestamp after which an unsettled Active match can be voided
     }
 
     uint16 public constant MAX_RAKE_BPS = 1000; // hard cap: rake can never exceed 10%
@@ -65,13 +67,16 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     address public treasury;
     uint16 public rakeBps;
     uint64 public challengeWindow;
+    uint64 public matchTtl; // how long an Active match may sit unsettled before it can be voided
 
     uint256 public nextMatchId = 1;
     mapping(uint256 => Match) public matches;
+    mapping(address => bool) public allowedToken; // only audited stablecoins may be staked
 
     event MatchCreated(uint256 indexed matchId, address indexed player0, address token, uint128 stake);
     event MatchJoined(uint256 indexed matchId, address indexed player1, uint8 startTurn);
     event MatchCancelled(uint256 indexed matchId);
+    event MatchVoided(uint256 indexed matchId);
     event ResultProposed(uint256 indexed matchId, uint8 winner, uint64 challengeDeadline);
     event ResultChallenged(uint256 indexed matchId, uint8 canonicalWinner);
     event MatchSettled(uint256 indexed matchId, uint8 winner, uint256 prize);
@@ -79,13 +84,16 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
 
     event RakeUpdated(uint16 rakeBps);
     event ChallengeWindowUpdated(uint64 challengeWindow);
-    event TreasuryUpdated(address treasury);
+    event MatchTtlUpdated(uint64 matchTtl);
+    event TreasuryUpdated(address indexed treasury);
+    event TokenAllowed(address indexed token, bool allowed);
 
     constructor(
         address verifier_,
         address treasury_,
         uint16 rakeBps_,
         uint64 challengeWindow_,
+        uint64 matchTtl_,
         address owner_
     ) Ownable(owner_) {
         require(verifier_ != address(0), "MatchEscrow: verifier zero");
@@ -95,15 +103,10 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         treasury = treasury_;
         rakeBps = rakeBps_;
         challengeWindow = challengeWindow_;
+        matchTtl = matchTtl_;
 
         DOMAIN_SEPARATOR = keccak256(
-            abi.encode(
-                DOMAIN_TYPEHASH,
-                keccak256("AwaleMatchEscrow"),
-                keccak256("1"),
-                block.chainid,
-                address(this)
-            )
+            abi.encode(DOMAIN_TYPEHASH, keccak256("AwaleMatchEscrow"), keccak256("1"), block.chainid, address(this))
         );
     }
 
@@ -115,7 +118,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         nonReentrant
         returns (uint256 matchId)
     {
-        require(token != address(0), "MatchEscrow: token zero");
+        require(allowedToken[token], "MatchEscrow: token not allowed");
         require(stake > 0, "MatchEscrow: stake zero");
         require(session0 != address(0), "MatchEscrow: session zero");
 
@@ -126,6 +129,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         m.player0 = msg.sender;
         m.session0 = session0;
         m.status = Status.Open;
+        m.rakeBps = rakeBps; // snapshot: a later setRake cannot change this match's terms
 
         IERC20(token).safeTransferFrom(msg.sender, address(this), stake);
         emit MatchCreated(matchId, msg.sender, token, stake);
@@ -141,6 +145,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         m.player1 = msg.sender;
         m.session1 = session1;
         m.status = Status.Active;
+        m.activeDeadline = uint64(block.timestamp) + matchTtl;
         // v1 randomness for the first mover; replace with VRF before mainnet (§6).
         m.startTurn = uint8(uint256(keccak256(abi.encode(block.prevrandao, matchId, m.player0, msg.sender))) & 1);
 
@@ -195,8 +200,14 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     }
 
     /// @notice Overturn (or confirm) a proposed result by replaying the full
-    ///         signed transcript on-chain. The verifier's terminal winner is
-    ///         canonical and is paid immediately.
+    ///         signed transcript on-chain.
+    /// @dev Two outcomes, both of which defeat a dishonest proposal:
+    ///        - the transcript proves a terminal game: the verifier's winner is
+    ///          canonical and is paid out, ignoring the proposed winner;
+    ///        - the transcript is valid but *not* terminal: it proves the game
+    ///          was still live, so the proposal was premature — the match is
+    ///          voided and both stakes are refunded. A liar therefore can never
+    ///          turn a false proposal into a payout, only into a refund.
     function challenge(uint256 matchId, ReplayVerifier.Transcript calldata t) external nonReentrant {
         Match storage m = matches[matchId];
         require(m.status == Status.Proposed, "MatchEscrow: not proposed");
@@ -208,10 +219,14 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         require(t.startTurn == m.startTurn, "MatchEscrow: startTurn mismatch");
 
         AwaleRules.GameState memory state = verifier.verify(t);
-        require(state.over, "MatchEscrow: game not over");
 
-        emit ResultChallenged(matchId, state.winner);
-        _payout(matchId, m, state.winner);
+        if (state.over) {
+            emit ResultChallenged(matchId, state.winner);
+            _payout(matchId, m, state.winner);
+        } else {
+            // provably premature proposal: refund both, no winner, no rake
+            _void(matchId, m);
+        }
     }
 
     /// @notice Pay the proposed winner once the challenge window has elapsed.
@@ -221,6 +236,18 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         require(block.timestamp > m.challengeDeadline, "MatchEscrow: window open");
 
         _payout(matchId, m, m.proposedWinner);
+    }
+
+    /// @notice Reclaim stakes from a match that was joined but never settled.
+    ///         Callable by either player once the match TTL has elapsed; refunds
+    ///         both so funds can never be locked forever by a silent opponent.
+    function voidExpired(uint256 matchId) external nonReentrant {
+        Match storage m = matches[matchId];
+        require(m.status == Status.Active, "MatchEscrow: not active");
+        require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
+        require(block.timestamp > m.activeDeadline, "MatchEscrow: not expired");
+
+        _void(matchId, m);
     }
 
     // ------------------------------ payout ------------------------------ //
@@ -241,7 +268,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
             return;
         }
 
-        uint256 rake = (pot * rakeBps) / BPS;
+        uint256 rake = (pot * m.rakeBps) / BPS; // rake snapshotted at creation
         uint256 prize = pot - rake;
         address winnerAddr = winner == 0 ? m.player0 : m.player1;
 
@@ -251,6 +278,16 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
             emit FeeCollected(matchId, m.token, rake);
         }
         emit MatchSettled(matchId, winner, prize);
+    }
+
+    /// @dev Refund both stakes in full (no winner, no rake) and close the match.
+    function _void(uint256 matchId, Match storage m) internal {
+        m.status = Status.Voided;
+        IERC20 token = IERC20(m.token);
+        uint256 stake = m.stake;
+        token.safeTransfer(m.player0, stake);
+        token.safeTransfer(m.player1, stake);
+        emit MatchVoided(matchId);
     }
 
     // ------------------------------ views ------------------------------- //
@@ -283,5 +320,18 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         require(treasury_ != address(0), "MatchEscrow: treasury zero");
         treasury = treasury_;
         emit TreasuryUpdated(treasury_);
+    }
+
+    function setMatchTtl(uint64 matchTtl_) external onlyOwner {
+        matchTtl = matchTtl_;
+        emit MatchTtlUpdated(matchTtl_);
+    }
+
+    /// @notice Allow or disallow a stablecoin for staking. Restricting to
+    ///         audited, non-rebasing, non-fee-on-transfer tokens keeps escrow
+    ///         accounting exact.
+    function setTokenAllowed(address token, bool allowed) external onlyOwner {
+        allowedToken[token] = allowed;
+        emit TokenAllowed(token, allowed);
     }
 }
