@@ -1,0 +1,9 @@
+# Foundry build artifacts
+out/
+cache/
+broadcast/
+
+# Dotenv / secrets
+.env
+.env.*
+!.env.example
