@@ -21,8 +21,8 @@ forge test          # run the rule-engine test suite
 ### Status
 
 - [x] `AwaleRules` — deterministic rule engine (sowing, capture, grand-slam, feeding obligation, termination) + tests
+- [x] `ReplayVerifier` — on-chain dispute resolution over EIP-712-signed transcripts + tests
 - [ ] `MatchEscrow` — stake locking + session-key registration + optimistic settlement
-- [ ] `ReplayVerifier` — on-chain dispute resolution over signed transcripts
 - [ ] `HarvestVault`, `Treasury`, `Cosmetics`
 - [ ] Mini-app front end (Next.js + viem)
 - [ ] Game server (Node/TypeScript)
