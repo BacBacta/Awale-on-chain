@@ -1,0 +1,295 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import {Test} from "forge-std/Test.sol";
+import {MatchEscrow} from "../src/MatchEscrow.sol";
+import {ReplayVerifier} from "../src/ReplayVerifier.sol";
+import {AwaleRules} from "../src/AwaleRules.sol";
+import {MockERC20} from "./mocks/MockERC20.sol";
+
+contract MatchEscrowTest is Test {
+    MatchEscrow internal escrow;
+    ReplayVerifier internal verifier;
+    MockERC20 internal usdc; // 6-dec stablecoin
+
+    address internal owner = address(0x0E1);
+    address internal treasury = address(0x7EA);
+    address internal alice = address(0xA1);
+    address internal bob = address(0xB0);
+
+    uint256 internal pk0 = 0xA11CE;
+    uint256 internal pk1 = 0xB0B;
+    address internal session0;
+    address internal session1;
+
+    uint16 internal constant RAKE_BPS = 250; // 2.5%
+    uint64 internal constant WINDOW = 600; // 10 minutes
+    uint128 internal constant STAKE = 10_000_000; // 10 USDC (6 decimals)
+
+    uint8[] internal _moves;
+    bytes[] internal _sigs;
+
+    function setUp() public {
+        verifier = new ReplayVerifier();
+        escrow = new MatchEscrow(address(verifier), treasury, RAKE_BPS, WINDOW, owner);
+        usdc = new MockERC20("USD Coin", "USDC", 6);
+
+        session0 = vm.addr(pk0);
+        session1 = vm.addr(pk1);
+
+        usdc.mint(alice, 1_000_000_000);
+        usdc.mint(bob, 1_000_000_000);
+        vm.prank(alice);
+        usdc.approve(address(escrow), type(uint256).max);
+        vm.prank(bob);
+        usdc.approve(address(escrow), type(uint256).max);
+    }
+
+    // ------------------------------ helpers ----------------------------- //
+
+    function _createAndJoin() internal returns (uint256 matchId) {
+        vm.prank(alice);
+        matchId = escrow.createMatch(address(usdc), STAKE, session0);
+        vm.prank(bob);
+        escrow.joinMatch(matchId, session1);
+    }
+
+    function _signResult(uint256 pk, uint256 matchId, uint8 winner) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, escrow.resultDigest(matchId, winner));
+        return abi.encodePacked(r, s, v);
+    }
+
+    function _signMove(uint256 pk, uint256 matchId, uint256 ply, uint8 house)
+        internal
+        view
+        returns (bytes memory)
+    {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, verifier.moveDigest(matchId, ply, house));
+        return abi.encodePacked(r, s, v);
+    }
+
+    /// @dev Build a full signed game transcript that terminates, using the
+    ///      match's committed startTurn and the registered session keys.
+    function _buildFullTranscript(uint256 matchId, uint8 startTurn)
+        internal
+        returns (ReplayVerifier.Transcript memory t, uint8 winner)
+    {
+        delete _moves;
+        delete _sigs;
+        AwaleRules.GameState memory s = AwaleRules.initialState();
+        s.turn = startTurn;
+        for (uint256 ply = 0; ply < 5000 && !s.over; ply++) {
+            uint8 mask = AwaleRules.legalMovesMask(s);
+            uint8 house = _lowest(mask);
+            uint256 pk = s.turn == 0 ? pk0 : pk1;
+            _moves.push(house);
+            _sigs.push(_signMove(pk, matchId, ply, house));
+            s = AwaleRules.applyMove(s, house);
+        }
+        t = ReplayVerifier.Transcript({
+            matchId: matchId,
+            session0: session0,
+            session1: session1,
+            startTurn: startTurn,
+            moves: _moves,
+            sigs: _sigs
+        });
+        winner = s.winner;
+    }
+
+    function _lowest(uint8 mask) internal pure returns (uint8) {
+        for (uint8 b = 0; b < 6; b++) {
+            if (mask & (uint8(1) << b) != 0) return b;
+        }
+        revert("no bit");
+    }
+
+    // ------------------------------ funding ----------------------------- //
+
+    function test_createMatch_locksStake() public {
+        vm.prank(alice);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        assertEq(usdc.balanceOf(address(escrow)), STAKE);
+        MatchEscrow.Match memory m = escrow.getMatch(id);
+        assertEq(uint8(m.status), uint8(MatchEscrow.Status.Open));
+        assertEq(m.player0, alice);
+        assertEq(m.session0, session0);
+    }
+
+    function test_joinMatch_activates() public {
+        uint256 id = _createAndJoin();
+        assertEq(usdc.balanceOf(address(escrow)), uint256(STAKE) * 2);
+        MatchEscrow.Match memory m = escrow.getMatch(id);
+        assertEq(uint8(m.status), uint8(MatchEscrow.Status.Active));
+        assertEq(m.player1, bob);
+        assertTrue(m.startTurn < 2);
+    }
+
+    function test_cancelMatch_refunds() public {
+        vm.prank(alice);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        uint256 before = usdc.balanceOf(alice);
+        vm.prank(alice);
+        escrow.cancelMatch(id);
+        assertEq(usdc.balanceOf(alice), before + STAKE);
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Cancelled));
+    }
+
+    function test_revert_selfJoin() public {
+        vm.prank(alice);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        vm.prank(alice);
+        vm.expectRevert(bytes("MatchEscrow: self-join"));
+        escrow.joinMatch(id, session1);
+    }
+
+    function test_revert_joinNotOpen() public {
+        uint256 id = _createAndJoin();
+        vm.prank(bob);
+        vm.expectRevert(bytes("MatchEscrow: not open"));
+        escrow.joinMatch(id, session1);
+    }
+
+    // --------------------------- settleSigned --------------------------- //
+
+    function test_settleSigned_paysWinnerAndRake() public {
+        uint256 id = _createAndJoin();
+        uint256 pot = uint256(STAKE) * 2;
+        uint256 rake = (pot * RAKE_BPS) / 10_000;
+        uint256 prize = pot - rake;
+
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        bytes memory s0 = _signResult(pk0, id, 0);
+        bytes memory s1 = _signResult(pk1, id, 0);
+        escrow.settleSigned(id, 0, s0, s1);
+
+        assertEq(usdc.balanceOf(alice), aliceBefore + prize, "winner gets pot minus rake");
+        assertEq(usdc.balanceOf(treasury), rake, "treasury gets the rake");
+        assertEq(usdc.balanceOf(address(escrow)), 0, "escrow drained");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Resolved));
+    }
+
+    function test_settleSigned_drawSplitsNoRake() public {
+        uint256 id = _createAndJoin();
+        uint256 aBefore = usdc.balanceOf(alice);
+        uint256 bBefore = usdc.balanceOf(bob);
+        bytes memory s0 = _signResult(pk0, id, 2);
+        bytes memory s1 = _signResult(pk1, id, 2);
+        escrow.settleSigned(id, 2, s0, s1);
+
+        assertEq(usdc.balanceOf(alice), aBefore + STAKE, "stake returned");
+        assertEq(usdc.balanceOf(bob), bBefore + STAKE, "stake returned");
+        assertEq(usdc.balanceOf(treasury), 0, "no rake on a draw");
+    }
+
+    function test_settleSigned_revertBadSig() public {
+        uint256 id = _createAndJoin();
+        bytes memory s0 = _signResult(pk0, id, 0);
+        bytes memory wrong = _signResult(pk0, id, 0); // player1 slot signed by pk0
+        vm.expectRevert(bytes("MatchEscrow: bad sig1"));
+        escrow.settleSigned(id, 0, s0, wrong);
+    }
+
+    function test_settleSigned_revertWrongWinnerSigned() public {
+        // both signed winner=1, but caller submits winner=0 -> digests differ -> bad sig
+        uint256 id = _createAndJoin();
+        bytes memory s0 = _signResult(pk0, id, 1);
+        bytes memory s1 = _signResult(pk1, id, 1);
+        vm.expectRevert(bytes("MatchEscrow: bad sig0"));
+        escrow.settleSigned(id, 0, s0, s1);
+    }
+
+    // ----------------------- propose / finalize ------------------------- //
+
+    function test_proposeThenFinalize_paysProposedWinner() public {
+        uint256 id = _createAndJoin();
+        vm.prank(alice);
+        escrow.proposeResult(id, 0);
+
+        // cannot finalize before the window elapses
+        vm.expectRevert(bytes("MatchEscrow: window open"));
+        escrow.finalize(id);
+
+        vm.warp(block.timestamp + WINDOW + 1);
+        uint256 aliceBefore = usdc.balanceOf(alice);
+        escrow.finalize(id);
+
+        uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(alice), aliceBefore + prize);
+    }
+
+    function test_proposeByNonPlayer_reverts() public {
+        uint256 id = _createAndJoin();
+        vm.prank(address(0xdead));
+        vm.expectRevert(bytes("MatchEscrow: not a player"));
+        escrow.proposeResult(id, 0);
+    }
+
+    // ------------------------------ challenge --------------------------- //
+
+    function test_challenge_overturnsFalseProposal() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        (ReplayVerifier.Transcript memory t, uint8 trueWinner) = _buildFullTranscript(id, startTurn);
+
+        // a liar proposes the *opposite* winner
+        uint8 liarClaim = trueWinner == 0 ? 1 : 0;
+        vm.prank(bob);
+        escrow.proposeResult(id, liarClaim);
+
+        address trueWinnerAddr = trueWinner == 0 ? alice : bob;
+        uint256 before = usdc.balanceOf(trueWinnerAddr);
+
+        escrow.challenge(id, t);
+
+        uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(trueWinnerAddr), before + prize, "true winner paid, not the liar's claim");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Resolved));
+    }
+
+    function test_challenge_revertAfterWindow() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        (ReplayVerifier.Transcript memory t,) = _buildFullTranscript(id, startTurn);
+        vm.prank(alice);
+        escrow.proposeResult(id, 0);
+
+        vm.warp(block.timestamp + WINDOW + 1);
+        vm.expectRevert(bytes("MatchEscrow: window closed"));
+        escrow.challenge(id, t);
+    }
+
+    function test_challenge_revertSessionMismatch() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        (ReplayVerifier.Transcript memory t,) = _buildFullTranscript(id, startTurn);
+        t.session0 = address(0xBEEF);
+        vm.prank(alice);
+        escrow.proposeResult(id, 0);
+        vm.expectRevert(bytes("MatchEscrow: session mismatch"));
+        escrow.challenge(id, t);
+    }
+
+    // ------------------------------- admin ------------------------------ //
+
+    function test_setRake_boundedByMax() public {
+        vm.prank(owner);
+        escrow.setRake(1000);
+        assertEq(escrow.rakeBps(), 1000);
+
+        vm.prank(owner);
+        vm.expectRevert(bytes("MatchEscrow: rake too high"));
+        escrow.setRake(1001);
+    }
+
+    function test_setRake_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        escrow.setRake(100);
+    }
+
+    function test_constructor_revertRakeTooHigh() public {
+        vm.expectRevert(bytes("MatchEscrow: rake too high"));
+        new MatchEscrow(address(verifier), treasury, 1001, WINDOW, owner);
+    }
+}
