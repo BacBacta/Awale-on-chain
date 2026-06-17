@@ -19,6 +19,7 @@ risk matrix, findings graded Critical → Gas, and a resolution status per findi
 | `AwaleRules` | [AwaleRules.md](AwaleRules.md) | Informational |
 | `ReplayVerifier` | [ReplayVerifier.md](ReplayVerifier.md) | Informational |
 | `MatchEscrow` | [MatchEscrow.md](MatchEscrow.md) | Low (acknowledged) |
+| `Treasury` | [Treasury.md](Treasury.md) | Low (acknowledged) |
 
 ## Severity model
 

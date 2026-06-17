@@ -34,9 +34,10 @@ Each contract has an internal [Pashov-style review](audits/). These are **not** 
 - [x] `AwaleRules` — deterministic rule engine (sowing, capture, grand-slam, feeding obligation, termination) + tests
 - [x] `ReplayVerifier` — on-chain dispute resolution over EIP-712-signed transcripts + tests
 - [x] `MatchEscrow` — stake custody, session keys, signed/optimistic/replay settlement, audit hardening + tests
+- [x] `Treasury` — protocol-fee custody with governed withdrawals + tests
 - [x] TypeScript engine + Solidity parity vectors
 - [x] CI (Foundry tests, fmt, Slither, parity) + per-contract security reviews
-- [ ] `HarvestVault`, `Treasury`, `Cosmetics`
+- [ ] `HarvestVault`, `Cosmetics`
 - [ ] Mini-app front end (Next.js + viem)
 - [ ] Game server (Node/TypeScript)
 
