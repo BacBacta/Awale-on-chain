@@ -89,8 +89,11 @@ Each contract has an internal [Pashov-style review](audits/). These are **not** 
 - [x] Mini-app (Next.js + viem): zero-click connect, session keys, board, `/stats` — builds at ~135 kB First Load JS
 - [x] Indexer (chunked `eth_getLogs`) + `/stats` wired to settlement events
 - [x] Server glue: on-chain `MatchJoined` listener → hub, keeper (`finalize`/`voidExpired`)
-- [ ] Server persistence (Redis live state, Postgres history) · ODIS display-name signer
+- [x] Server persistence (live match store + leaderboard/ratings; Redis & Postgres adapters)
+- [x] Phone-first name service (ODIS, cached) · Self proof-of-personhood gating (anti-sybil)
+- [x] Mini-app lobby wired to contracts (create/join with `feeCurrency`, session keys)
 - [ ] Testnet deploy (Celo Sepolia) + Celoscan verification + device test (physical, no emulators)
+- [ ] Integration wiring (Redis/Postgres/ODIS/Self adapters to real services) — needs a live chain
 - [ ] Mini-app front end (Next.js + viem)
 - [ ] Game server (Node/TypeScript)
 
