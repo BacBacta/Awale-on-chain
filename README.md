@@ -36,6 +36,9 @@ local mock). Copy `contracts/.env.example` to `.env` and fill it in, then:
 forge script script/Deploy.s.sol --rpc-url $CELO_SEPOLIA_RPC --broadcast --verify
 ```
 
+See **[docs/deployment.md](docs/deployment.md)** for the full Celo Sepolia deploy →
+off-chain config → physical-device MiniPay test runbook and the pre-listing checklist.
+
 ## Engine parity
 
 The off-chain engine ([packages/engine](packages/engine/src/awale.ts)) is a line-for-line port of the Solidity one. A differential test replays Solidity-generated vectors through the TypeScript engine and asserts a rolling hash over **every** intermediate state matches — guaranteeing the off-chain server and the on-chain `ReplayVerifier` can never disagree.
