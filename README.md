@@ -11,6 +11,7 @@ A real-money, skill-based Awalé (Oware) game built as a [MiniPay](https://www.m
 | [packages/protocol/](packages/protocol/) | Shared primitives: EIP-712 digests, token config, ABIs — one source of truth for server and app. |
 | [packages/engine/](packages/engine/) | TypeScript port of the rule engine for the game server, with a Solidity-parity test. |
 | [packages/game-server/](packages/game-server/) | Authoritative off-chain server: match orchestration, session-key move verification, ELO matchmaking, settlement client. |
+| [packages/indexer/](packages/indexer/) | Reads MatchEscrow events (chunked `eth_getLogs`) and aggregates the public `/stats` metrics. |
 | [packages/app/](packages/app/) | MiniPay mini-app (Next.js + viem): zero-click connect, session keys, stablecoin play, `/stats`. |
 | [audits/](audits/) | Pashov-style security review per contract (self-conducted; not an external audit). |
 
@@ -83,8 +84,9 @@ Each contract has an internal [Pashov-style review](audits/). These are **not** 
 - [x] Game server core (match orchestration, session-key verification, ELO, settlement client) + EIP-712 parity
 - [x] Shared `@awale/protocol` package (EIP-712 digests, token config, ABIs) — single source of truth
 - [x] Mini-app (Next.js + viem): zero-click connect, session keys, board, `/stats` — builds at ~135 kB First Load JS
+- [x] Indexer (chunked `eth_getLogs`) + `/stats` wired to settlement events
+- [ ] Server infra (on-chain event listener → hub, keepers, Redis/Postgres)
 - [ ] Testnet deploy (Celo Sepolia) + Celoscan verification + device test (physical, no emulators)
-- [ ] Server infra (Redis/Postgres, on-chain event listener, keepers) · indexer wiring
 - [ ] Mini-app front end (Next.js + viem)
 - [ ] Game server (Node/TypeScript)
 

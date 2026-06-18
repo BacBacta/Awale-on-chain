@@ -1,0 +1,20 @@
+{
+  "name": "@awale/indexer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Reads MatchEscrow events (chunked eth_getLogs) and aggregates the public /stats metrics.",
+  "main": "src/index.ts",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.7.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
