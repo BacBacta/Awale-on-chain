@@ -42,15 +42,26 @@ contract Deploy is Script {
     }
 
     function run() external returns (Deployment memory d) {
-        uint256 pk = vm.envUint("PRIVATE_KEY");
-        address deployer = vm.addr(pk);
+        // Two ways to provide the signer:
+        //   1. PRIVATE_KEY in contracts/.env  (0x + 64 hex)
+        //   2. pass --private-key / --account on the forge CLI (no env needed)
+        // A missing or placeholder PRIVATE_KEY falls back to (2) with a clear error
+        // instead of a cryptic envUint parse revert.
+        string memory pkStr = vm.envOr("PRIVATE_KEY", string(""));
+        uint256 pk = bytes(pkStr).length == 66 ? vm.parseUint(pkStr) : 0;
+        address deployer = pk != 0 ? vm.addr(pk) : msg.sender;
+        require(deployer != address(0), "Deploy: set PRIVATE_KEY in .env (0x+64 hex) or pass --private-key");
         d.owner = vm.envOr("OWNER", deployer);
 
         uint16 rakeBps = uint16(vm.envOr("RAKE_BPS", uint256(DEFAULT_RAKE_BPS)));
         uint64 challengeWindow = uint64(vm.envOr("CHALLENGE_WINDOW", uint256(DEFAULT_CHALLENGE_WINDOW)));
         uint64 matchTtl = uint64(vm.envOr("MATCH_TTL", uint256(DEFAULT_MATCH_TTL)));
 
-        vm.startBroadcast(pk);
+        if (pk != 0) {
+            vm.startBroadcast(pk);
+        } else {
+            vm.startBroadcast();
+        }
 
         d.allowedTokens = _resolveTokens(deployer);
 

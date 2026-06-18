@@ -6,8 +6,10 @@ import {Deploy} from "../script/Deploy.s.sol";
 
 contract DeployTest is Test {
     function test_localDeploy_wiresEverything() public {
-        // 0xa11ce is a valid (tiny) private key for the deployer
-        vm.setEnv("PRIVATE_KEY", "0xa11ce");
+        // hermetic: set every env var the script reads, so a developer's local
+        // contracts/.env (which forge auto-loads) can't change the outcome.
+        vm.setEnv("PRIVATE_KEY", "0x0000000000000000000000000000000000000000000000000000000000a11ce0");
+        vm.setEnv("DEPLOY_MOCK_TOKENS", "false");
         address gov = address(0x60A);
         vm.setEnv("OWNER", vm.toString(gov));
 
