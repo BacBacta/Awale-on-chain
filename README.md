@@ -8,8 +8,10 @@ A real-money, skill-based Awalé (Oware) game built as a [MiniPay](https://www.m
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Full technical architecture (on-chain / off-chain), grounded in the MiniPay developer references. |
 | [contracts/](contracts/) | Foundry project: smart contracts and the deterministic Awalé rule engine. |
+| [packages/protocol/](packages/protocol/) | Shared primitives: EIP-712 digests, token config, ABIs — one source of truth for server and app. |
 | [packages/engine/](packages/engine/) | TypeScript port of the rule engine for the game server, with a Solidity-parity test. |
 | [packages/game-server/](packages/game-server/) | Authoritative off-chain server: match orchestration, session-key move verification, ELO matchmaking, settlement client. |
+| [packages/app/](packages/app/) | MiniPay mini-app (Next.js + viem): zero-click connect, session keys, stablecoin play, `/stats`. |
 | [audits/](audits/) | Pashov-style security review per contract (self-conducted; not an external audit). |
 
 ## Contracts
@@ -50,6 +52,19 @@ parity test pins the server's EIP-712 digests against `ReplayVerifier.moveDigest
 cd packages/game-server && npm ci && npm test
 ```
 
+## Mini-app
+
+[packages/app](packages/app/) is the MiniPay mini-app (Next.js App Router + viem). It
+auto-connects from the injected wallet when `isMiniPay` (no Connect button), never
+requests wallet message signing, and signs moves with per-match **session keys** whose
+signatures are pinned to the on-chain digests (`src/lib/session.test.ts`). Designed at
+360×640 with the MiniPay copy lexicon (Deposit / Network fee / Stablecoin) and a public
+`/stats` page. The `/play` route is a self-contained demo game against the engine.
+
+```bash
+cd packages/app && npm ci && npm test && npm run build   # or: npm run dev
+```
+
 ## Security
 
 Each contract has an internal [Pashov-style review](audits/). These are **not** a substitute for an independent external audit, which is required before mainnet. CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs the test suites, `forge fmt`, Slither static analysis, and the cross-language parity check on every push.
@@ -66,8 +81,10 @@ Each contract has an internal [Pashov-style review](audits/). These are **not** 
 - [x] `HarvestVault` — no-loss league (lending supply, yield harvest, Merkle prizes) + mock & fork tests
 - [x] `Cosmetics` — ERC-1155 board/seed skins with ERC-2981 royalties + tests
 - [x] Game server core (match orchestration, session-key verification, ELO, settlement client) + EIP-712 parity
-- [ ] Testnet deploy (Celo Sepolia) + Celoscan verification + device test
-- [ ] Mini-app front (Next.js + viem) · indexer + /stats · keepers
+- [x] Shared `@awale/protocol` package (EIP-712 digests, token config, ABIs) — single source of truth
+- [x] Mini-app (Next.js + viem): zero-click connect, session keys, board, `/stats` — builds at ~135 kB First Load JS
+- [ ] Testnet deploy (Celo Sepolia) + Celoscan verification + device test (physical, no emulators)
+- [ ] Server infra (Redis/Postgres, on-chain event listener, keepers) · indexer wiring
 - [ ] Mini-app front end (Next.js + viem)
 - [ ] Game server (Node/TypeScript)
 
