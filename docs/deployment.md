@@ -63,7 +63,17 @@ Verified contracts with sample tx hashes are a MiniPay listing requirement.
 
 ## 2. Configure the off-chain services
 
-Fill each package's `.env` from its `.env.example` with the deployed addresses:
+Fastest: generate the env files straight from the broadcast —
+
+```bash
+./script/wire-env.sh        # writes packages/game-server/.env + packages/app/.env.local
+```
+
+It fills the deployed addresses (escrow, verifier, mock tokens) and leaves
+`SERVER_SIGNER_KEY` as a placeholder. On real Celo, set the `feeCurrency` to the
+USDC/USDT **adapter** (USDm is its own feeCurrency).
+
+Or fill each package's `.env` from its `.env.example` by hand:
 
 | Package | Key vars |
 |---|---|
