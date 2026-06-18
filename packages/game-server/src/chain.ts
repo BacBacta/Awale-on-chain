@@ -51,6 +51,13 @@ const escrowAbi = [
   },
   {
     type: "function",
+    name: "voidExpired",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "challenge",
     stateMutability: "nonpayable",
     inputs: [
@@ -121,6 +128,17 @@ export class SettlementClient {
       address: this.escrow,
       abi: escrowAbi,
       functionName: "finalize",
+      args: [matchId],
+      feeCurrency: this.feeCurrency,
+    });
+  }
+
+  /** Refund both stakes from a match that was never settled (past its TTL). */
+  voidExpired(matchId: bigint): Promise<Hex> {
+    return this.wallet.writeContract({
+      address: this.escrow,
+      abi: escrowAbi,
+      functionName: "voidExpired",
       args: [matchId],
       feeCurrency: this.feeCurrency,
     });

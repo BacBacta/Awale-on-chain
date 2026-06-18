@@ -1,0 +1,62 @@
+import { describe, it, expect } from "vitest";
+import type { Hex } from "viem";
+import { keeperActions, runKeeper, EscrowStatus, type KeeperMatch } from "../src/keeper.js";
+import type { SettlementClient } from "../src/chain.js";
+
+const now = 1_000_000;
+
+describe("keeperActions", () => {
+  it("finalizes a proposed match past its challenge window", () => {
+    const matches: KeeperMatch[] = [
+      { matchId: 1n, status: EscrowStatus.Proposed, challengeDeadline: now - 1, activeDeadline: 0 },
+    ];
+    expect(keeperActions(matches, now)).toEqual([{ matchId: 1n, action: "finalize" }]);
+  });
+
+  it("does not finalize before the window closes", () => {
+    const matches: KeeperMatch[] = [
+      { matchId: 1n, status: EscrowStatus.Proposed, challengeDeadline: now + 100, activeDeadline: 0 },
+    ];
+    expect(keeperActions(matches, now)).toEqual([]);
+  });
+
+  it("voids an active match past its TTL", () => {
+    const matches: KeeperMatch[] = [
+      { matchId: 2n, status: EscrowStatus.Active, challengeDeadline: 0, activeDeadline: now - 1 },
+    ];
+    expect(keeperActions(matches, now)).toEqual([{ matchId: 2n, action: "voidExpired" }]);
+  });
+
+  it("ignores resolved/open matches and unset deadlines", () => {
+    const matches: KeeperMatch[] = [
+      { matchId: 3n, status: EscrowStatus.Resolved, challengeDeadline: now - 1, activeDeadline: now - 1 },
+      { matchId: 4n, status: EscrowStatus.Open, challengeDeadline: 0, activeDeadline: 0 },
+      { matchId: 5n, status: EscrowStatus.Active, challengeDeadline: 0, activeDeadline: 0 }, // no TTL set
+    ];
+    expect(keeperActions(matches, now)).toEqual([]);
+  });
+});
+
+describe("runKeeper", () => {
+  it("dispatches each action to the settlement client", async () => {
+    const calls: string[] = [];
+    const client = {
+      finalize: async (id: bigint) => {
+        calls.push(`finalize:${id}`);
+        return "0xfin" as Hex;
+      },
+      voidExpired: async (id: bigint) => {
+        calls.push(`void:${id}`);
+        return "0xvoid" as Hex;
+      },
+    } as unknown as SettlementClient;
+
+    const hashes = await runKeeper(client, [
+      { matchId: 1n, action: "finalize" },
+      { matchId: 2n, action: "voidExpired" },
+    ]);
+
+    expect(calls).toEqual(["finalize:1", "void:2"]);
+    expect(hashes).toEqual(["0xfin", "0xvoid"]);
+  });
+});

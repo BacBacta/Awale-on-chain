@@ -85,7 +85,8 @@ Each contract has an internal [Pashov-style review](audits/). These are **not** 
 - [x] Shared `@awale/protocol` package (EIP-712 digests, token config, ABIs) — single source of truth
 - [x] Mini-app (Next.js + viem): zero-click connect, session keys, board, `/stats` — builds at ~135 kB First Load JS
 - [x] Indexer (chunked `eth_getLogs`) + `/stats` wired to settlement events
-- [ ] Server infra (on-chain event listener → hub, keepers, Redis/Postgres)
+- [x] Server glue: on-chain `MatchJoined` listener → hub, keeper (`finalize`/`voidExpired`)
+- [ ] Server persistence (Redis live state, Postgres history) · ODIS display-name signer
 - [ ] Testnet deploy (Celo Sepolia) + Celoscan verification + device test (physical, no emulators)
 - [ ] Mini-app front end (Next.js + viem)
 - [ ] Game server (Node/TypeScript)
