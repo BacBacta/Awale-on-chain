@@ -50,3 +50,13 @@ export {
   type NameServiceOptions,
 } from "./identity/names.js";
 export { ODIS_CONFIG, createOdisResolver } from "./identity/odis.js";
+export {
+  type PersonhoodVerifier,
+  type PersonhoodRegistry,
+  type PersonhoodProof,
+  type PlayMode,
+  type GatePolicy,
+  DEFAULT_POLICY,
+} from "./personhood/types.js";
+export { InMemoryPersonhoodRegistry } from "./personhood/registry.js";
+export { verifyAndRegister, assertPersonhood, type RegisterOutcome } from "./personhood/gate.js";
