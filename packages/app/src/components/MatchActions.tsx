@@ -11,7 +11,8 @@ import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 
 const STAKE_TOKEN = process.env.NEXT_PUBLIC_STAKE_TOKEN as Address | undefined;
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
-const FEE_CURRENCY = process.env.NEXT_PUBLIC_FEE_CURRENCY as Address | undefined;
+// empty/unset -> omit feeCurrency and let MiniPay handle gas abstraction
+const FEE_CURRENCY = (process.env.NEXT_PUBLIC_FEE_CURRENCY || undefined) as Address | undefined;
 
 export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; account: Address; cfg: EscrowConfig }) {
   const [stake, setStake] = useState("1");
