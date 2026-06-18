@@ -31,6 +31,18 @@ export interface Transcript {
   sigs: Hex[];
 }
 
+/** Serializable form of a live match, for persistence + rehydration. */
+export interface MatchSnapshot {
+  matchId: bigint;
+  chainId: bigint;
+  verifier: Address;
+  session0: Address;
+  session1: Address;
+  startTurn: 0 | 1;
+  moves: number[];
+  sigs: Hex[];
+}
+
 export class Match {
   readonly cfg: MatchConfig;
   state: GameState;
@@ -105,5 +117,36 @@ export class Match {
   /** Final outcome, valid once `over`. winner: 0, 1, or 2 (draw). */
   result(): { over: boolean; winner: number } {
     return { over: this.state.over, winner: this.state.winner };
+  }
+
+  /** Serializable snapshot for persistence (Redis live state). */
+  snapshot(): MatchSnapshot {
+    return {
+      matchId: this.cfg.matchId,
+      chainId: this.cfg.chainId,
+      verifier: this.cfg.verifier,
+      session0: this.cfg.sessions[0],
+      session1: this.cfg.sessions[1],
+      startTurn: this.cfg.startTurn,
+      moves: [...this._moves],
+      sigs: [...this._sigs],
+    };
+  }
+
+  /** Rebuild a Match from a snapshot by replaying its (already-accepted) moves. */
+  static rehydrate(snap: MatchSnapshot): Match {
+    const m = new Match({
+      matchId: snap.matchId,
+      chainId: snap.chainId,
+      verifier: snap.verifier,
+      sessions: [snap.session0, snap.session1],
+      startTurn: snap.startTurn,
+    });
+    for (let i = 0; i < snap.moves.length; i++) {
+      m.state = applyMove(m.state, snap.moves[i]);
+      m._moves.push(snap.moves[i]);
+      m._sigs.push(snap.sigs[i]);
+    }
+    return m;
   }
 }

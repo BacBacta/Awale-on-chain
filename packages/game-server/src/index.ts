@@ -27,3 +27,17 @@ export {
   type KeeperMatch,
   type KeeperAction,
 } from "./keeper.js";
+export type { MatchSnapshot } from "./match.js";
+export {
+  type LiveMatchStore,
+  type LeaderboardStore,
+  type PlayerRating,
+  type MatchResult,
+  DEFAULT_ELO,
+  newRating,
+} from "./store/types.js";
+export { InMemoryLiveMatchStore, InMemoryLeaderboardStore } from "./store/memory.js";
+export { RedisLiveMatchStore, type RedisLike } from "./store/redis.js";
+export { PgLeaderboardStore, type PgLike, SCHEMA } from "./store/postgres.js";
+export { snapshotToJson, snapshotFromJson } from "./store/serialize.js";
+export { applyMatchResult } from "./rating.js";
