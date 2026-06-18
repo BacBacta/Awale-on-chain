@@ -16,8 +16,7 @@ import {MatchEscrow} from "../src/MatchEscrow.sol";
 contract GenSigVectors is Script {
     function run() external {
         ReplayVerifier verifier = new ReplayVerifier();
-        MatchEscrow escrow =
-            new MatchEscrow(address(verifier), address(0xBEEF), 250, 600, 1 days, address(0xABCD));
+        MatchEscrow escrow = new MatchEscrow(address(verifier), address(0xBEEF), 250, 600, 1 days, address(0xABCD));
 
         // a small spread of inputs
         uint256[3] memory matchIds = [uint256(1), 42, 123456789];

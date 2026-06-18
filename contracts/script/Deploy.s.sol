@@ -52,7 +52,7 @@ contract Deploy is Script {
 
         vm.startBroadcast(pk);
 
-        d.allowedTokens = _resolveTokens();
+        d.allowedTokens = _resolveTokens(deployer);
 
         d.verifier = new ReplayVerifier();
         d.treasury = new Treasury(d.owner);
@@ -74,14 +74,31 @@ contract Deploy is Script {
     }
 
     /// @dev Pick the stablecoins to allowlist for the current network.
-    function _resolveTokens() internal returns (address[] memory tokens) {
-        if (block.chainid == 42220) {
+    /// @param mintTo recipient seeded with mock balances when mocks are deployed
+    function _resolveTokens(address mintTo) internal returns (address[] memory tokens) {
+        bool deployMocks = vm.envOr("DEPLOY_MOCK_TOKENS", false);
+        require(!(deployMocks && block.chainid == 42220), "Deploy: refusing mock tokens on mainnet");
+
+        if (deployMocks) {
+            // self-contained testnet: deploy mock stablecoins (18/6/6) and seed
+            // the deployer, so no external token addresses are needed.
+            MockERC20 usdm = new MockERC20("Mock USDm", "mUSDm", 18);
+            MockERC20 usdc = new MockERC20("Mock USDC", "mUSDC", 6);
+            MockERC20 usdt = new MockERC20("Mock USDT", "mUSDT", 6);
+            usdm.mint(mintTo, 1_000_000e18);
+            usdc.mint(mintTo, 1_000_000e6);
+            usdt.mint(mintTo, 1_000_000e6);
+            tokens = new address[](3);
+            tokens[0] = address(usdm);
+            tokens[1] = address(usdc);
+            tokens[2] = address(usdt);
+        } else if (block.chainid == 42220) {
             tokens = new address[](3);
             tokens[0] = CELO_USDM;
             tokens[1] = CELO_USDC;
             tokens[2] = CELO_USDT;
         } else if (block.chainid == 11142220) {
-            // Celo Sepolia: addresses are env-supplied (no canonical constants here)
+            // Celo Sepolia: addresses are env-supplied (or set DEPLOY_MOCK_TOKENS)
             tokens = new address[](3);
             tokens[0] = vm.envAddress("USDM_ADDRESS");
             tokens[1] = vm.envAddress("USDC_ADDRESS");

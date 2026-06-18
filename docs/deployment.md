@@ -26,13 +26,20 @@ How to take Awalé from this repo to a working mini-app on **Celo Sepolia**
 
 ```bash
 cd contracts
-cp .env.example .env        # fill PRIVATE_KEY, OWNER, USD*_ADDRESS, RPC, ETHERSCAN_API_KEY
+cp .env.example .env        # fill PRIVATE_KEY, OWNER, RPC, ETHERSCAN_API_KEY
+./script/preflight.sh       # checks RPC, deployer balance, token addresses
 forge test                  # sanity: full suite green
 forge script script/Deploy.s.sol \
   --rpc-url "$CELO_SEPOLIA_RPC" \
   --broadcast \
   --verify
 ```
+
+> **Fastest path:** set `DEPLOY_MOCK_TOKENS=true` in `.env`. The script then
+> deploys mock USDm/USDC/USDT (18/6/6 dec), allowlists them, and seeds the
+> deployer with balances — so you need **only a funded key + a Celoscan key**, no
+> external token addresses. (Refused on mainnet.) Otherwise set `USD*_ADDRESS`.
+> `./script/preflight.sh` validates everything before you broadcast.
 
 `Deploy.s.sol` deploys `ReplayVerifier → Treasury → MatchEscrow`, allowlists the
 stablecoins from your env, sets the parameters (rake 250 bps, challenge window
