@@ -41,3 +41,12 @@ export { RedisLiveMatchStore, type RedisLike } from "./store/redis.js";
 export { PgLeaderboardStore, type PgLike, SCHEMA } from "./store/postgres.js";
 export { snapshotToJson, snapshotFromJson } from "./store/serialize.js";
 export { applyMatchResult } from "./rating.js";
+export { normalizePhone, isValidE164 } from "./identity/phone.js";
+export {
+  CachedNameService,
+  nameLookupHandler,
+  type NameResolver,
+  type NameResult,
+  type NameServiceOptions,
+} from "./identity/names.js";
+export { ODIS_CONFIG, createOdisResolver } from "./identity/odis.js";
