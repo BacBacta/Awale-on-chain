@@ -4,4 +4,14 @@ out = "out"
 libs = ["lib"]
 fs_permissions = [{ access = "read-write", path = "./test/fixtures" }]
 
+# RPC aliases — use `--rpc-url celo_sepolia` (no need to export the env var).
+[rpc_endpoints]
+celo_sepolia = "https://forno.celo-sepolia.celo-testnet.org"
+celo = "https://forno.celo.org"
+
+# Celoscan verification (Etherscan V2). Needs ETHERSCAN_API_KEY in your env/.env.
+[etherscan]
+celo_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11142220, url = "https://api-sepolia.celoscan.io/api" }
+celo = { key = "${ETHERSCAN_API_KEY}", chain = 42220, url = "https://api.celoscan.io/api" }
+
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

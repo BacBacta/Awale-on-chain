@@ -30,10 +30,14 @@ cp .env.example .env        # fill PRIVATE_KEY, OWNER, RPC, ETHERSCAN_API_KEY
 ./script/preflight.sh       # checks RPC, deployer balance, token addresses
 forge test                  # sanity: full suite green
 forge script script/Deploy.s.sol \
-  --rpc-url "$CELO_SEPOLIA_RPC" \
+  --rpc-url celo_sepolia \
   --broadcast \
   --verify
 ```
+
+`--rpc-url celo_sepolia` resolves via the `[rpc_endpoints]` alias in
+`foundry.toml`, so you don't need the env var exported in your shell. `--verify`
+uses the matching `[etherscan]` entry (needs `ETHERSCAN_API_KEY`).
 
 > **Fastest path:** set `DEPLOY_MOCK_TOKENS=true` in `.env`. The script then
 > deploys mock USDm/USDC/USDT (18/6/6 dec), allowlists them, and seeds the
