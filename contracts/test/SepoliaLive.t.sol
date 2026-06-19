@@ -47,10 +47,7 @@ contract SepoliaLiveTest is Test {
         emit log_named_uint("rake (wei)", rake);
     }
 
-    function _open(MatchEscrow escrow, MockERC20 usdm)
-        internal
-        returns (uint256 matchId, uint256 sk0, uint256 sk1)
-    {
+    function _open(MatchEscrow escrow, MockERC20 usdm) internal returns (uint256 matchId, uint256 sk0, uint256 sk1) {
         address p0 = makeAddr("p0");
         address p1 = makeAddr("p1");
         address s0;
