@@ -7,7 +7,7 @@ import { publicClient } from "../lib/minipay.js";
 import { createMatch, joinMatch, approve, parseStake, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
 import { createSessionKey, persistSession } from "../lib/session.js";
 import { receiptDeeplink } from "../lib/deeplinks.js";
-import { matchEscrowAbi } from "../../../protocol/src/abis.js";
+import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
 
 const STAKE_TOKEN = process.env.NEXT_PUBLIC_STAKE_TOKEN as Address | undefined;
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
@@ -21,13 +21,29 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   const [tx, setTx] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Approve the escrow to pull `amount` only if the current allowance is short,
+  // and WAIT for the approval to be mined before the staking tx — otherwise
+  // createMatch/joinMatch estimate gas against a stale (zero) allowance and
+  // revert with ERC20InsufficientAllowance.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function ensureAllowance(client: any, token: Address, amount: bigint) {
+    const allowance = (await readContract(client, {
+      address: token,
+      abi: erc20Abi,
+      functionName: "allowance",
+      args: [account, cfg.escrow],
+    })) as bigint;
+    if (allowance >= amount) return;
+    const hash = await approve(wallet, { account, token, spender: cfg.escrow, amount, feeCurrency: FEE_CURRENCY });
+    await client.waitForTransactionReceipt({ hash });
+  }
+
   async function onCreate() {
     if (!STAKE_TOKEN || busy) return;
     setBusy(true);
     setStatus("Confirming…");
     try {
       const amount = parseStake(stake, STAKE_DECIMALS);
-      // the id this create will be assigned (read just before the tx)
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
       const matchId = (await readContract(client, {
         address: cfg.escrow,
@@ -38,7 +54,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       const session = createSessionKey();
       persistSession(matchId, session);
 
-      await approve(wallet, { account, token: STAKE_TOKEN, spender: cfg.escrow, amount, feeCurrency: FEE_CURRENCY });
+      await ensureAllowance(client, STAKE_TOKEN, amount);
       const hash = await createMatch(wallet, {
         account,
         escrow: cfg.escrow,
@@ -62,8 +78,19 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     setStatus("Confirming…");
     try {
       const matchId = BigInt(joinId);
+      const client = publicClient(cfg.rpcUrl, cfg.chainId);
+      // joining also stakes, so read the match's token + stake and approve first
+      const m = (await readContract(client, {
+        address: cfg.escrow,
+        abi: matchEscrowAbi,
+        functionName: "getMatch",
+        args: [matchId],
+      })) as { token: Address; stake: bigint };
+
       const session = createSessionKey();
       persistSession(matchId, session);
+
+      await ensureAllowance(client, m.token, m.stake);
       const hash = await joinMatch(wallet, {
         account,
         escrow: cfg.escrow,

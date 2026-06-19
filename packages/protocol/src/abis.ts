@@ -73,6 +73,31 @@ export const matchEscrowAbi = [
     outputs: [{ type: "uint256" }],
   },
   {
+    type: "function",
+    name: "getMatch",
+    stateMutability: "view",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [
+      {
+        type: "tuple",
+        components: [
+          { name: "token", type: "address" },
+          { name: "stake", type: "uint128" },
+          { name: "player0", type: "address" },
+          { name: "player1", type: "address" },
+          { name: "session0", type: "address" },
+          { name: "session1", type: "address" },
+          { name: "status", type: "uint8" },
+          { name: "startTurn", type: "uint8" },
+          { name: "proposedWinner", type: "uint8" },
+          { name: "rakeBps", type: "uint16" },
+          { name: "challengeDeadline", type: "uint64" },
+          { name: "activeDeadline", type: "uint64" },
+        ],
+      },
+    ],
+  },
+  {
     type: "event",
     name: "MatchJoined",
     inputs: [
