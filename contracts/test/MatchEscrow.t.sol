@@ -51,7 +51,16 @@ contract MatchEscrowTest is Test {
 
     // ------------------------------ helpers ----------------------------- //
 
+    /// @dev Create, join, and finalize the first-move flip so the match is
+    ///      ready to play. The flip is deferred to a future block (anti-grinding),
+    ///      so advance past the reveal block and fix it before returning.
     function _createAndJoin() internal returns (uint256 matchId) {
+        matchId = _createAndJoinNoFinalize();
+        vm.roll(block.number + uint256(escrow.START_REVEAL_DELAY()) + 1);
+        escrow.finalizeStart(matchId);
+    }
+
+    function _createAndJoinNoFinalize() internal returns (uint256 matchId) {
         vm.prank(alice);
         matchId = escrow.createMatch(address(usdc), STAKE, session0);
         vm.prank(bob);
@@ -112,12 +121,44 @@ contract MatchEscrowTest is Test {
     }
 
     function test_joinMatch_activates() public {
-        uint256 id = _createAndJoin();
+        uint256 id = _createAndJoinNoFinalize();
         assertEq(usdc.balanceOf(address(escrow)), uint256(STAKE) * 2);
         MatchEscrow.Match memory m = escrow.getMatch(id);
         assertEq(uint8(m.status), uint8(MatchEscrow.Status.Active));
         assertEq(m.player1, bob);
-        assertTrue(m.startTurn < 2);
+        // the first-move flip is deferred to a future block, not set at join
+        assertEq(m.startTurn, type(uint8).max, "startTurn unset until finalized");
+        assertGt(m.revealBlock, block.number, "reveal block is in the future");
+    }
+
+    // ----------------------- first-move randomness ---------------------- //
+
+    function test_finalizeStart_fixesFirstMover() public {
+        uint256 id = _createAndJoinNoFinalize();
+        vm.roll(block.number + uint256(escrow.START_REVEAL_DELAY()) + 1);
+        escrow.finalizeStart(id);
+        uint8 start = escrow.getMatch(id).startTurn;
+        assertLt(start, 2, "startTurn fixed to 0 or 1");
+    }
+
+    function test_finalizeStart_revertsBeforeRevealBlock() public {
+        uint256 id = _createAndJoinNoFinalize();
+        // still at the join block: reveal block not yet mined
+        vm.expectRevert(bytes("MatchEscrow: too early"));
+        escrow.finalizeStart(id);
+    }
+
+    function test_finalizeStart_revertsOnceFixed() public {
+        uint256 id = _createAndJoin(); // already finalized
+        vm.expectRevert(bytes("MatchEscrow: start fixed"));
+        escrow.finalizeStart(id);
+    }
+
+    function test_proposeResult_revertsBeforeStartFinalized() public {
+        uint256 id = _createAndJoinNoFinalize();
+        vm.prank(alice);
+        vm.expectRevert(bytes("MatchEscrow: start not finalized"));
+        escrow.proposeResult(id, 0);
     }
 
     function test_cancelMatch_refunds() public {

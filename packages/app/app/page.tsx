@@ -8,11 +8,15 @@ import { addCashDeeplink } from "../src/lib/deeplinks.js";
 import { shortAddress } from "../src/lib/identity.js";
 import { escrowConfig, type WriteClient, type EscrowConfig } from "../src/lib/escrow.js";
 import { MatchActions } from "../src/components/MatchActions.js";
+import { PersonhoodVerify } from "../src/components/PersonhoodVerify.js";
+
+const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
 export default function Lobby() {
   const [address, setAddress] = useState<Address | null>(null);
   const [wallet, setWallet] = useState<WriteClient | null>(null);
   const [inMiniPay, setInMiniPay] = useState(false);
+  const [verified, setVerified] = useState(!SELF_CONFIGURED);
   const cfg: EscrowConfig | null = escrowConfig();
 
   // Zero-click connect: auto-connect from the injected wallet inside MiniPay.
@@ -44,7 +48,11 @@ export default function Lobby() {
       </div>
 
       {cfg && wallet && address ? (
-        <MatchActions wallet={wallet} account={address} cfg={cfg} />
+        verified ? (
+          <MatchActions wallet={wallet} account={address} cfg={cfg} />
+        ) : (
+          <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
+        )
       ) : (
         <>
           <div className="card" style={{ display: "flex", flexDirection: "column", gap: 8 }}>

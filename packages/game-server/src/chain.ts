@@ -58,6 +58,13 @@ const escrowAbi = [
   },
   {
     type: "function",
+    name: "finalizeStart",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "challenge",
     stateMutability: "nonpayable",
     inputs: [
@@ -139,6 +146,17 @@ export class SettlementClient {
       address: this.escrow,
       abi: escrowAbi,
       functionName: "voidExpired",
+      args: [matchId],
+      feeCurrency: this.feeCurrency,
+    });
+  }
+
+  /** Fix a joined match's first mover from its reveal block's hash. */
+  finalizeStart(matchId: bigint): Promise<Hex> {
+    return this.wallet.writeContract({
+      address: this.escrow,
+      abi: escrowAbi,
+      functionName: "finalizeStart",
       args: [matchId],
       feeCurrency: this.feeCurrency,
     });

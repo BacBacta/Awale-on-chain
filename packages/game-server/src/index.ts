@@ -64,4 +64,6 @@ export {
   DEFAULT_POLICY,
 } from "./personhood/types.js";
 export { InMemoryPersonhoodRegistry } from "./personhood/registry.js";
+export { PgPersonhoodRegistry } from "./personhood/postgres-registry.js";
 export { verifyAndRegister, assertPersonhood, type RegisterOutcome } from "./personhood/gate.js";
+export { SelfPersonhoodVerifier, type SelfProof, type SelfVerifierOptions } from "./personhood/self-verifier.js";

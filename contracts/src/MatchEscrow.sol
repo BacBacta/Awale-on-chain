@@ -46,16 +46,24 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         address session0; // player 0's per-match session key (ephemeral address)
         address session1; // player 1's per-match session key
         Status status;
-        uint8 startTurn; // committed first mover (0 or 1)
+        uint8 startTurn; // first mover (0 or 1); START_UNSET until the reveal block is mined
         uint8 proposedWinner; // 0, 1, or DRAW — valid while Proposed
         uint16 rakeBps; // rake snapshotted at creation (owner cannot change it mid-match)
         uint64 challengeDeadline; // timestamp the challenge window closes
         uint64 activeDeadline; // timestamp after which an unsettled Active match can be voided
+        uint64 revealBlock; // block whose hash fixes startTurn (set at join, unknown to the joiner)
     }
 
     uint16 public constant MAX_RAKE_BPS = 1000; // hard cap: rake can never exceed 10%
     uint16 public constant BPS = 10_000;
     uint8 internal constant DRAW = 2;
+
+    // First-move randomness: the coin flip is derived from the hash of a *future*
+    // block chosen at join time, so the joiner cannot grind their address to bias
+    // it (all of prevrandao/matchId/addresses are knowable at join, a future
+    // blockhash is not). START_UNSET marks a match whose flip is not yet fixed.
+    uint8 internal constant START_UNSET = type(uint8).max;
+    uint64 public constant START_REVEAL_DELAY = 1; // blocks to wait after join before finalizing
 
     ReplayVerifier public immutable verifier;
     bytes32 public immutable DOMAIN_SEPARATOR;
@@ -74,7 +82,8 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     mapping(address => bool) public allowedToken; // only audited stablecoins may be staked
 
     event MatchCreated(uint256 indexed matchId, address indexed player0, address token, uint128 stake);
-    event MatchJoined(uint256 indexed matchId, address indexed player1, uint8 startTurn);
+    event MatchJoined(uint256 indexed matchId, address indexed player1, uint64 revealBlock);
+    event StartFinalized(uint256 indexed matchId, uint8 startTurn);
     event MatchCancelled(uint256 indexed matchId);
     event MatchVoided(uint256 indexed matchId);
     event ResultProposed(uint256 indexed matchId, uint8 winner, uint64 challengeDeadline);
@@ -146,11 +155,36 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         m.session1 = session1;
         m.status = Status.Active;
         m.activeDeadline = uint64(block.timestamp) + matchTtl;
-        // v1 randomness for the first mover; replace with VRF before mainnet (§6).
-        m.startTurn = uint8(uint256(keccak256(abi.encode(block.prevrandao, matchId, m.player0, msg.sender))) & 1);
+        // Defer the first-move flip to a future block's hash. The joiner cannot
+        // know blockhash(revealBlock) now, so they cannot grind it; finalizeStart
+        // fixes it once that block is mined.
+        m.startTurn = START_UNSET;
+        m.revealBlock = uint64(block.number) + START_REVEAL_DELAY;
 
         IERC20(m.token).safeTransferFrom(msg.sender, address(this), m.stake);
-        emit MatchJoined(matchId, msg.sender, m.startTurn);
+        emit MatchJoined(matchId, msg.sender, m.revealBlock);
+    }
+
+    /// @notice Fix a joined match's first mover from the reveal block's hash.
+    ///         Permissionless and idempotent: callable by a keeper, either
+    ///         player, or anyone. If the reveal block has aged out of the
+    ///         256-block window before this runs, it re-rolls to a fresh future
+    ///         block so a match can never get stuck unable to start.
+    function finalizeStart(uint256 matchId) external {
+        Match storage m = matches[matchId];
+        require(m.status == Status.Active, "MatchEscrow: not active");
+        require(m.startTurn == START_UNSET, "MatchEscrow: start fixed");
+        require(block.number > m.revealBlock, "MatchEscrow: too early");
+
+        bytes32 bh = blockhash(m.revealBlock);
+        if (bh == bytes32(0)) {
+            // reveal block out of range (no keeper ran within 256 blocks): re-roll
+            m.revealBlock = uint64(block.number) + START_REVEAL_DELAY;
+            return;
+        }
+        uint8 start = uint8(uint256(keccak256(abi.encode(bh, matchId))) & 1);
+        m.startTurn = start;
+        emit StartFinalized(matchId, start);
     }
 
     /// @notice Withdraw an open match that no one has joined; refunds the creator.
@@ -192,6 +226,9 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         require(m.status == Status.Active, "MatchEscrow: not active");
         require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
         require(winner <= DRAW, "MatchEscrow: bad winner");
+        // a game cannot have a result before its first move is fixed; this also
+        // guarantees {challenge}'s `t.startTurn == m.startTurn` is meaningful
+        require(m.startTurn != START_UNSET, "MatchEscrow: start not finalized");
 
         m.proposedWinner = winner;
         m.status = Status.Proposed;

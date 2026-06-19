@@ -1,7 +1,13 @@
 import { describe, it, expect } from "vitest";
 import type { Address } from "viem";
 import { GameHub } from "../src/hub.js";
-import { openMatchFromChain, watchMatchJoined, type ChainMatch, type EventWatcher } from "../src/listener.js";
+import {
+  openMatchFromChain,
+  watchMatchJoined,
+  watchStartFinalized,
+  type ChainMatch,
+  type EventWatcher,
+} from "../src/listener.js";
 
 const VERIFIER: Address = "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3";
 const ESCROW: Address = "0x00000000000000000000000000000000000e5c70";
@@ -23,8 +29,8 @@ describe("openMatchFromChain", () => {
   });
 });
 
-describe("watchMatchJoined", () => {
-  it("reads the match and opens it when a join is observed", async () => {
+describe("watchStartFinalized", () => {
+  it("reads the match and opens it once the first move is fixed", async () => {
     const hub = new GameHub();
     let captured: ((logs: { args: { matchId?: bigint } }[]) => void) | null = null;
 
@@ -42,14 +48,38 @@ describe("watchMatchJoined", () => {
       startTurn: 0,
     });
 
-    const unsub = watchMatchJoined(client, { escrow: ESCROW, ctx, readMatch }, hub);
+    const unsub = watchStartFinalized(client, { escrow: ESCROW, ctx, readMatch }, hub);
     expect(typeof unsub).toBe("function");
 
-    // simulate the chain emitting a MatchJoined log
+    // simulate the chain emitting a StartFinalized log
     captured!([{ args: { matchId: 7n } }]);
     await Promise.resolve(); // let the readMatch microtask resolve
 
     expect(hub.get(7n)).toBeDefined();
     expect(hub.activeCount).toBe(1);
+  });
+});
+
+describe("watchMatchJoined", () => {
+  it("calls finalize for each joined match", () => {
+    let captured: ((logs: { args: { matchId?: bigint } }[]) => void) | null = null;
+    const client: EventWatcher = {
+      watchContractEvent(args) {
+        captured = args.onLogs;
+        return () => {};
+      },
+    };
+
+    const finalized: bigint[] = [];
+    const unsub = watchMatchJoined(client, {
+      escrow: ESCROW,
+      finalize: async (matchId) => {
+        finalized.push(matchId);
+      },
+    });
+    expect(typeof unsub).toBe("function");
+
+    captured!([{ args: { matchId: 7n } }, { args: { matchId: 8n } }]);
+    expect(finalized).toEqual([7n, 8n]);
   });
 });

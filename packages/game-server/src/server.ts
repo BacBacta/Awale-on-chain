@@ -4,7 +4,9 @@
 // in the hub/Match/engine; this file only translates messages.
 //
 // Protocol (client -> server):
-//   "queue"      { address, elo }                          join ranked matchmaking
+//   "queue"      { address, elo, mode? }                    join matchmaking ("casual"
+//                                                            by default; "ranked"/"cash"
+//                                                            require personhood verification)
 //   "watch"      { matchId }                               subscribe to a match room
 //   "move"       { matchId, player, house, signature }     a session-key-signed move
 //   "result-sig" { matchId, signature }                    a session-key-signed result
@@ -19,6 +21,8 @@ import type { Server, Socket } from "socket.io";
 import type { Address, Hex } from "viem";
 import { GameHub } from "./hub.js";
 import type { SettlementCoordinator } from "./settlement-coordinator.js";
+import { assertPersonhood } from "./personhood/gate.js";
+import type { PersonhoodRegistry, PlayMode } from "./personhood/types.js";
 
 export interface ServerDeps {
   hub: GameHub;
@@ -26,13 +30,24 @@ export interface ServerDeps {
   coordinator?: SettlementCoordinator;
   /** Called when a game ends so the app can react. */
   onGameOver?: (matchId: bigint, winner: number) => void;
+  /** Gates ranked/cash matchmaking behind Self proof-of-personhood (optional). */
+  personhood?: PersonhoodRegistry;
 }
 
 export function attachSocketIO(io: Server, deps: ServerDeps): void {
   const { hub } = deps;
 
   io.on("connection", (socket: Socket) => {
-    socket.on("queue", (msg: { address: Address; elo: number }) => {
+    socket.on("queue", async (msg: { address: Address; elo: number; mode?: PlayMode }) => {
+      const mode = msg.mode ?? "casual";
+      if (deps.personhood) {
+        try {
+          await assertPersonhood(deps.personhood, msg.address, mode);
+        } catch (err) {
+          socket.emit("error", { message: (err as Error).message });
+          return;
+        }
+      }
       const pairing = hub.queue({ id: socket.id, address: msg.address, elo: msg.elo });
       if (pairing) {
         io.to(pairing.a.id).emit("matched", { opponent: pairing.b.address });

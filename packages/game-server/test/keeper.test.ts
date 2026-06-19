@@ -35,6 +35,23 @@ describe("keeperActions", () => {
     ];
     expect(keeperActions(matches, now)).toEqual([]);
   });
+
+  it("finalizes the first move once the reveal block is mined", () => {
+    const matches: KeeperMatch[] = [
+      { matchId: 6n, status: EscrowStatus.Active, challengeDeadline: 0, activeDeadline: now + 1000, startTurn: 255, revealBlock: 100 },
+    ];
+    // block not yet past revealBlock -> nothing
+    expect(keeperActions(matches, now, 100)).toEqual([]);
+    // block mined past revealBlock -> finalizeStart
+    expect(keeperActions(matches, now, 101)).toEqual([{ matchId: 6n, action: "finalizeStart" }]);
+  });
+
+  it("does not finalizeStart once startTurn is fixed", () => {
+    const matches: KeeperMatch[] = [
+      { matchId: 7n, status: EscrowStatus.Active, challengeDeadline: 0, activeDeadline: now + 1000, startTurn: 1, revealBlock: 100 },
+    ];
+    expect(keeperActions(matches, now, 101)).toEqual([]);
+  });
 });
 
 describe("runKeeper", () => {

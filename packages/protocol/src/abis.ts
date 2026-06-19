@@ -93,9 +93,17 @@ export const matchEscrowAbi = [
           { name: "rakeBps", type: "uint16" },
           { name: "challengeDeadline", type: "uint64" },
           { name: "activeDeadline", type: "uint64" },
+          { name: "revealBlock", type: "uint64" },
         ],
       },
     ],
+  },
+  {
+    type: "function",
+    name: "finalizeStart",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [],
   },
   {
     type: "event",
@@ -103,6 +111,14 @@ export const matchEscrowAbi = [
     inputs: [
       { name: "matchId", type: "uint256", indexed: true },
       { name: "player1", type: "address", indexed: true },
+      { name: "revealBlock", type: "uint64", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "StartFinalized",
+    inputs: [
+      { name: "matchId", type: "uint256", indexed: true },
       { name: "startTurn", type: "uint8", indexed: false },
     ],
   },

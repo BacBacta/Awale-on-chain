@@ -2,7 +2,8 @@
 // Socket.IO transport, settlement client) to a live deployment.
 //
 // Env (see .env.example): RPC_URL, CHAIN_ID, ESCROW_ADDRESS, VERIFIER_ADDRESS,
-// PORT, SERVER_SIGNER_KEY (optional), FEE_CURRENCY (optional).
+// PORT, SERVER_SIGNER_KEY (optional), FEE_CURRENCY (optional), SELF_SCOPE,
+// SELF_ENDPOINT, SELF_MOCK_PASSPORT (optional).
 
 import { createServer } from "node:http";
 import { Server } from "socket.io";
@@ -11,10 +12,14 @@ import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { GameHub } from "./hub.js";
 import { attachSocketIO } from "./server.js";
-import { watchMatchJoined, type ChainMatch, type EventWatcher } from "./listener.js";
+import { watchMatchJoined, watchStartFinalized, type ChainMatch, type EventWatcher } from "./listener.js";
 import { SettlementClient } from "./chain.js";
 import { SettlementCoordinator } from "./settlement-coordinator.js";
 import { matchEscrowAbi } from "../../protocol/src/abis.js";
+import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
+import { InMemoryPersonhoodRegistry } from "./personhood/registry.js";
+import { verifyAndRegister } from "./personhood/gate.js";
+import type { PersonhoodRegistry } from "./personhood/types.js";
 
 const RPC_URL = required("RPC_URL");
 const CHAIN_ID = Number(process.env.CHAIN_ID ?? "11142220");
@@ -61,7 +66,36 @@ if (SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66) {
   });
 }
 
-const httpServer = createServer((_req, res) => {
+// optional: Self proof-of-personhood gating for ranked/cash play
+const SELF_SCOPE = process.env.SELF_SCOPE;
+const SELF_ENDPOINT = process.env.SELF_ENDPOINT;
+const personhood: PersonhoodRegistry = new InMemoryPersonhoodRegistry();
+const selfVerifier = SELF_SCOPE && SELF_ENDPOINT
+  ? new SelfPersonhoodVerifier({
+      scope: SELF_SCOPE,
+      endpoint: SELF_ENDPOINT,
+      mockPassport: process.env.SELF_MOCK_PASSPORT !== "false",
+    })
+  : undefined;
+
+const httpServer = createServer((req, res) => {
+  if (req.method === "POST" && req.url === "/self/verify") {
+    let body = "";
+    req.on("data", (chunk) => (body += chunk));
+    req.on("end", async () => {
+      try {
+        if (!selfVerifier) throw new Error("personhood verification not configured");
+        const { address, ...proof } = JSON.parse(body) as { address: Address };
+        const out = await verifyAndRegister(selfVerifier, personhood, address, proof);
+        res.writeHead(out.verified ? 200 : 400, { "content-type": "application/json" });
+        res.end(JSON.stringify(out));
+      } catch (err) {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(JSON.stringify({ verified: false, reason: (err as Error).message }));
+      }
+    });
+    return;
+  }
   res.writeHead(200, { "content-type": "application/json" });
   res.end(JSON.stringify({ ok: true, activeMatches: hub.activeCount, chainId: CHAIN_ID }));
 });
@@ -72,13 +106,30 @@ const coordinator = new SettlementCoordinator({ escrow: ESCROW, chainId: BigInt(
 attachSocketIO(io, {
   hub,
   coordinator,
+  personhood: selfVerifier ? personhood : undefined,
   onGameOver: (matchId, winner) => {
     console.log(`[match ${matchId}] over, winner=${winner} — awaiting result signatures`);
   },
 });
 
-// open matches in the hub as they go Active on-chain
-watchMatchJoined(
+// First-move randomness lifecycle:
+//  - on MatchJoined, fix the deferred flip by calling finalizeStart (needs a
+//    signer; it reverts harmlessly if the reveal block isn't mined yet, so the
+//    keeper retries any that are missed);
+//  - on StartFinalized, open the match in the hub for play.
+if (settlement) {
+  watchMatchJoined(publicClient as unknown as EventWatcher, {
+    escrow: ESCROW,
+    finalize: async (matchId) => {
+      try {
+        await settlement!.finalizeStart(matchId);
+      } catch {
+        /* too early or already fixed — the keeper will retry if needed */
+      }
+    },
+  });
+}
+watchStartFinalized(
   publicClient as unknown as EventWatcher,
   { escrow: ESCROW, ctx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER }, readMatch },
   hub,
@@ -87,4 +138,5 @@ watchMatchJoined(
 httpServer.listen(PORT, () => {
   console.log(`Awalé game server on :${PORT} — chain ${CHAIN_ID}, escrow ${ESCROW}`);
   console.log(`settlement signer: ${settlement ? "configured" : "not set (read-only)"}`);
+  console.log(`Self personhood gate: ${selfVerifier ? "enabled" : "disabled (ranked/cash ungated)"}`);
 });
