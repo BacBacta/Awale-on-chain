@@ -92,9 +92,11 @@ Each contract has an internal [Pashov-style review](audits/). These are **not** 
 - [x] Server persistence (live match store + leaderboard/ratings; Redis & Postgres adapters)
 - [x] Phone-first name service (ODIS, cached) · Self proof-of-personhood gating (anti-sybil)
 - [x] Mini-app lobby wired to contracts (create/join with `feeCurrency`, session keys)
-- [ ] Testnet deploy (Celo Sepolia) + Celoscan verification + device test (physical, no emulators)
-- [ ] Integration wiring (Redis/Postgres/ODIS/Self adapters to real services) — needs a live chain
-- [ ] Mini-app front end (Next.js + viem)
-- [ ] Game server (Node/TypeScript)
+- [x] Runnable game server (`main.ts`): on-chain listener → hub, Socket.IO, settlement coordinator
+- [x] Live `/play` over websockets: session-key-signed moves, end-of-game `settleSigned` collection
+- [x] **Validated on a real device**: match created from MiniPay, joined + settled on Celo Sepolia (winner paid, rake to Treasury)
+- [ ] Testnet deploy stays live (durable host) + full two-player device game
+- [ ] Integration wiring (Redis/Postgres/ODIS/Self adapters to real services)
+- [ ] External audit · VRF · timelock+multisig · mainnet
 
 > **Audit status:** contracts are tested and self-reviewed, **not externally audited**. An independent audit is a hard prerequisite before mainnet and MiniPay listing.
