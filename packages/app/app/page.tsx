@@ -20,7 +20,7 @@ export default function Lobby() {
     const provider = getInjectedProvider();
     setInMiniPay(isMiniPay(provider));
     if (!provider) return;
-    connect(provider)
+    connect(provider, cfg?.chainId)
       .then(({ wallet, address }) => {
         setWallet(wallet as unknown as WriteClient);
         setAddress(address);

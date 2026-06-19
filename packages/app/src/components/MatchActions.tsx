@@ -28,7 +28,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     try {
       const amount = parseStake(stake, STAKE_DECIMALS);
       // the id this create will be assigned (read just before the tx)
-      const client = publicClient(cfg.rpcUrl, cfg.chainId !== 42220);
+      const client = publicClient(cfg.rpcUrl, cfg.chainId);
       const matchId = (await readContract(client, {
         address: cfg.escrow,
         abi: matchEscrowAbi,
