@@ -143,6 +143,15 @@ disproportionate to defend against with full VRF (architecture §6). Increasing
 `START_REVEAL_DELAY` would not help, since whichever block is ultimately read still
 has a single proposer with the same latitude.
 
+Note that the *finalizer* gains nothing from this: `blockhash(revealBlock)` is
+fixed the moment that block is mined, so whoever calls `finalizeStart` (and
+whenever they call it within the 256-block window) reads the same value and cannot
+bias the flip by their choice of timing. The only timing-adjacent escalation —
+withholding `finalizeStart` for 256 blocks to force the I-02 re-roll onto a block
+the attacker's validator then proposes — requires censoring *every* permissionless
+caller (both players and the keeper) for ~21 min and is strictly dominated by the
+single-proposer surface already described here.
+
 ---
 
 ## Informational
@@ -173,6 +182,11 @@ This only affects liveness of the *fairness* flip, never custody of stakes.
 - **No forged settlement** — `settleSigned` requires both session-key signatures
   over the EIP-712 result; `challenge` binds the transcript's `matchId`, sessions,
   and `startTurn` to the stored match before trusting the replay.
+- **`startTurn`-finalization gate is asymmetric *by design*** — `proposeResult`
+  (a unilateral claim that feeds `challenge`'s `t.startTurn == m.startTurn` check)
+  requires `startTurn != START_UNSET`, but `settleSigned` deliberately does **not**:
+  a result both session keys signed is mutual consent, for which first-move fairness
+  is moot, so the happy path is never blocked on a pending reveal or a stalled keeper.
 - **Conservation** — every path (`_payout` win/draw, `_void`, `cancelMatch`) moves
   exactly the escrowed `2 × stake`; tested for balances and drained escrow.
 - **Decimals** — amounts are in the token's own units; exercised with a 6-decimal mock.
@@ -197,6 +211,13 @@ fixes and regression tests**. A subsequent revision closed **L-01** (joiner-grin
 randomness) by deferring the first-move flip to a future block's hash instead of
 data the joiner already controls; this introduced one new, strictly narrower
 acknowledged Low (**L-03** — proposer-only, not joiner, influence) and one
-informational liveness note (**I-02**). 25 `MatchEscrow` tests, 90 across the
-contracts suite. No reentrancy or access-control defects remain. An independent
-external audit is still mandatory before handling real funds.
+informational liveness note (**I-02**). A fresh review pass over the redeployed
+code surfaced no new severity findings; it confirmed two design properties now
+documented above (the finalizer cannot bias the flip by timing; the
+`startTurn`-finalization gate is intentionally asymmetric between `proposeResult`
+and `settleSigned`). Tooling on this pass: `forge fmt --check` clean, 25
+`MatchEscrow` tests / 90 across the contracts suite passing (2 skipped), and
+Slither reporting only the accepted `timestamp` (I-01) and EIP-712
+`naming-convention` notes — no High/Medium, so CI's `fail-on: high` gate passes.
+No reentrancy or access-control defects remain. An independent external audit is
+still mandatory before handling real funds.
