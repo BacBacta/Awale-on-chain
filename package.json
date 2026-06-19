@@ -1,0 +1,8 @@
+{
+  "name": "awale-on-chain-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "contracts"
+  ]
+}
