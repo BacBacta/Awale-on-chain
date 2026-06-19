@@ -38,6 +38,14 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
       }
     });
 
+    // subscribe to a match's room and get its current state (both players watch
+    // their match once it is opened from the on-chain join events)
+    socket.on("watch", (msg: { matchId: string }) => {
+      socket.join(msg.matchId);
+      const m = hub.get(BigInt(msg.matchId));
+      if (m) socket.emit("state", { matchId: msg.matchId, state: m.state });
+    });
+
     socket.on(
       "move",
       async (msg: { matchId: string; player: 0 | 1; house: number; signature: `0x${string}` }) => {
