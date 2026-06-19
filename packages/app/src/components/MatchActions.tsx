@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { readContract } from "viem/actions";
 import type { Address } from "viem";
 import { publicClient } from "../lib/minipay.js";
@@ -19,6 +20,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   const [joinId, setJoinId] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [tx, setTx] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<bigint | null>(null);
   const [busy, setBusy] = useState(false);
 
   // Approve the escrow to pull `amount` only if the current allowance is short,
@@ -64,6 +66,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         feeCurrency: FEE_CURRENCY,
       });
       setTx(hash);
+      setOpenId(matchId);
       setStatus(`Match #${matchId} created — waiting for an opponent.`);
     } catch (e) {
       setStatus((e as Error).message);
@@ -99,6 +102,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         feeCurrency: FEE_CURRENCY,
       });
       setTx(hash);
+      setOpenId(matchId);
       setStatus(`Joined match #${matchId}.`);
     } catch (e) {
       setStatus((e as Error).message);
@@ -143,6 +147,11 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       </div>
 
       {status && <span className="muted">{status}</span>}
+      {openId !== null && (
+        <Link className="btn" href={`/play?match=${openId.toString()}`}>
+          Open match #{openId.toString()} →
+        </Link>
+      )}
       {tx && (
         <a className="muted" href={receiptDeeplink(tx)}>
           View receipt

@@ -13,6 +13,7 @@ import { GameHub } from "./hub.js";
 import { attachSocketIO } from "./server.js";
 import { watchMatchJoined, type ChainMatch, type EventWatcher } from "./listener.js";
 import { SettlementClient } from "./chain.js";
+import { SettlementCoordinator } from "./settlement-coordinator.js";
 import { matchEscrowAbi } from "../../protocol/src/abis.js";
 
 const RPC_URL = required("RPC_URL");
@@ -66,14 +67,13 @@ const httpServer = createServer((_req, res) => {
 });
 const io = new Server(httpServer, { cors: { origin: "*" } });
 
+const coordinator = new SettlementCoordinator({ escrow: ESCROW, chainId: BigInt(CHAIN_ID), settlement });
+
 attachSocketIO(io, {
   hub,
+  coordinator,
   onGameOver: (matchId, winner) => {
-    console.log(`[match ${matchId}] over, winner=${winner}`);
-    // The happy path collects both session-key result signatures from the
-    // clients and calls settlement.settleSigned(...); a timeout falls back to
-    // settlement.proposeResult(...). Wired once the result-signing UI lands.
-    void settlement;
+    console.log(`[match ${matchId}] over, winner=${winner} — awaiting result signatures`);
   },
 });
 

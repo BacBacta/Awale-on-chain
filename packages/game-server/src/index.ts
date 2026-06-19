@@ -14,6 +14,11 @@ export {
 export { SettlementClient, type SettlementClientOptions } from "./chain.js";
 export { attachSocketIO, type ServerDeps } from "./server.js";
 export {
+  SettlementCoordinator,
+  type SettlementCoordinatorOptions,
+  type SubmitOutcome,
+} from "./settlement-coordinator.js";
+export {
   openMatchFromChain,
   watchMatchJoined,
   type ChainMatch,
