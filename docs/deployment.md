@@ -185,7 +185,10 @@ These are tracked in code/audits and must be closed before real-money mainnet:
   integration) — the in-repo `audits/` are self-reviews, not a substitute.
 - **VRF** for the first-mover instead of the `prevrandao` placeholder
   (`MatchEscrow` L-01).
-- **Timelock + multisig** ownership (L-02 across contracts).
+- **Timelock + multisig** ownership (L-02 across contracts). Run
+  `script/Govern.s.sol` (env: `MULTISIG`, `TIMELOCK_DELAY`) to deploy a
+  TimelockController and transfer MatchEscrow + Treasury ownership to it; admin
+  changes then flow through schedule → delay → execute by the multisig.
 - **Server persistence** (Redis live state, Postgres history) and an **ODIS**
   signer for phone-first display names (backend keys only).
 - **Self** proof-of-personhood gating for ranked/cash (anti-sybil).
