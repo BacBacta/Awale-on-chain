@@ -133,6 +133,36 @@ ngrok http 3000
 
 ---
 
+## 4b. Durable hosting (so the URL survives)
+
+A Codespace tunnel dies on idle. For a persistent URL, host the two services:
+
+### Front — Vercel
+
+Connect the GitHub repo in Vercel and set:
+
+- **Root Directory**: `packages/app`
+- **Include source files outside of the Root Directory**: **ON** (the app imports
+  the sibling `protocol`/`engine` packages by relative path; `next.config.mjs`
+  sets `outputFileTracingRoot` to the repo root so they're bundled).
+- **Environment variables**: everything from `packages/app/.env.local` —
+  `STATS_RPC_URL`, `ESCROW_ADDRESS`, `ESCROW_FROM_BLOCK`, `CELO_TESTNET`, and all
+  `NEXT_PUBLIC_*` (chain id, RPC, escrow, verifier, **server URL**, stake token).
+
+Vercel gives a stable `https://<project>.vercel.app` — open that in MiniPay.
+
+### Game server — any container host (Railway / Render / Fly.io)
+
+```bash
+docker build -f packages/game-server/Dockerfile -t awale-server .
+docker run -p 8080:8080 --env-file packages/game-server/.env awale-server
+```
+
+The image boots read-only without a signer; set `SERVER_SIGNER_KEY` (funded) to
+let it submit settlements. Point the app's `NEXT_PUBLIC_SERVER_URL` at the host's
+public URL. Verified: the container boots against live Celo Sepolia and serves
+`GET /` health + the Socket.IO transport.
+
 ## 5. Pre-listing checklist (MiniPay requirements)
 
 - [ ] Audited + Celoscan-verified contracts, with sample tx hashes.
