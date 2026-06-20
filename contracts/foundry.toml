@@ -17,7 +17,7 @@ celo = "https://forno.celo.org"
 # Celoscan verification via the Etherscan V2 unified endpoint (one key, multichain).
 # The V1 per-explorer endpoints are deprecated. Use an Etherscan V2 API key.
 [etherscan]
-celo_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11142220, url = "https://api.etherscan.io/v2/api" }
-celo = { key = "${ETHERSCAN_API_KEY}", chain = 42220, url = "https://api.etherscan.io/v2/api" }
+celo_sepolia = { key = "${ETHERSCAN_API_KEY}", chain = 11142220, url = "https://api.etherscan.io/v2/api?chainid=11142220" }
+celo = { key = "${ETHERSCAN_API_KEY}", chain = 42220, url = "https://api.etherscan.io/v2/api?chainid=42220" }
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options

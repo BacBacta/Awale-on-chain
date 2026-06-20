@@ -76,6 +76,7 @@ contract ReplayVerifier {
     function verify(Transcript calldata t) public view returns (AwaleRules.GameState memory state) {
         require(t.startTurn < 2, "ReplayVerifier: bad startTurn");
         require(t.moves.length == t.sigs.length, "ReplayVerifier: length mismatch");
+        require(t.moves.length > 0, "ReplayVerifier: empty transcript");
         require(t.moves.length <= MAX_PLIES, "ReplayVerifier: too many plies");
         require(t.session0 != address(0) && t.session1 != address(0), "ReplayVerifier: zero session key");
         require(t.session0 != t.session1, "ReplayVerifier: duplicate session key");

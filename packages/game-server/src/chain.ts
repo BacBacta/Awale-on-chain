@@ -12,6 +12,8 @@ import {
   createWalletClient,
   createPublicClient,
   http,
+  encodeAbiParameters,
+  keccak256,
   type Account,
   type Address,
   type Hex,
@@ -39,6 +41,7 @@ const escrowAbi = [
     inputs: [
       { name: "matchId", type: "uint256" },
       { name: "winner", type: "uint8" },
+      { name: "commitment", type: "bytes32" },
     ],
     outputs: [],
   },
@@ -119,12 +122,19 @@ export class SettlementClient {
   }
 
   /** Abandonment/refusal: claim a result and open the challenge window. */
-  proposeResult(matchId: bigint, winner: number): Promise<Hex> {
+  proposeResult(matchId: bigint, winner: number, transcript: Transcript): Promise<Hex> {
+    // Must match ReplayVerifier.transcriptHash: keccak256(abi.encode(matchId, startTurn, moves))
+    const commitment = keccak256(
+      encodeAbiParameters(
+        [{ type: "uint256" }, { type: "uint8" }, { type: "uint8[]" }],
+        [matchId, transcript.startTurn, transcript.moves],
+      ),
+    );
     return this.wallet.writeContract({
       address: this.escrow,
       abi: escrowAbi,
       functionName: "proposeResult",
-      args: [matchId, winner],
+      args: [matchId, winner, commitment],
       feeCurrency: this.feeCurrency,
     });
   }

@@ -22,18 +22,62 @@ is the only contract here that custodies funds, so it carries the real risk.
 | ID | Title | Severity | Status |
 |---|---|---|---|
 | H-01 | Pot theft via premature `proposeResult` on a live game | High | **Resolved** |
+| H-02 | Zero/partial-transcript challenge voids any proposed match | High | **Resolved** |
 | M-01 | Arbitrary / fee-on-transfer staking token breaks accounting | Medium | **Resolved** |
 | M-02 | Owner rake change retroactively affects in-flight matches | Medium | **Resolved** |
 | M-03 | Stakes can be locked forever by a silent opponent | Medium | **Resolved** |
+| M-04 | `proposeResult` callable after `activeDeadline` — locks out `voidExpired` | Medium | **Resolved** |
 | L-01 | First-mover randomness is joiner-grindable via `block.prevrandao` | Low | **Resolved** |
 | L-02 | Privileged owner is a trust assumption | Low | Acknowledged |
 | L-03 | Reveal-block proposer retains limited influence over the coin flip | Low | Acknowledged |
+| L-04 | `challenge` has no caller restriction — third-party griefing | Low | **Resolved** |
 | I-01 | `block.timestamp` used for window comparisons | Informational | By design |
 | I-02 | Reveal block can age out of the 256-block `blockhash` window | Informational | By design (auto re-roll) |
 
 ---
 
 ## High
+
+### [H-02] Zero/partial-transcript challenge voids any proposed match — **Open**
+
+**Description.** The H-01 fix introduced a new, symmetric vulnerability: `challenge` now
+accepts *any* valid transcript and voids the match when the replay is non-terminal. An
+adversary (or the losing player themselves) can construct a transcript with `moves = []`
+and `sigs = []` — the only inputs needed are the public on-chain fields `session0`,
+`session1`, and `startTurn` from `matches[matchId]`. `ReplayVerifier.verify` runs zero
+iterations of its loop and returns `AwaleRules.initialState()` with `over = false`,
+which `MatchEscrow.challenge` interprets as "game still live" and calls `_void`, refunding
+both players. A participant who already has signed move messages can equally submit a valid
+prefix of the real game (e.g. moves 0–5 of a 40-move game) for the same effect, since
+`verify` has no completeness check.
+
+**Impact:** High — a losing player can escape any rightful loss at gas cost only. Spotted
+independently by all 12 audit agents (math-precision, access-control, economic-security,
+execution-trace, invariant, periphery, first-principles, asymmetry, boundary, numerical-gap,
+trust-gap, flow-gap).
+
+**Resolution options:**
+
+*Option A (minimal — closes zero-move attack):*
+```diff
+// ReplayVerifier.sol, after the MAX_PLIES check
+  require(t.moves.length <= MAX_PLIES, "ReplayVerifier: too many plies");
++ require(t.moves.length > 0, "ReplayVerifier: empty transcript");
+```
+Residual risk: a participant can still submit a valid game-prefix (partial transcript) via
+the same `else` branch; this requires the attacker to hold move signatures from normal play.
+
+*Option B (full — closes both empty and partial attacks):*
+Record a transcript commitment in `proposeResult` using the already-defined
+`ReplayVerifier.transcriptHash()` (currently dead code), and require the `challenge`
+transcript to match it before accepting a non-terminal replay as void-triggering. This is
+the structural fix; see `audits/pashov-ai-report` for the diff.
+
+**Note:** `ReplayVerifier.transcriptHash()` (line 101) carries the comment "Stored by
+MatchEscrow at optimistic settlement" but is never called by `MatchEscrow` — activating
+it is part of Option B.
+
+---
 
 ### [H-01] Pot theft via premature `proposeResult` on a live game — **Resolved**
 
@@ -86,6 +130,30 @@ of matches in progress.
 `_payout` uses the snapshot, so a later `setRake` cannot alter an existing match.
 (`test_rakeSnapshot_unaffectedByLaterSetRake`.)
 
+### [M-04] `proposeResult` callable after `activeDeadline` — locks out `voidExpired` — **Open**
+
+**Description.** `proposeResult` (line 226) checks `m.status == Status.Active` but not
+`block.timestamp <= m.activeDeadline`. After the match TTL expires, the expected exit is
+`voidExpired` (both players refunded, funds never locked). A malicious player can race
+`proposeResult` immediately after expiry, transitioning the match to `Proposed`. Since
+`voidExpired` requires `Status.Active`, the honest player's safe-exit path is permanently
+closed. If the honest player is offline for the entire `challengeWindow` that follows, the
+attacker calls `finalize` and claims the full prize.
+
+**Impact:** Medium — requires the honest player to be offline for one full challenge window
+after match expiry; in practice, the online player can still call `challenge` (even with an
+empty transcript from H-02, getting a void refund), but the `voidExpired` safety guarantee
+documented in the NatDoc is violated.
+
+**Resolution:**
+```diff
+// MatchEscrow.sol, proposeResult
+  require(m.status == Status.Active, "MatchEscrow: not active");
++ require(block.timestamp <= m.activeDeadline, "MatchEscrow: match expired");
+```
+
+---
+
 ### [M-03] Stakes can be locked forever by a silent opponent — **Resolved**
 
 **Description.** An `Active` match with no `settleSigned`/`proposeResult` had no exit:
@@ -120,6 +188,24 @@ hash. `proposeResult` now requires `startTurn != START_UNSET`, so a game cannot 
 settled before its flip is fixed. Covered by `test_finalizeStart_fixesFirstMover`,
 `test_finalizeStart_revertsBeforeRevealBlock`, `test_finalizeStart_revertsOnceFixed`,
 `test_proposeResult_revertsBeforeStartFinalized`.
+
+### [L-04] `challenge` has no caller restriction — third-party griefing — **Open**
+
+`challenge` (line 248) contains no `msg.sender` guard. The NatDoc says "the opponent
+overturns a false claim" but the code allows any address. Combined with H-02, any address
+can void any `Proposed` match at gas cost only. Even after H-02 is fixed, a participant
+who obtained signed move messages through normal play can trigger the partial-transcript
+path against any of their own matches. Restricting callers to match participants reduces
+the attack surface to colluding or self-interested actors.
+
+**Resolution:**
+```diff
+  function challenge(uint256 matchId, ReplayVerifier.Transcript calldata t) external nonReentrant {
+      Match storage m = matches[matchId];
++     require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
+```
+
+---
 
 ### [L-02] Privileged owner is a trust assumption — *acknowledged*
 
@@ -211,13 +297,37 @@ fixes and regression tests**. A subsequent revision closed **L-01** (joiner-grin
 randomness) by deferring the first-move flip to a future block's hash instead of
 data the joiner already controls; this introduced one new, strictly narrower
 acknowledged Low (**L-03** — proposer-only, not joiner, influence) and one
-informational liveness note (**I-02**). A fresh review pass over the redeployed
-code surfaced no new severity findings; it confirmed two design properties now
-documented above (the finalizer cannot bias the flip by timing; the
-`startTurn`-finalization gate is intentionally asymmetric between `proposeResult`
-and `settleSigned`). Tooling on this pass: `forge fmt --check` clean, 25
-`MatchEscrow` tests / 90 across the contracts suite passing (2 skipped), and
-Slither reporting only the accepted `timestamp` (I-01) and EIP-712
-`naming-convention` notes — no High/Medium, so CI's `fail-on: high` gate passes.
-No reentrancy or access-control defects remain. An independent external audit is
-still mandatory before handling real funds.
+informational liveness note (**I-02**). A review pass over the redeployed code
+confirmed two design properties (the finalizer cannot bias the flip by timing;
+the `startTurn`-finalization gate is intentionally asymmetric between `proposeResult`
+and `settleSigned`).
+
+A subsequent adversarial pass by a 12-agent parallelized AI review (Pashov skills,
+sonnet model, 2026-06-19) surfaced two new open findings and one low:
+
+- **H-02**: The H-01 fix introduced a symmetric vulnerability: `challenge` accepts an
+  empty transcript (`moves=[], sigs=[]`), which `ReplayVerifier.verify` processes in
+  zero iterations and returns `initialState()` (non-terminal), triggering `_void` and
+  refunding both players — the losing player escapes any rightful loss at gas cost only.
+  Confirmed by all 12 agents. The `ReplayVerifier.transcriptHash()` function (currently
+  dead code from MatchEscrow's perspective) was intended to support a commitment
+  mechanism that would close this attack; it should be activated as part of the fix.
+
+- **M-04**: `proposeResult` has no guard against being called after `activeDeadline`,
+  allowing a malicious player to race `voidExpired` on an expired match and revoke the
+  honest opponent's guaranteed-refund path.
+
+- **L-04**: `challenge` has no `msg.sender` restriction, enabling any address to trigger
+  the H-02 void attack (not just match participants).
+
+**All three are resolved** — fixes and regression tests (`test_challenge_revertEmptyTranscript`,
+`test_challenge_revertNonPlayer`, `test_proposeResult_revertAfterExpiry`) added in the same
+pass. 28 MatchEscrow tests / 93 across the contracts suite passing, no failures.
+
+Note: the *partial-transcript* variant of H-02 (a participant submitting a valid game prefix
+with real move signatures) is mitigated by the `moves.length > 0` guard but not eliminated;
+the complete fix requires recording a `transcriptHash` commitment at `proposeResult` time and
+activating `ReplayVerifier.transcriptHash()` (currently dead code from MatchEscrow's
+perspective). This is tracked as a residual risk and must be addressed before mainnet.
+
+An independent external audit is still mandatory before handling real funds.

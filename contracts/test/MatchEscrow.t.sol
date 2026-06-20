@@ -158,7 +158,7 @@ contract MatchEscrowTest is Test {
         uint256 id = _createAndJoinNoFinalize();
         vm.prank(alice);
         vm.expectRevert(bytes("MatchEscrow: start not finalized"));
-        escrow.proposeResult(id, 0);
+        escrow.proposeResult(id, 0, bytes32(uint256(1)));
     }
 
     function test_cancelMatch_refunds() public {
@@ -240,7 +240,7 @@ contract MatchEscrowTest is Test {
     function test_proposeThenFinalize_paysProposedWinner() public {
         uint256 id = _createAndJoin();
         vm.prank(alice);
-        escrow.proposeResult(id, 0);
+        escrow.proposeResult(id, 0, bytes32(uint256(1)));
 
         // cannot finalize before the window elapses
         vm.expectRevert(bytes("MatchEscrow: window open"));
@@ -258,7 +258,7 @@ contract MatchEscrowTest is Test {
         uint256 id = _createAndJoin();
         vm.prank(address(0xdead));
         vm.expectRevert(bytes("MatchEscrow: not a player"));
-        escrow.proposeResult(id, 0);
+        escrow.proposeResult(id, 0, bytes32(uint256(1)));
     }
 
     // ------------------------------ challenge --------------------------- //
@@ -268,14 +268,16 @@ contract MatchEscrowTest is Test {
         uint8 startTurn = escrow.getMatch(id).startTurn;
         (ReplayVerifier.Transcript memory t, uint8 trueWinner) = _buildFullTranscript(id, startTurn);
 
-        // a liar proposes the *opposite* winner
+        // a liar proposes the *opposite* winner; commitment irrelevant (terminal path ignores it)
         uint8 liarClaim = trueWinner == 0 ? 1 : 0;
         vm.prank(bob);
-        escrow.proposeResult(id, liarClaim);
+        escrow.proposeResult(id, liarClaim, bytes32(uint256(1)));
 
         address trueWinnerAddr = trueWinner == 0 ? alice : bob;
         uint256 before = usdc.balanceOf(trueWinnerAddr);
 
+        // challenger must be a match player; alice is always player0
+        vm.prank(alice);
         escrow.challenge(id, t);
 
         uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
@@ -288,10 +290,11 @@ contract MatchEscrowTest is Test {
         uint8 startTurn = escrow.getMatch(id).startTurn;
         (ReplayVerifier.Transcript memory t,) = _buildFullTranscript(id, startTurn);
         vm.prank(alice);
-        escrow.proposeResult(id, 0);
+        escrow.proposeResult(id, 0, bytes32(uint256(1)));
 
         vm.warp(block.timestamp + WINDOW + 1);
         vm.expectRevert(bytes("MatchEscrow: window closed"));
+        vm.prank(bob);
         escrow.challenge(id, t);
     }
 
@@ -301,8 +304,9 @@ contract MatchEscrowTest is Test {
         (ReplayVerifier.Transcript memory t,) = _buildFullTranscript(id, startTurn);
         t.session0 = address(0xBEEF);
         vm.prank(alice);
-        escrow.proposeResult(id, 0);
+        escrow.proposeResult(id, 0, bytes32(uint256(1)));
         vm.expectRevert(bytes("MatchEscrow: session mismatch"));
+        vm.prank(bob);
         escrow.challenge(id, t);
     }
 
@@ -377,7 +381,8 @@ contract MatchEscrowTest is Test {
     }
 
     // [H-01] a premature proposal (game not over) is defeated: challenge with a
-    //        valid non-terminal transcript voids the match and refunds both.
+    //        valid non-terminal transcript that matches the proposer's commitment voids
+    //        the match and refunds both players.
     function test_challenge_voidsPrematureProposal() public {
         uint256 id = _createAndJoin();
         uint8 startTurn = escrow.getMatch(id).startTurn;
@@ -385,18 +390,133 @@ contract MatchEscrowTest is Test {
         // a short, valid, NON-terminal transcript (a handful of opening moves)
         ReplayVerifier.Transcript memory t = _buildPartialTranscript(id, startTurn, 6);
 
+        // proposer commits to the hash of the partial transcript they witnessed
+        bytes32 commitment = verifier.transcriptHash(id, startTurn, t.moves);
+
         // liar claims to have won a game that is still in progress
         vm.prank(alice);
-        escrow.proposeResult(id, 0);
+        escrow.proposeResult(id, 0, commitment);
 
         uint256 aBefore = usdc.balanceOf(alice);
         uint256 bBefore = usdc.balanceOf(bob);
+        // bob (the non-proposer) challenges with the same transcript — hash matches → void
+        vm.prank(bob);
         escrow.challenge(id, t);
 
         assertEq(usdc.balanceOf(alice), aBefore + STAKE, "alice refunded, not paid the pot");
         assertEq(usdc.balanceOf(bob), bBefore + STAKE, "bob refunded");
         assertEq(usdc.balanceOf(treasury), 0, "no rake");
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Voided));
+    }
+
+    // [H-02b] partial transcript with wrong commitment is rejected
+    function test_challenge_revertTranscriptMismatch() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+
+        // short non-terminal transcript (6 moves)
+        ReplayVerifier.Transcript memory shortT = _buildPartialTranscript(id, startTurn, 6);
+
+        // proposer commits to a DIFFERENT hash (attacker scenario: wrong commitment)
+        vm.prank(alice);
+        escrow.proposeResult(id, 0, bytes32(uint256(0xDEAD)));
+
+        // loser submits the short transcript, but its hash ≠ commitment → revert
+        vm.expectRevert(bytes("MatchEscrow: transcript mismatch"));
+        vm.prank(bob);
+        escrow.challenge(id, shortT);
+    }
+
+    // [fix2] challengeWindow snapshot — owner change after join must not affect in-flight match
+    function test_challengeWindowSnapshot_unaffectedByOwnerChange() public {
+        uint256 id = _createAndJoin();
+
+        // owner doubles the challenge window after the match is created
+        vm.prank(owner);
+        escrow.setChallengeWindow(WINDOW * 2);
+
+        // propose and measure the actual deadline stored in the match
+        vm.prank(alice);
+        uint64 before = uint64(block.timestamp);
+        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        MatchEscrow.Match memory m = escrow.getMatch(id);
+
+        // deadline should use the snapshotted window (WINDOW), not the new doubled one
+        assertEq(m.challengeDeadline, before + WINDOW, "uses snapshotted window");
+    }
+
+    // [fix2] setChallengeWindow must enforce minimum
+    function test_setChallengeWindow_revertBelowMin() public {
+        uint64 minWindow = escrow.MIN_CHALLENGE_WINDOW(); // read before prank to avoid consuming it
+        vm.prank(owner);
+        vm.expectRevert(bytes("MatchEscrow: window too short"));
+        escrow.setChallengeWindow(minWindow - 1);
+    }
+
+    // [fix3] voidExpired also works when the match is Proposed but the TTL has elapsed
+    function test_voidExpired_worksOnProposedExpiredMatch() public {
+        uint256 id = _createAndJoin();
+
+        // propose before TTL expires
+        vm.prank(alice);
+        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Proposed));
+
+        // TTL elapses (activeDeadline passes) while match is still Proposed
+        vm.warp(block.timestamp + TTL + 1);
+
+        uint256 aBefore = usdc.balanceOf(alice);
+        uint256 bBefore = usdc.balanceOf(bob);
+        vm.prank(bob);
+        escrow.voidExpired(id);
+
+        assertEq(usdc.balanceOf(alice), aBefore + STAKE, "alice refunded");
+        assertEq(usdc.balanceOf(bob), bBefore + STAKE, "bob refunded");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Voided));
+    }
+
+    // [H-02] empty transcript must be rejected — not treated as "game still live"
+    function test_challenge_revertEmptyTranscript() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+
+        vm.prank(alice);
+        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+
+        MatchEscrow.Match memory m = escrow.getMatch(id);
+        ReplayVerifier.Transcript memory empty = ReplayVerifier.Transcript({
+            matchId: id,
+            session0: m.session0,
+            session1: m.session1,
+            startTurn: startTurn,
+            moves: new uint8[](0),
+            sigs: new bytes[](0)
+        });
+        vm.expectRevert(bytes("ReplayVerifier: empty transcript"));
+        vm.prank(bob);
+        escrow.challenge(id, empty);
+    }
+
+    // [L-04] non-player cannot call challenge
+    function test_challenge_revertNonPlayer() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        (ReplayVerifier.Transcript memory t,) = _buildFullTranscript(id, startTurn);
+        vm.prank(alice);
+        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+
+        vm.expectRevert(bytes("MatchEscrow: not a player"));
+        vm.prank(address(0xdead));
+        escrow.challenge(id, t);
+    }
+
+    // [M-04] proposeResult must revert on an expired match
+    function test_proposeResult_revertAfterExpiry() public {
+        uint256 id = _createAndJoin();
+        vm.warp(block.timestamp + TTL + 1);
+        vm.expectRevert(bytes("MatchEscrow: match expired"));
+        vm.prank(alice);
+        escrow.proposeResult(id, 0, bytes32(uint256(1)));
     }
 
     function _buildPartialTranscript(uint256 matchId, uint8 startTurn, uint256 plies)

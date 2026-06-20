@@ -52,11 +52,14 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         uint64 challengeDeadline; // timestamp the challenge window closes
         uint64 activeDeadline; // timestamp after which an unsettled Active match can be voided
         uint64 revealBlock; // block whose hash fixes startTurn (set at join, unknown to the joiner)
+        uint64 challengeWindow; // window duration snapshotted at join (owner cannot change mid-match)
+        bytes32 transcriptCommitment; // keccak hash of the proposer's game transcript (set at proposeResult)
     }
 
     uint16 public constant MAX_RAKE_BPS = 1000; // hard cap: rake can never exceed 10%
     uint16 public constant BPS = 10_000;
     uint8 internal constant DRAW = 2;
+    uint64 public constant MIN_CHALLENGE_WINDOW = 5 minutes; // owner cannot set below this
 
     // First-move randomness: the coin flip is derived from the hash of a *future*
     // block chosen at join time, so the joiner cannot grind their address to bias
@@ -108,6 +111,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         require(verifier_ != address(0), "MatchEscrow: verifier zero");
         require(treasury_ != address(0), "MatchEscrow: treasury zero");
         require(rakeBps_ <= MAX_RAKE_BPS, "MatchEscrow: rake too high");
+        require(challengeWindow_ >= MIN_CHALLENGE_WINDOW, "MatchEscrow: window too short");
         verifier = ReplayVerifier(verifier_);
         treasury = treasury_;
         rakeBps = rakeBps_;
@@ -155,6 +159,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         m.session1 = session1;
         m.status = Status.Active;
         m.activeDeadline = uint64(block.timestamp) + matchTtl;
+        m.challengeWindow = challengeWindow; // snapshot: a later setChallengeWindow cannot affect this match
         // Defer the first-move flip to a future block's hash. The joiner cannot
         // know blockhash(revealBlock) now, so they cannot grind it; finalizeStart
         // fixes it once that block is mined.
@@ -221,32 +226,41 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     /// @notice Abandonment / refusal path: a participant claims the result and
     ///         opens the challenge window. If the claim is false, the opponent
     ///         overturns it with {challenge}; otherwise {finalize} pays out.
-    function proposeResult(uint256 matchId, uint8 winner) external {
+    /// @param commitment  verifier.transcriptHash(matchId, startTurn, allMoves) — the
+    ///                    proposer binds to the specific move sequence they witnessed.
+    ///                    A challenger who disputes with a *non-terminal* transcript
+    ///                    must produce one that hashes to this exact value; submitting
+    ///                    a different (e.g., partial) transcript reverts instead of
+    ///                    voiding. This closes the partial-transcript escape attack.
+    function proposeResult(uint256 matchId, uint8 winner, bytes32 commitment) external {
         Match storage m = matches[matchId];
         require(m.status == Status.Active, "MatchEscrow: not active");
+        require(block.timestamp <= m.activeDeadline, "MatchEscrow: match expired");
         require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
         require(winner <= DRAW, "MatchEscrow: bad winner");
+        require(commitment != bytes32(0), "MatchEscrow: zero commitment");
         // a game cannot have a result before its first move is fixed; this also
         // guarantees {challenge}'s `t.startTurn == m.startTurn` is meaningful
         require(m.startTurn != START_UNSET, "MatchEscrow: start not finalized");
 
         m.proposedWinner = winner;
+        m.transcriptCommitment = commitment;
         m.status = Status.Proposed;
-        m.challengeDeadline = uint64(block.timestamp) + challengeWindow;
+        m.challengeDeadline = uint64(block.timestamp) + m.challengeWindow;
         emit ResultProposed(matchId, winner, m.challengeDeadline);
     }
 
     /// @notice Overturn (or confirm) a proposed result by replaying the full
     ///         signed transcript on-chain.
-    /// @dev Two outcomes, both of which defeat a dishonest proposal:
-    ///        - the transcript proves a terminal game: the verifier's winner is
-    ///          canonical and is paid out, ignoring the proposed winner;
-    ///        - the transcript is valid but *not* terminal: it proves the game
-    ///          was still live, so the proposal was premature — the match is
-    ///          voided and both stakes are refunded. A liar therefore can never
-    ///          turn a false proposal into a payout, only into a refund.
+    /// @dev Two outcomes:
+    ///        - terminal transcript: the verifier's winner is canonical and
+    ///          is paid out, ignoring the proposed winner.
+    ///        - non-terminal transcript: the game was still live, so the
+    ///          proposal was premature — but only if the transcript hashes to
+    ///          the proposer's commitment (prevents escape via partial transcript).
     function challenge(uint256 matchId, ReplayVerifier.Transcript calldata t) external nonReentrant {
         Match storage m = matches[matchId];
+        require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
         require(m.status == Status.Proposed, "MatchEscrow: not proposed");
         require(block.timestamp <= m.challengeDeadline, "MatchEscrow: window closed");
 
@@ -258,10 +272,17 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         AwaleRules.GameState memory state = verifier.verify(t);
 
         if (state.over) {
+            // terminal: canonical winner is paid regardless of the proposer's claim
             emit ResultChallenged(matchId, state.winner);
             _payout(matchId, m, state.winner);
         } else {
-            // provably premature proposal: refund both, no winner, no rake
+            // non-terminal: only void if the transcript matches the proposer's commitment.
+            // Requiring the hash prevents a losing challenger from submitting a short
+            // prefix of the real game to manufacture a false "game-still-live" proof.
+            require(
+                verifier.transcriptHash(t.matchId, t.startTurn, t.moves) == m.transcriptCommitment,
+                "MatchEscrow: transcript mismatch"
+            );
             _void(matchId, m);
         }
     }
@@ -278,9 +299,12 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     /// @notice Reclaim stakes from a match that was joined but never settled.
     ///         Callable by either player once the match TTL has elapsed; refunds
     ///         both so funds can never be locked forever by a silent opponent.
+    /// @dev    Also accepts Proposed status: if the challenge window overlaps the
+    ///         TTL expiry, the match may be Proposed-but-expired. Allowing voidExpired
+    ///         here ensures neither player is permanently locked out of a refund.
     function voidExpired(uint256 matchId) external nonReentrant {
         Match storage m = matches[matchId];
-        require(m.status == Status.Active, "MatchEscrow: not active");
+        require(m.status == Status.Active || m.status == Status.Proposed, "MatchEscrow: not active or proposed");
         require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
         require(block.timestamp > m.activeDeadline, "MatchEscrow: not expired");
 
@@ -349,6 +373,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     }
 
     function setChallengeWindow(uint64 challengeWindow_) external onlyOwner {
+        require(challengeWindow_ >= MIN_CHALLENGE_WINDOW, "MatchEscrow: window too short");
         challengeWindow = challengeWindow_;
         emit ChallengeWindowUpdated(challengeWindow_);
     }

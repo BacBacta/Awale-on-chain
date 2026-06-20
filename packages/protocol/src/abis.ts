@@ -74,6 +74,13 @@ export const matchEscrowAbi = [
   },
   {
     type: "function",
+    name: "rakeBps",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint16" }],
+  },
+  {
+    type: "function",
     name: "getMatch",
     stateMutability: "view",
     inputs: [{ name: "matchId", type: "uint256" }],

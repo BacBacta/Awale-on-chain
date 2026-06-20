@@ -32,7 +32,8 @@ contract FullMatch is Script {
         vm.startBroadcast(p1Pk);
         IERC20(usdm).approve(escrowAddr, stake);
         escrow.joinMatch(matchId, address(0x0000000000000000000000000000000000000002));
-        escrow.proposeResult(matchId, 0);
+        // commitment = keccak of an empty move list (script only; real client passes the actual game hash)
+        escrow.proposeResult(matchId, 0, keccak256(abi.encode(matchId, uint8(0), new uint8[](0))));
         vm.stopBroadcast();
 
         console2.log("joined + proposed winner=player0; finalize after the window");
