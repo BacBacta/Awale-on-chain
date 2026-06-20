@@ -1,0 +1,78 @@
+"use client";
+
+// A player's identity strip beside the board: avatar, name, captured-seed score,
+// and an active-turn highlight. Mirrors the framing of premium board-game apps.
+
+function avatarGradient(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) % 360;
+  return `linear-gradient(135deg, hsl(${h} 62% 52%), hsl(${(h + 40) % 360} 60% 38%))`;
+}
+
+export function PlayerPanel({
+  name,
+  score,
+  active,
+  you,
+  thinking,
+}: {
+  name: string;
+  score: number;
+  active: boolean;
+  you?: boolean;
+  thinking?: boolean;
+}) {
+  const initial = (name.trim()[0] ?? "?").toUpperCase();
+  return (
+    <div
+      className="row"
+      style={{
+        gap: 12,
+        padding: "10px 14px",
+        borderRadius: 14,
+        background: active ? "linear-gradient(180deg, rgba(61,220,111,0.12), rgba(61,220,111,0.04))" : "var(--panel)",
+        boxShadow: active ? "inset 0 0 0 1.5px rgba(61,220,111,0.5)" : "inset 0 0 0 1px var(--line)",
+        transition: "background 220ms var(--ease-out), box-shadow 220ms var(--ease-out)",
+      }}
+    >
+      <div className="row" style={{ gap: 12 }}>
+        <div
+          aria-hidden
+          style={{
+            width: 38,
+            height: 38,
+            borderRadius: "50%",
+            background: avatarGradient(name),
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontWeight: 800,
+            fontSize: 16,
+            color: "#0b0f0a",
+            boxShadow: active ? "0 0 0 2px var(--accent)" : "none",
+          }}
+        >
+          {initial}
+        </div>
+        <div className="col">
+          <span style={{ fontWeight: 700, fontSize: 14 }}>
+            {name}
+            {you && <span className="faint" style={{ marginLeft: 6 }}>(you)</span>}
+          </span>
+          <span className="faint">
+            {active ? (
+              <span style={{ color: "var(--accent)", fontWeight: 650 }}>
+                {thinking ? "thinking…" : "to move"}
+              </span>
+            ) : (
+              "waiting"
+            )}
+          </span>
+        </div>
+      </div>
+      <span className="title score" aria-label={`${score} captured`}>
+        {score}
+      </span>
+    </div>
+  );
+}

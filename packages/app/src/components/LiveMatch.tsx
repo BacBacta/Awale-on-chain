@@ -11,6 +11,12 @@ import { escrowConfig } from "../lib/escrow.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 import { legalMovesMask, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "./Board.js";
+import { GameOverlay } from "./GameOverlay.js";
+import { PlayerPanel } from "./PlayerPanel.js";
+import { computePayout, fmt } from "../lib/money.js";
+
+const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
+const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
 
@@ -27,10 +33,13 @@ export function LiveMatch({ matchId }: { matchId: bigint }) {
   const [ply, setPly] = useState(0);
   const [role, setRole] = useState<0 | 1 | null>(null);
   const [status, setStatus] = useState("Connecting…");
+  const [outcome, setOutcome] = useState<0 | 1 | 2 | null>(null); // viewer perspective
+  const [settled, setSettled] = useState(false);
 
   const session = useRef<SessionKey | null>(null);
   const socket = useRef<Socket | null>(null);
   const ctx = useRef<{ chainId: bigint; verifier: Address } | null>(null);
+  const stakeInfo = useRef<{ stake: bigint; rakeBps: number } | null>(null);
 
   useEffect(() => {
     const cfg = escrowConfig();
@@ -53,7 +62,8 @@ export function LiveMatch({ matchId }: { matchId: bigint }) {
         abi: matchEscrowAbi,
         functionName: "getMatch",
         args: [matchId],
-      })) as { player0: Address; player1: Address };
+      })) as { player0: Address; player1: Address; stake: bigint; rakeBps: number };
+      stakeInfo.current = { stake: m.stake, rakeBps: Number(m.rakeBps) };
 
       const myRole =
         address.toLowerCase() === m.player0.toLowerCase()
@@ -86,6 +96,7 @@ export function LiveMatch({ matchId }: { matchId: bigint }) {
       });
       sock.on("gameover", async (msg: { winner: number }) => {
         setStatus(msg.winner === myRole ? "You win 🎉" : msg.winner === 2 ? "Draw" : "You lose");
+        setOutcome(msg.winner === myRole ? 0 : msg.winner === 2 ? 2 : 1);
         if (session.current && ctx.current) {
           const sig = await signResult(session.current, matchId, msg.winner, {
             chainId: ctx.current.chainId,
@@ -94,7 +105,10 @@ export function LiveMatch({ matchId }: { matchId: bigint }) {
           sock!.emit("result-sig", { matchId: matchId.toString(), signature: sig });
         }
       });
-      sock.on("settled", () => setStatus((s) => `${s} · settled on-chain ✅`));
+      sock.on("settled", () => {
+        setSettled(true);
+        setStatus((s) => `${s} · settled on-chain ✅`);
+      });
       sock.on("error", (e: { message: string }) => setStatus(e.message));
     })().catch((e) => setStatus((e as Error).message));
 
@@ -113,27 +127,63 @@ export function LiveMatch({ matchId }: { matchId: bigint }) {
   const myTurn = state !== null && role !== null && !state.over && state.turn === role;
   const playable = myTurn ? legalHouses(state) : [];
 
+  const myScore = role === 1 ? state?.store1 : state?.store0;
+  const oppScore = role === 1 ? state?.store0 : state?.store1;
+
   return (
-    <main className="pad" style={{ display: "flex", flexDirection: "column", gap: 16, flex: 1 }}>
+    <main className="pad stack" style={{ flex: 1, gap: 16, position: "relative" }}>
       <div className="row">
-        <Link className="muted" href="/">
+        <Link className="btn ghost" href="/" style={{ padding: "6px 10px" }}>
           ← Back
         </Link>
-        <span className="muted">match #{matchId.toString()}</span>
+        <span className="row" style={{ gap: 8 }}>
+          {settled && (
+            <span className="chip positive">
+              <span className="dot" />
+              settled
+            </span>
+          )}
+          <span className="chip">match #{matchId.toString()}</span>
+        </span>
       </div>
 
       {state ? (
         <>
+          <PlayerPanel
+            name="Opponent"
+            score={oppScore ?? 0}
+            active={!state.over && role !== null && state.turn !== role}
+          />
           <Board state={state} perspective={role ?? 0} onPlay={play} playable={playable} />
-          <div className="card row">
-            <span className="muted">{state.over ? status : myTurn ? "Your turn" : "Opponent…"}</span>
-            <span className="title">
-              {role === 1 ? state.store1 : state.store0} – {role === 1 ? state.store0 : state.store1}
-            </span>
-          </div>
+          <PlayerPanel name="You" you score={myScore ?? 0} active={myTurn} />
+          {state.over && (
+            <div className="row" style={{ justifyContent: "center" }}>
+              <span className="chip">
+                <span className="dot" />
+                {status}
+              </span>
+            </div>
+          )}
         </>
       ) : (
-        <div className="card muted">{status}</div>
+        <div className="card">
+          <span className="chip">
+            <span className="dot pulse" />
+            {status}
+          </span>
+        </div>
+      )}
+
+      {outcome !== null && state?.over && (
+        <GameOverlay
+          result={outcome}
+          payout={
+            outcome === 0 && stakeInfo.current
+              ? `${fmt(computePayout(stakeInfo.current.stake, stakeInfo.current.rakeBps).prize, STAKE_DECIMALS)} ${STAKE_SYMBOL}`
+              : undefined
+          }
+          onPlayAgain={() => (window.location.href = "/")}
+        />
       )}
     </main>
   );

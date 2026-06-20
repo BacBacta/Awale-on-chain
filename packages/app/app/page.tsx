@@ -35,15 +35,19 @@ export default function Lobby() {
   }, []);
 
   return (
-    <main className="pad" style={{ display: "flex", flexDirection: "column", gap: 16, flex: 1 }}>
+    <main className="pad stack" style={{ flex: 1, gap: 16 }}>
       <div className="row">
         <span className="title">Awalé</span>
         {address ? (
-          <span className="muted" title={address}>
+          <span className="chip positive" title={address}>
+            <span className="dot" />
             {shortAddress(address)}
           </span>
         ) : (
-          <span className="muted">{inMiniPay ? "Connecting…" : "Open in MiniPay"}</span>
+          <span className="chip">
+            <span className={`dot ${inMiniPay ? "pulse" : ""}`} />
+            {inMiniPay ? "Connecting…" : "Open in MiniPay"}
+          </span>
         )}
       </div>
 
@@ -55,25 +59,29 @@ export default function Lobby() {
         )
       ) : (
         <>
-          <div className="card" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-            <span className="muted">Stake</span>
-            <span className="title">Play for stablecoin</span>
-            <span className="muted">Winner takes the pot, minus a small protocol fee.</span>
+          <div className="card animate-in" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <span className="chip gold" style={{ alignSelf: "flex-start" }}>
+              One of the oldest games on Earth
+            </span>
+            <span className="display">Play Awalé for stablecoin</span>
+            <span className="muted">
+              Sow, capture, and win the pot. Non-custodial · winner takes the stake, minus a small protocol fee.
+            </span>
           </div>
-          <Link className="btn" href="/play">
+          <Link className="btn block" href="/play">
             Play a demo game
           </Link>
         </>
       )}
 
-      <a className="btn secondary" href={addCashDeeplink()}>
+      <a className="btn secondary block" href={addCashDeeplink()}>
         Deposit stablecoin
       </a>
 
-      <div style={{ flex: 1 }} />
+      <div className="spacer" />
 
-      <Link className="muted" href="/stats" style={{ textAlign: "center" }}>
-        View stats
+      <Link className="btn ghost block" href="/stats">
+        View stats →
       </Link>
     </main>
   );

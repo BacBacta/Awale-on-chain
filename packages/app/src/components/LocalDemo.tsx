@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { initialState, applyMove, legalMovesMask, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "./Board.js";
+import { GameOverlay } from "./GameOverlay.js";
+import { PlayerPanel } from "./PlayerPanel.js";
 import { createSessionKey, signMove, type SessionKey } from "../lib/session.js";
 
 // Demo context — in a real match these come from the on-chain join events.
@@ -17,22 +19,27 @@ function legalHouses(s: GameState): number[] {
   return out;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /** Self-contained game vs a trivial bot — no server or chain needed. */
 export function LocalDemo() {
   const [state, setState] = useState<GameState>(() => initialState());
   const [ply, setPly] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [thinking, setThinking] = useState(false);
+  const [showOverlay, setShowOverlay] = useState(false);
 
   const sessions = useMemo<[SessionKey, SessionKey]>(() => [createSessionKey(), createSessionKey()], []);
 
-  const playable = state.turn === 0 && !state.over ? legalHouses(state) : [];
-  const result = state.over
-    ? state.winner === 0
-      ? "You win 🎉"
-      : state.winner === 1
-        ? "You lose"
-        : "Draw"
-    : null;
+  useEffect(() => {
+    if (state.over) {
+      const t = setTimeout(() => setShowOverlay(true), 600);
+      return () => clearTimeout(t);
+    }
+  }, [state.over]);
+
+  const playable = state.turn === 0 && !state.over && !busy ? legalHouses(state) : [];
+  const result: 0 | 1 | 2 | null = state.over ? (state.winner as 0 | 1 | 2) : null;
 
   async function play(house: number) {
     if (busy || state.over || state.turn !== 0) return;
@@ -41,48 +48,48 @@ export function LocalDemo() {
       await signMove(sessions[0], DEMO_MATCH_ID, BigInt(ply), house, DEMO_CTX);
       let next = applyMove(state, house);
       let p = ply + 1;
+      setState(next);
+      setPly(p);
+
+      // Bot plays its turn(s) with a short "thinking" beat so the board reads.
       while (!next.over && next.turn === 1) {
+        setThinking(true);
+        await sleep(550 + Math.random() * 350);
         const botHouse = legalHouses(next)[0];
         await signMove(sessions[1], DEMO_MATCH_ID, BigInt(p), botHouse, DEMO_CTX);
         next = applyMove(next, botHouse);
         p += 1;
+        setState(next);
+        setPly(p);
       }
-      setState(next);
-      setPly(p);
     } finally {
+      setThinking(false);
       setBusy(false);
     }
   }
 
+  function reset() {
+    setShowOverlay(false);
+    setState(initialState());
+    setPly(0);
+  }
+
   return (
-    <main className="pad" style={{ display: "flex", flexDirection: "column", gap: 16, flex: 1 }}>
+    <main className="pad stack" style={{ flex: 1, gap: 12, position: "relative" }}>
       <div className="row">
-        <Link className="muted" href="/">
+        <Link className="btn ghost" href="/" style={{ padding: "6px 10px" }}>
           ← Back
         </Link>
-        <span className="muted">demo · move {ply}</span>
+        <span className="chip">demo · move {ply}</span>
       </div>
+
+      <PlayerPanel name="Bot" score={state.store1} active={state.turn === 1 && !state.over} thinking={thinking} />
 
       <Board state={state} onPlay={play} playable={playable} />
 
-      <div className="card row">
-        <span className="muted">{result ?? (state.turn === 0 ? "Your turn" : "Opponent…")}</span>
-        <span className="title">
-          {state.store0} – {state.store1}
-        </span>
-      </div>
+      <PlayerPanel name="You" you score={state.store0} active={state.turn === 0 && !state.over} />
 
-      {state.over && (
-        <button
-          className="btn"
-          onClick={() => {
-            setState(initialState());
-            setPly(0);
-          }}
-        >
-          Play again
-        </button>
-      )}
+      {showOverlay && result !== null && <GameOverlay result={result} onPlayAgain={reset} />}
     </main>
   );
 }
