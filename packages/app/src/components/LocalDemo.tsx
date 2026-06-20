@@ -57,12 +57,12 @@ export function LocalDemo() {
       const playerDur = moveDurationMs(seedsOf(state, house));
       setState(next);
       setPly(p);
-      await sleep(playerDur + 450); // sow + a beat to read the result
+      await sleep(playerDur + 650); // sow + a beat to read the result
 
       // Bot plays its turn(s): visible "thinking", then a slow, readable sow.
       while (!next.over && next.turn === 1) {
         setThinking(true);
-        await sleep(900 + Math.random() * 500);
+        await sleep(1200 + Math.random() * 600);
         const botHouse = legalHouses(next)[0];
         const botDur = moveDurationMs(seedsOf(next, 6 + botHouse));
         setThinking(false);
@@ -71,7 +71,7 @@ export function LocalDemo() {
         p += 1;
         setState(next);
         setPly(p);
-        await sleep(botDur + 500); // sow + a beat to read before handing back
+        await sleep(botDur + 700); // sow + a beat to read before handing back
       }
     } finally {
       setThinking(false);

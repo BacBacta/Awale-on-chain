@@ -22,8 +22,8 @@ const MAX_SEEDS = 14; // visible seed dots before we rely on the count badge
 
 // Sow pacing — deliberately readable so a newcomer can follow each seed. Shared
 // with the demo so it can sequence the bot's reply after the board settles.
-export const SOW_MS = 175; // per-seed drop cadence
-export const SETTLE_MS = 320; // dwell after a move settles (capture flash, read)
+export const SOW_MS = 215; // per-seed drop cadence
+export const SETTLE_MS = 380; // dwell after a move settles (capture flash, read)
 
 /** How long the board will spend animating a move of `seeds` seeds. */
 export function moveDurationMs(seeds: number): number {
@@ -150,15 +150,14 @@ function Pit({
           <animate attributeName="opacity" values="1;0.45;1" dur="1.3s" repeatCount="indefinite" />
         </circle>
       )}
-      {/* seeds — glossy beads with a highlight */}
+      {/* seeds — cowrie-shell sprites, each rotated for a natural pile */}
       {SEED_SLOTS.slice(0, shown).map((s, i) => (
         <g
           key={i}
-          filter="url(#seedShadow)"
+          transform={`rotate(${(i * 73) % 360} ${x + s.dx} ${y + s.dy})`}
           style={i >= prevSeeds ? { animation: "pop-in 220ms cubic-bezier(0.34,1.56,0.64,1) both" } : undefined}
         >
-          <circle cx={x + s.dx} cy={y + s.dy} r={5} fill="url(#seedGrad)" />
-          <circle cx={x + s.dx - 1.5} cy={y + s.dy - 1.7} r={1.5} fill="rgba(255,250,235,0.85)" />
+          <use href="#cowrie" x={x + s.dx - 7} y={y + s.dy - 5} width={14} height={10} />
         </g>
       ))}
       {/* engraved count below the pit */}
@@ -263,19 +262,16 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
       style={{ filter: "drop-shadow(0 16px 34px rgba(0,0,0,0.55))", display: "block" }}
     >
       <defs>
-        <linearGradient id="boardGrad" x1="0" y1="0" x2="0.25" y2="1">
-          <stop offset="0" stopColor="#bc8550" />
-          <stop offset="0.4" stopColor="#90602f" />
-          <stop offset="0.8" stopColor="#6a431f" />
-          <stop offset="1" stopColor="#4a3015" />
-        </linearGradient>
-        <radialGradient id="sheen" cx="0.28" cy="0.1" r="0.9">
-          <stop offset="0" stopColor="rgba(255,236,200,0.35)" />
-          <stop offset="0.45" stopColor="rgba(255,236,200,0)" />
+        <clipPath id="boardClip">
+          <rect x="0" y="0" width={W} height={H} rx="26" />
+        </clipPath>
+        <radialGradient id="sheen" cx="0.28" cy="0.08" r="0.95">
+          <stop offset="0" stopColor="rgba(255,240,205,0.4)" />
+          <stop offset="0.45" stopColor="rgba(255,240,205,0)" />
         </radialGradient>
         <radialGradient id="vignette" cx="0.5" cy="0.5" r="0.72">
-          <stop offset="0.62" stopColor="rgba(0,0,0,0)" />
-          <stop offset="1" stopColor="rgba(20,10,2,0.55)" />
+          <stop offset="0.6" stopColor="rgba(0,0,0,0)" />
+          <stop offset="1" stopColor="rgba(18,9,2,0.6)" />
         </radialGradient>
         <radialGradient id="pitGrad" cx="0.5" cy="0.3" r="0.9">
           <stop offset="0" stopColor="#3a2616" />
@@ -286,14 +282,6 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
           <stop offset="0" stopColor="#33210f" />
           <stop offset="1" stopColor="#0c0703" />
         </radialGradient>
-        <radialGradient id="seedGrad" cx="0.36" cy="0.28" r="0.9">
-          <stop offset="0" stopColor="#fff2d4" />
-          <stop offset="0.5" stopColor="#f0cf86" />
-          <stop offset="1" stopColor="#bd8b3e" />
-        </radialGradient>
-        <filter id="seedShadow" x="-50%" y="-50%" width="200%" height="200%">
-          <feDropShadow dx="0" dy="1.2" stdDeviation="0.9" floodColor="#000" floodOpacity="0.55" />
-        </filter>
         <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur stdDeviation="2.5" />
         </filter>
@@ -304,41 +292,54 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
-        <filter id="grain">
-          <feTurbulence type="fractalNoise" baseFrequency="0.018 0.42" numOctaves="3" seed="7" stitchTiles="stitch" />
-          <feColorMatrix type="saturate" values="0" />
-          <feComponentTransfer>
-            <feFuncA type="linear" slope="0.16" />
-          </feComponentTransfer>
-          <feComposite operator="in" in2="SourceGraphic" />
-        </filter>
+        {/* cowrie-shell seed sprite (with a baked soft shadow) */}
+        <radialGradient id="cowrieBody" cx="0.38" cy="0.3" r="0.95">
+          <stop offset="0" stopColor="#fff7e6" />
+          <stop offset="0.55" stopColor="#eed3a1" />
+          <stop offset="1" stopColor="#c39e5d" />
+        </radialGradient>
+        <symbol id="cowrie" viewBox="0 0 14 10">
+          <ellipse cx="7" cy="6" rx="6.6" ry="4.4" fill="rgba(0,0,0,0.3)" />
+          <ellipse cx="7" cy="5" rx="6.6" ry="4.4" fill="url(#cowrieBody)" stroke="#a9824a" strokeWidth="0.3" />
+          <ellipse cx="5.2" cy="3.4" rx="2.1" ry="1.2" fill="rgba(255,255,255,0.45)" />
+          <ellipse cx="7" cy="5" rx="1.15" ry="3.3" fill="#6b4d28" />
+          <g stroke="#efdcae" strokeWidth="0.5" strokeLinecap="round">
+            <line x1="6.1" y1="2.4" x2="7.9" y2="2.4" />
+            <line x1="6" y1="3.4" x2="8" y2="3.4" />
+            <line x1="6" y1="4.4" x2="8" y2="4.4" />
+            <line x1="6" y1="5.4" x2="8" y2="5.4" />
+            <line x1="6" y1="6.4" x2="8" y2="6.4" />
+            <line x1="6.1" y1="7.4" x2="7.9" y2="7.4" />
+          </g>
+        </symbol>
       </defs>
 
-      {/* board body: wood + directional grain + sheen + vignette + framed rim */}
-      <rect x="0" y="0" width={W} height={H} rx="26" fill="url(#boardGrad)" />
-      <rect x="0" y="0" width={W} height={H} rx="26" fill="#1a0e03" filter="url(#grain)" />
-      <rect x="0" y="0" width={W} height={H} rx="26" fill="url(#sheen)" />
-      <rect x="0" y="0" width={W} height={H} rx="26" fill="url(#vignette)" />
-      <rect x="4" y="4" width={W - 8} height={H - 8} rx="22" fill="none" stroke="rgba(0,0,0,0.4)" strokeWidth="3" />
-      <rect x="8" y="8" width={W - 16} height={H - 16} rx="18" fill="none" stroke="rgba(255,231,185,0.16)" strokeWidth="1.5" />
+      {/* board body: photographic wood + sheen + vignette + framed rim */}
+      <g clipPath="url(#boardClip)">
+        <image href="/assets/wood.png" x="0" y="0" width={W} height={H} preserveAspectRatio="xMidYMid slice" />
+        <rect x="0" y="0" width={W} height={H} fill="url(#sheen)" />
+        <rect x="0" y="0" width={W} height={H} fill="url(#vignette)" />
+      </g>
+      <rect x="2" y="2" width={W - 4} height={H - 4} rx="25" fill="none" stroke="rgba(0,0,0,0.45)" strokeWidth="3.5" />
+      <rect x="7" y="7" width={W - 14} height={H - 14} rx="19" fill="none" stroke="rgba(255,233,188,0.18)" strokeWidth="1.5" />
 
-      {/* stores: opponent (left), you (right) — carved wells with piled seeds */}
+      {/* stores: opponent (left), you (right) — carved wells with cowrie piles */}
       {([
         { x: 37, count: oppStore },
         { x: W - 37, count: myStore },
       ] as const).map(({ x, count }, si) => (
         <g key={si}>
+          <ellipse cx={x} cy={H / 2 + 2} rx="25" ry={(H - 64) / 2} fill="#000" opacity={0.4} filter="url(#soft)" />
           <rect x={x - 23} y="36" width="46" height={H - 72} rx="22" fill="url(#storeGrad)" />
           <rect x={x - 23} y="36" width="46" height={H - 72} rx="22" fill="none" stroke="rgba(0,0,0,0.5)" strokeWidth="2" />
           <rect x={x - 21} y="38" width="42" height={H - 76} rx="20" fill="none" stroke="rgba(255,228,180,0.12)" strokeWidth="1.2" />
           {STORE_SLOTS.slice(0, Math.min(count, STORE_SLOTS.length)).map((s, i) => (
-            <g key={i} filter="url(#seedShadow)">
-              <circle cx={x + s.dx} cy={H / 2 + 18 + s.dy} r={4.6} fill="url(#seedGrad)" />
-              <circle cx={x + s.dx - 1.4} cy={H / 2 + 18 + s.dy - 1.6} r={1.4} fill="rgba(255,250,235,0.85)" />
+            <g key={i} transform={`rotate(${(i * 73) % 360} ${x + s.dx} ${H / 2 + 18 + s.dy})`}>
+              <use href="#cowrie" x={x + s.dx - 6.5} y={H / 2 + 18 + s.dy - 4.6} width={13} height={9.3} />
             </g>
           ))}
-          <circle cx={x} cy={60} r={15} fill="rgba(0,0,0,0.35)" />
-          <text x={x} y={66} textAnchor="middle" fontSize="20" fontWeight="800" fill="var(--seed-light)">
+          <circle cx={x} cy={58} r={15} fill="rgba(0,0,0,0.45)" />
+          <text x={x} y={64} textAnchor="middle" fontSize="20" fontWeight="800" fill="var(--seed-light)">
             {count}
           </text>
         </g>
