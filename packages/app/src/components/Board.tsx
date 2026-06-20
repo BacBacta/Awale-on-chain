@@ -22,8 +22,8 @@ const MAX_SEEDS = 14; // visible seed dots before we rely on the count badge
 
 // Sow pacing — deliberately readable so a newcomer can follow each seed. Shared
 // with the demo so it can sequence the bot's reply after the board settles.
-export const SOW_MS = 215; // per-seed drop cadence
-export const SETTLE_MS = 380; // dwell after a move settles (capture flash, read)
+export const SOW_MS = 255; // per-seed drop cadence
+export const SETTLE_MS = 430; // dwell after a move settles (capture flash, read)
 
 /** How long the board will spend animating a move of `seeds` seeds. */
 export function moveDurationMs(seeds: number): number {
