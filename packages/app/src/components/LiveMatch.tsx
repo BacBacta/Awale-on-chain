@@ -148,7 +148,7 @@ export function LiveMatch({ matchId }: { matchId: bigint }) {
       </div>
 
       {state ? (
-        <>
+        <div className="stack" style={{ flex: 1, justifyContent: "center", gap: 12 }}>
           <PlayerPanel
             name="Opponent"
             score={oppScore ?? 0}
@@ -164,7 +164,7 @@ export function LiveMatch({ matchId }: { matchId: bigint }) {
               </span>
             </div>
           )}
-        </>
+        </div>
       ) : (
         <div className="card">
           <span className="chip">

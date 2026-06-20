@@ -39,6 +39,14 @@ const SEED_SLOTS: { dx: number; dy: number }[] = Array.from({ length: MAX_SEEDS 
   return { dx: Math.cos(a) * r, dy: Math.sin(a) * r };
 });
 
+// Seeds piled in a store well — a tall, narrow deterministic scatter.
+const STORE_SLOTS: { dx: number; dy: number }[] = Array.from({ length: 24 }, (_, i) => {
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const t = (i + 0.5) / 24;
+  const a = i * golden;
+  return { dx: Math.cos(a) * 13 * Math.sqrt(t), dy: (t - 0.5) * 150 };
+});
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 function haptic(pattern: number | number[]) {
@@ -131,33 +139,34 @@ function Pit({
       {captured && (
         <circle cx={x} cy={y} r={R + 3} fill="none" stroke="var(--gold)" strokeWidth={3} style={{ animation: "flash-gold 650ms ease-out" }} />
       )}
-      {/* pit well with carved depth */}
-      <circle cx={x} cy={y} r={R} fill="url(#pitGrad)" filter="url(#pitShadow)" />
-      <circle cx={x} cy={y} r={R} fill="none" stroke="rgba(0,0,0,0.35)" strokeWidth={1.5} />
-      <circle cx={x} cy={y - 1} r={R - 2} fill="none" stroke="rgba(255,220,160,0.10)" strokeWidth={1.2} />
+      {/* carved well: cast shadow ring, recessed bowl, rim highlight */}
+      <ellipse cx={x} cy={y + 2.5} rx={R} ry={R * 0.94} fill="#000" opacity={0.45} filter="url(#soft)" />
+      <circle cx={x} cy={y} r={R} fill="url(#pitGrad)" />
+      <circle cx={x} cy={y} r={R} fill="none" stroke="rgba(0,0,0,0.55)" strokeWidth={2} />
+      <circle cx={x} cy={y - 1.5} r={R - 1.5} fill="none" stroke="rgba(255,228,180,0.16)" strokeWidth={1.4} />
       {origin && <circle cx={x} cy={y} r={R - 4} fill="none" stroke="var(--seed)" strokeWidth={2} opacity={0.5} />}
       {active && (
-        <circle cx={x} cy={y} r={R} fill="none" stroke="var(--accent)" strokeWidth={3.5}>
-          <animate attributeName="opacity" values="1;0.4;1" dur="1.3s" repeatCount="indefinite" />
+        <circle cx={x} cy={y} r={R + 0.5} fill="none" stroke="var(--accent)" strokeWidth={3.5} filter="url(#glow)">
+          <animate attributeName="opacity" values="1;0.45;1" dur="1.3s" repeatCount="indefinite" />
         </circle>
       )}
-      {/* seeds */}
-      <g filter="url(#seedShadow)">
-        {SEED_SLOTS.slice(0, shown).map((s, i) => (
-          <circle
-            key={i}
-            cx={x + s.dx}
-            cy={y + s.dy}
-            r={4.3}
-            fill="url(#seedGrad)"
-            style={i >= prevSeeds ? { animation: "pop-in 220ms cubic-bezier(0.34,1.56,0.64,1) both" } : undefined}
-          />
-        ))}
-      </g>
-      {/* count badge */}
-      <g transform={`translate(${x}, ${y + R + 2})`}>
-        <rect x={-12} y={-9} width={24} height={17} rx={8} fill="#160f08" opacity={0.92} />
-        <text x={0} y={3} textAnchor="middle" fontSize="11.5" fontWeight="800" fill="var(--seed-light)">
+      {/* seeds — glossy beads with a highlight */}
+      {SEED_SLOTS.slice(0, shown).map((s, i) => (
+        <g
+          key={i}
+          filter="url(#seedShadow)"
+          style={i >= prevSeeds ? { animation: "pop-in 220ms cubic-bezier(0.34,1.56,0.64,1) both" } : undefined}
+        >
+          <circle cx={x + s.dx} cy={y + s.dy} r={5} fill="url(#seedGrad)" />
+          <circle cx={x + s.dx - 1.5} cy={y + s.dy - 1.7} r={1.5} fill="rgba(255,250,235,0.85)" />
+        </g>
+      ))}
+      {/* engraved count below the pit */}
+      <g transform={`translate(${x}, ${y + R + 11})`}>
+        <text x={0} y={0.9} textAnchor="middle" fontSize="12.5" fontWeight="800" fill="rgba(0,0,0,0.6)">
+          {seeds}
+        </text>
+        <text x={0} y={0} textAnchor="middle" fontSize="12.5" fontWeight="800" fill="var(--seed-light)">
           {seeds}
         </text>
       </g>
@@ -254,58 +263,86 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
       style={{ filter: "drop-shadow(0 16px 34px rgba(0,0,0,0.55))", display: "block" }}
     >
       <defs>
-        <linearGradient id="boardGrad" x1="0" y1="0" x2="0.4" y2="1">
-          <stop offset="0" stopColor="var(--wood-light)" />
-          <stop offset="0.55" stopColor="var(--wood)" />
-          <stop offset="1" stopColor="var(--wood-dark)" />
+        <linearGradient id="boardGrad" x1="0" y1="0" x2="0.25" y2="1">
+          <stop offset="0" stopColor="#bc8550" />
+          <stop offset="0.4" stopColor="#90602f" />
+          <stop offset="0.8" stopColor="#6a431f" />
+          <stop offset="1" stopColor="#4a3015" />
         </linearGradient>
-        <radialGradient id="pitGrad" cx="0.5" cy="0.32" r="0.85">
-          <stop offset="0" stopColor="#241810" />
-          <stop offset="0.7" stopColor="var(--wood-deep)" />
-          <stop offset="1" stopColor="#120c06" />
+        <radialGradient id="sheen" cx="0.28" cy="0.1" r="0.9">
+          <stop offset="0" stopColor="rgba(255,236,200,0.35)" />
+          <stop offset="0.45" stopColor="rgba(255,236,200,0)" />
         </radialGradient>
-        <radialGradient id="storeGrad" cx="0.5" cy="0.25" r="0.95">
-          <stop offset="0" stopColor="#241810" />
-          <stop offset="1" stopColor="#110b05" />
+        <radialGradient id="vignette" cx="0.5" cy="0.5" r="0.72">
+          <stop offset="0.62" stopColor="rgba(0,0,0,0)" />
+          <stop offset="1" stopColor="rgba(20,10,2,0.55)" />
         </radialGradient>
-        <radialGradient id="seedGrad" cx="0.36" cy="0.3" r="0.85">
-          <stop offset="0" stopColor="var(--seed-light)" />
-          <stop offset="0.6" stopColor="var(--seed)" />
-          <stop offset="1" stopColor="var(--seed-shadow)" />
+        <radialGradient id="pitGrad" cx="0.5" cy="0.3" r="0.9">
+          <stop offset="0" stopColor="#3a2616" />
+          <stop offset="0.55" stopColor="#241710" />
+          <stop offset="1" stopColor="#0e0905" />
         </radialGradient>
-        <filter id="pitShadow" x="-30%" y="-30%" width="160%" height="160%">
-          <feOffset dx="0" dy="2" />
-          <feGaussianBlur stdDeviation="2" result="off" />
-          <feComposite in="SourceGraphic" in2="off" operator="over" />
-        </filter>
+        <radialGradient id="storeGrad" cx="0.5" cy="0.18" r="1">
+          <stop offset="0" stopColor="#33210f" />
+          <stop offset="1" stopColor="#0c0703" />
+        </radialGradient>
+        <radialGradient id="seedGrad" cx="0.36" cy="0.28" r="0.9">
+          <stop offset="0" stopColor="#fff2d4" />
+          <stop offset="0.5" stopColor="#f0cf86" />
+          <stop offset="1" stopColor="#bd8b3e" />
+        </radialGradient>
         <filter id="seedShadow" x="-50%" y="-50%" width="200%" height="200%">
-          <feDropShadow dx="0" dy="1" stdDeviation="0.8" floodColor="#000" floodOpacity="0.5" />
+          <feDropShadow dx="0" dy="1.2" stdDeviation="0.9" floodColor="#000" floodOpacity="0.55" />
+        </filter>
+        <filter id="soft" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="2.5" />
+        </filter>
+        <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="3" result="b" />
+          <feMerge>
+            <feMergeNode in="b" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
         </filter>
         <filter id="grain">
-          <feTurbulence type="fractalNoise" baseFrequency="0.9" numOctaves="2" stitchTiles="stitch" />
+          <feTurbulence type="fractalNoise" baseFrequency="0.018 0.42" numOctaves="3" seed="7" stitchTiles="stitch" />
           <feColorMatrix type="saturate" values="0" />
           <feComponentTransfer>
-            <feFuncA type="linear" slope="0.06" />
+            <feFuncA type="linear" slope="0.16" />
           </feComponentTransfer>
           <feComposite operator="in" in2="SourceGraphic" />
         </filter>
       </defs>
 
-      {/* board body with grain + framed rim */}
+      {/* board body: wood + directional grain + sheen + vignette + framed rim */}
       <rect x="0" y="0" width={W} height={H} rx="26" fill="url(#boardGrad)" />
-      <rect x="0" y="0" width={W} height={H} rx="26" fill="#000" filter="url(#grain)" />
-      <rect x="5" y="5" width={W - 10} height={H - 10} rx="22" fill="none" stroke="rgba(0,0,0,0.28)" strokeWidth="2.5" />
-      <rect x="9" y="9" width={W - 18} height={H - 18} rx="18" fill="none" stroke="rgba(255,225,170,0.10)" strokeWidth="1.5" />
+      <rect x="0" y="0" width={W} height={H} rx="26" fill="#1a0e03" filter="url(#grain)" />
+      <rect x="0" y="0" width={W} height={H} rx="26" fill="url(#sheen)" />
+      <rect x="0" y="0" width={W} height={H} rx="26" fill="url(#vignette)" />
+      <rect x="4" y="4" width={W - 8} height={H - 8} rx="22" fill="none" stroke="rgba(0,0,0,0.4)" strokeWidth="3" />
+      <rect x="8" y="8" width={W - 16} height={H - 16} rx="18" fill="none" stroke="rgba(255,231,185,0.16)" strokeWidth="1.5" />
 
-      {/* stores: opponent (left), you (right) */}
-      <rect x="14" y="34" width="46" height={H - 68} rx="22" fill="url(#storeGrad)" filter="url(#pitShadow)" />
-      <text x="37" y={H / 2 + 7} textAnchor="middle" fontSize="22" fontWeight="800" fill="var(--seed-light)">
-        {oppStore}
-      </text>
-      <rect x={W - 60} y="34" width="46" height={H - 68} rx="22" fill="url(#storeGrad)" filter="url(#pitShadow)" />
-      <text x={W - 37} y={H / 2 + 7} textAnchor="middle" fontSize="22" fontWeight="800" fill="var(--seed-light)">
-        {myStore}
-      </text>
+      {/* stores: opponent (left), you (right) — carved wells with piled seeds */}
+      {([
+        { x: 37, count: oppStore },
+        { x: W - 37, count: myStore },
+      ] as const).map(({ x, count }, si) => (
+        <g key={si}>
+          <rect x={x - 23} y="36" width="46" height={H - 72} rx="22" fill="url(#storeGrad)" />
+          <rect x={x - 23} y="36" width="46" height={H - 72} rx="22" fill="none" stroke="rgba(0,0,0,0.5)" strokeWidth="2" />
+          <rect x={x - 21} y="38" width="42" height={H - 76} rx="20" fill="none" stroke="rgba(255,228,180,0.12)" strokeWidth="1.2" />
+          {STORE_SLOTS.slice(0, Math.min(count, STORE_SLOTS.length)).map((s, i) => (
+            <g key={i} filter="url(#seedShadow)">
+              <circle cx={x + s.dx} cy={H / 2 + 18 + s.dy} r={4.6} fill="url(#seedGrad)" />
+              <circle cx={x + s.dx - 1.4} cy={H / 2 + 18 + s.dy - 1.6} r={1.4} fill="rgba(255,250,235,0.85)" />
+            </g>
+          ))}
+          <circle cx={x} cy={60} r={15} fill="rgba(0,0,0,0.35)" />
+          <text x={x} y={66} textAnchor="middle" fontSize="20" fontWeight="800" fill="var(--seed-light)">
+            {count}
+          </text>
+        </g>
+      ))}
 
       {top.map((idx, col) => (
         <Pit

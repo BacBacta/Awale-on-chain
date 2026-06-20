@@ -94,11 +94,11 @@ export function LocalDemo() {
         <span className="chip">demo · move {ply}</span>
       </div>
 
-      <PlayerPanel name="Bot" score={state.store1} active={state.turn === 1 && !state.over} thinking={thinking} />
-
-      <Board state={state} onPlay={play} playable={playable} />
-
-      <PlayerPanel name="You" you score={state.store0} active={state.turn === 0 && !state.over} />
+      <div className="stack" style={{ flex: 1, justifyContent: "center", gap: 12 }}>
+        <PlayerPanel name="Bot" score={state.store1} active={state.turn === 1 && !state.over} thinking={thinking} />
+        <Board state={state} onPlay={play} playable={playable} />
+        <PlayerPanel name="You" you score={state.store0} active={state.turn === 0 && !state.over} />
+      </div>
 
       {showOverlay && result !== null && <GameOverlay result={result} onPlayAgain={reset} />}
     </main>
