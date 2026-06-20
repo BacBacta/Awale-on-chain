@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { initialState, applyMove, legalMovesMask, type GameState } from "../../../engine/src/awale.js";
-import { Board } from "./Board.js";
+import { Board, moveDurationMs } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
 import { createSessionKey, signMove, type SessionKey } from "../lib/session.js";
@@ -41,6 +41,11 @@ export function LocalDemo() {
   const playable = state.turn === 0 && !state.over && !busy ? legalHouses(state) : [];
   const result: 0 | 1 | 2 | null = state.over ? (state.winner as 0 | 1 | 2) : null;
 
+  // seeds in the house about to be played (drives how long the board animates)
+  function seedsOf(s: GameState, absIdx: number): number {
+    return s.pits[absIdx];
+  }
+
   async function play(house: number) {
     if (busy || state.over || state.turn !== 0) return;
     setBusy(true);
@@ -48,19 +53,25 @@ export function LocalDemo() {
       await signMove(sessions[0], DEMO_MATCH_ID, BigInt(ply), house, DEMO_CTX);
       let next = applyMove(state, house);
       let p = ply + 1;
+      // let the board finish animating the player's sow before anything else
+      const playerDur = moveDurationMs(seedsOf(state, house));
       setState(next);
       setPly(p);
+      await sleep(playerDur + 450); // sow + a beat to read the result
 
-      // Bot plays its turn(s) with a short "thinking" beat so the board reads.
+      // Bot plays its turn(s): visible "thinking", then a slow, readable sow.
       while (!next.over && next.turn === 1) {
         setThinking(true);
-        await sleep(550 + Math.random() * 350);
+        await sleep(900 + Math.random() * 500);
         const botHouse = legalHouses(next)[0];
+        const botDur = moveDurationMs(seedsOf(next, 6 + botHouse));
+        setThinking(false);
         await signMove(sessions[1], DEMO_MATCH_ID, BigInt(p), botHouse, DEMO_CTX);
         next = applyMove(next, botHouse);
         p += 1;
         setState(next);
         setPly(p);
+        await sleep(botDur + 500); // sow + a beat to read before handing back
       }
     } finally {
       setThinking(false);

@@ -19,7 +19,16 @@ const R = 31; // pit radius
 const ROW_TOP = 96;
 const ROW_BOTTOM = H - 96;
 const MAX_SEEDS = 14; // visible seed dots before we rely on the count badge
-const DROP_MS = 105; // per-seed sow cadence
+
+// Sow pacing — deliberately readable so a newcomer can follow each seed. Shared
+// with the demo so it can sequence the bot's reply after the board settles.
+export const SOW_MS = 175; // per-seed drop cadence
+export const SETTLE_MS = 320; // dwell after a move settles (capture flash, read)
+
+/** How long the board will spend animating a move of `seeds` seeds. */
+export function moveDurationMs(seeds: number): number {
+  return Math.max(1, seeds) * SOW_MS + SETTLE_MS;
+}
 
 // Stable sunflower scatter of seed slots inside a pit — deterministic by index
 // so seeds never teleport between renders.
@@ -186,12 +195,12 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
         for (let f = 1; f < frames.length; f++) {
           setDisp({ ...cur, pits: frames[f], over: false, winner: 0 });
           haptic(4);
-          await sleep(DROP_MS);
+          await sleep(SOW_MS);
         }
         const settled = applyMove(cur, move.house);
         setDisp(settled); // capture flash fires off the store diff
         cur = settled;
-        await sleep(200);
+        await sleep(SETTLE_MS);
         setOrigin(null);
       }
       animating.current = false;
@@ -237,7 +246,13 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
   }
 
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Awalé board">
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      width="100%"
+      role="img"
+      aria-label="Awalé board"
+      style={{ filter: "drop-shadow(0 16px 34px rgba(0,0,0,0.55))", display: "block" }}
+    >
       <defs>
         <linearGradient id="boardGrad" x1="0" y1="0" x2="0.4" y2="1">
           <stop offset="0" stopColor="var(--wood-light)" />

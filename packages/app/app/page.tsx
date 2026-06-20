@@ -37,7 +37,9 @@ export default function Lobby() {
   return (
     <main className="pad stack" style={{ flex: 1, gap: 16 }}>
       <div className="row">
-        <span className="title">Awalé</span>
+        <span className="brand" style={{ fontSize: 26 }}>
+          Awalé
+        </span>
         {address ? (
           <span className="chip positive" title={address}>
             <span className="dot" />
