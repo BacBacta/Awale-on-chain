@@ -13,6 +13,7 @@ import { PersonhoodVerify } from "../src/components/PersonhoodVerify.js";
 import { QuickMatch } from "../src/components/QuickMatch.js";
 import { Icon, type IconName } from "../src/components/Icon.js";
 import { HeroBoard } from "../src/components/HeroBoard.js";
+import { Welcome } from "../src/components/Welcome.js";
 
 const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
@@ -86,6 +87,7 @@ export default function Lobby() {
 
   return (
     <main className="pad" style={{ flex: 1, display: "flex", flexDirection: "column", gap: 18 }}>
+      <Welcome />
       {/* header: brand + identity */}
       <div className="row">
         <span className="row" style={{ gap: 7 }}>
@@ -93,14 +95,14 @@ export default function Lobby() {
             Awalé
           </span>
           <span className="faint" style={{ fontSize: 9, opacity: 0.55, alignSelf: "flex-start", marginTop: 3 }}>
-            v21
+            v22
           </span>
         </span>
         {address ? (
-          <span className="chip positive" title={shortAddress(address)}>
+          <Link href="/profile" className="chip positive" title={shortAddress(address)} style={{ textDecoration: "none" }}>
             <span className="dot" />
             {friendlyName(address)}
-          </span>
+          </Link>
         ) : (
           <span className="chip">
             <span className={`dot ${inMiniPay ? "pulse" : ""}`} />
