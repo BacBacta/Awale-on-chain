@@ -17,7 +17,17 @@ export default function Lobby() {
   const [wallet, setWallet] = useState<WriteClient | null>(null);
   const [inMiniPay, setInMiniPay] = useState(false);
   const [verified, setVerified] = useState(!SELF_CONFIGURED);
+  const [showLearnHint, setShowLearnHint] = useState(false);
   const cfg: EscrowConfig | null = escrowConfig();
+
+  // First-run: offer the tutorial to players who've never seen it.
+  useEffect(() => {
+    try {
+      setShowLearnHint(localStorage.getItem("awale_tutorial_seen") !== "1");
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   // Zero-click connect: auto-connect from the injected wallet inside MiniPay.
   useEffect(() => {
@@ -42,7 +52,7 @@ export default function Lobby() {
             Awalé
           </span>
           <span className="chip gold" style={{ fontSize: 10 }}>
-            v7
+            v8
           </span>
         </span>
         {address ? (
@@ -84,6 +94,10 @@ export default function Lobby() {
       <a className="btn secondary block" href={addCashDeeplink()}>
         Deposit stablecoin
       </a>
+
+      <Link className={`btn ${showLearnHint ? "" : "secondary"} block`} href="/learn">
+        {showLearnHint ? "🌱 Nouveau ? Apprends à jouer" : "Comment jouer"}
+      </Link>
 
       <div className="spacer" />
 
