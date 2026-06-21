@@ -95,8 +95,12 @@ Each contract has an internal [Pashov-style review](audits/). These are **not** 
 - [x] Runnable game server (`main.ts`): on-chain listener → hub, Socket.IO, settlement coordinator
 - [x] Live `/play` over websockets: session-key-signed moves, end-of-game `settleSigned` collection
 - [x] **Validated on a real device**: match created from MiniPay, joined + settled on Celo Sepolia (winner paid, rake to Treasury)
+- [x] On-chain abandonment/refusal path: server proposes the committed result on timeout; keeper finalizes/voids
+- [x] Quick Match wired into the app: casual ELO matchmaking → off-chain live game (no shared match ids)
+- [x] No-loss League wired into the app (`/league`): deposit/principal/claim UI + Merkle finalize tool (HarvestVault deployed on Sepolia)
 - [ ] Testnet deploy stays live (durable host) + full two-player device game
-- [ ] Integration wiring (Redis/Postgres/ODIS/Self adapters to real services)
+- [ ] Integration wiring (Redis/Postgres/ODIS/Self adapters to real services) — matchmaking currently needs a **single** server instance (in-memory queue); Redis enables horizontal scaling
+- [ ] League season standings from a real leaderboard service; Cosmetics skins; ODIS display names; multi-stablecoin selection
 - [ ] External audit · VRF · timelock+multisig · mainnet
 
 > **Audit status:** contracts are tested and self-reviewed, **not externally audited**. An independent audit is a hard prerequisite before mainnet and MiniPay listing.
