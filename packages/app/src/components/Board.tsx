@@ -18,12 +18,13 @@ const H = 300;
 const R = 31; // pit radius
 const ROW_TOP = 96;
 const ROW_BOTTOM = H - 96;
-const MAX_SEEDS = 14; // visible seed dots before we rely on the count badge
+const MAX_SEEDS = 14; // visible seed sprites before we rely on the count badge
+const SEED_PX = 14; // on-board seed sprite diameter
 
 // Sow pacing — deliberately readable so a newcomer can follow each seed. Shared
 // with the demo so it can sequence the bot's reply after the board settles.
-export const SOW_MS = 255; // per-seed drop cadence
-export const SETTLE_MS = 430; // dwell after a move settles (capture flash, read)
+export const SOW_MS = 330; // per-seed drop cadence
+export const SETTLE_MS = 500; // dwell after a move settles (capture flash, read)
 
 /** How long the board will spend animating a move of `seeds` seeds. */
 export function moveDurationMs(seeds: number): number {
@@ -150,16 +151,20 @@ function Pit({
           <animate attributeName="opacity" values="1;0.45;1" dur="1.3s" repeatCount="indefinite" />
         </circle>
       )}
-      {/* seeds — cowrie-shell sprites, each rotated for a natural pile */}
-      {SEED_SLOTS.slice(0, shown).map((s, i) => (
-        <g
-          key={i}
-          transform={`rotate(${(i * 73) % 360} ${x + s.dx} ${y + s.dy})`}
-          style={i >= prevSeeds ? { animation: "pop-in 220ms cubic-bezier(0.34,1.56,0.64,1) both" } : undefined}
-        >
-          <use href="#cowrie" x={x + s.dx - 7} y={y + s.dy - 5} width={14} height={10} />
-        </g>
-      ))}
+      {/* seeds — 3D-rendered glossy sprites */}
+      <g filter="url(#seedDrop)">
+        {SEED_SLOTS.slice(0, shown).map((s, i) => (
+          <image
+            key={i}
+            href="/assets/seed.png"
+            x={x + s.dx - SEED_PX / 2}
+            y={y + s.dy - SEED_PX / 2}
+            width={SEED_PX}
+            height={SEED_PX}
+            style={i >= prevSeeds ? { animation: "pop-in 220ms cubic-bezier(0.34,1.56,0.64,1) both" } : undefined}
+          />
+        ))}
+      </g>
       {/* engraved count below the pit */}
       <g transform={`translate(${x}, ${y + R + 11})`}>
         <text x={0} y={0.9} textAnchor="middle" fontSize="12.5" fontWeight="800" fill="rgba(0,0,0,0.6)">
@@ -292,26 +297,9 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
-        {/* cowrie-shell seed sprite (with a baked soft shadow) */}
-        <radialGradient id="cowrieBody" cx="0.38" cy="0.3" r="0.95">
-          <stop offset="0" stopColor="#fff7e6" />
-          <stop offset="0.55" stopColor="#eed3a1" />
-          <stop offset="1" stopColor="#c39e5d" />
-        </radialGradient>
-        <symbol id="cowrie" viewBox="0 0 14 10">
-          <ellipse cx="7" cy="6" rx="6.6" ry="4.4" fill="rgba(0,0,0,0.3)" />
-          <ellipse cx="7" cy="5" rx="6.6" ry="4.4" fill="url(#cowrieBody)" stroke="#a9824a" strokeWidth="0.3" />
-          <ellipse cx="5.2" cy="3.4" rx="2.1" ry="1.2" fill="rgba(255,255,255,0.45)" />
-          <ellipse cx="7" cy="5" rx="1.15" ry="3.3" fill="#6b4d28" />
-          <g stroke="#efdcae" strokeWidth="0.5" strokeLinecap="round">
-            <line x1="6.1" y1="2.4" x2="7.9" y2="2.4" />
-            <line x1="6" y1="3.4" x2="8" y2="3.4" />
-            <line x1="6" y1="4.4" x2="8" y2="4.4" />
-            <line x1="6" y1="5.4" x2="8" y2="5.4" />
-            <line x1="6" y1="6.4" x2="8" y2="6.4" />
-            <line x1="6.1" y1="7.4" x2="7.9" y2="7.4" />
-          </g>
-        </symbol>
+        <filter id="seedDrop" x="-40%" y="-40%" width="180%" height="180%">
+          <feDropShadow dx="0" dy="1.4" stdDeviation="1.1" floodColor="#000" floodOpacity="0.5" />
+        </filter>
       </defs>
 
       {/* board body: photographic wood + sheen + vignette + framed rim */}
@@ -333,11 +321,18 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
           <rect x={x - 23} y="36" width="46" height={H - 72} rx="22" fill="url(#storeGrad)" />
           <rect x={x - 23} y="36" width="46" height={H - 72} rx="22" fill="none" stroke="rgba(0,0,0,0.5)" strokeWidth="2" />
           <rect x={x - 21} y="38" width="42" height={H - 76} rx="20" fill="none" stroke="rgba(255,228,180,0.12)" strokeWidth="1.2" />
-          {STORE_SLOTS.slice(0, Math.min(count, STORE_SLOTS.length)).map((s, i) => (
-            <g key={i} transform={`rotate(${(i * 73) % 360} ${x + s.dx} ${H / 2 + 18 + s.dy})`}>
-              <use href="#cowrie" x={x + s.dx - 6.5} y={H / 2 + 18 + s.dy - 4.6} width={13} height={9.3} />
-            </g>
-          ))}
+          <g filter="url(#seedDrop)">
+            {STORE_SLOTS.slice(0, Math.min(count, STORE_SLOTS.length)).map((s, i) => (
+              <image
+                key={i}
+                href="/assets/seed.png"
+                x={x + s.dx - 6.5}
+                y={H / 2 + 18 + s.dy - 6.5}
+                width={13}
+                height={13}
+              />
+            ))}
+          </g>
           <circle cx={x} cy={58} r={15} fill="rgba(0,0,0,0.45)" />
           <text x={x} y={64} textAnchor="middle" fontSize="20" fontWeight="800" fill="var(--seed-light)">
             {count}
