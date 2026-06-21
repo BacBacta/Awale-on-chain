@@ -39,6 +39,15 @@ export default function League() {
   const [busy, setBusy] = useState(false);
   const [prize, setPrize] = useState<{ amount: bigint; proof: Hex[] } | null>(null);
 
+  // Prefill the deposit from a win's "grow winnings" link (?deposit=N).
+  useEffect(() => {
+    const d = new URLSearchParams(window.location.search).get("deposit");
+    if (d && Number(d) > 0) {
+      setAmount(d);
+      setStatus("Deposit your winnings to grow them — your principal always returns in full.");
+    }
+  }, []);
+
   const refresh = useCallback(async () => {
     if (!vault || !cfg) return;
     const client = publicClient(cfg.rpcUrl, cfg.chainId);

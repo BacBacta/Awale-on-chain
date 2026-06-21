@@ -23,6 +23,7 @@ export function GameOverlay({
   result,
   payout,
   stats,
+  saveHref,
   onPlayAgain,
   onShare,
 }: {
@@ -31,6 +32,8 @@ export function GameOverlay({
   payout?: string;
   /** End-of-game stats for the result card. */
   stats?: { mine: number; opp: number; moves?: number };
+  /** When set (cash win), offer to grow a share of the winnings in the League. */
+  saveHref?: string;
   onPlayAgain: () => void;
   onShare?: () => void;
 }) {
@@ -138,7 +141,12 @@ export function GameOverlay({
       )}
 
       <div className="stack" style={{ width: "100%", maxWidth: 260, marginTop: 8 }}>
-        <button className="btn block" onClick={onPlayAgain}>
+        {saveHref && (
+          <a className="btn block" href={saveHref} style={{ background: "linear-gradient(180deg, #f7d27a, var(--gold))" }}>
+            <Icon name="trophy" size={17} /> Grow winnings in the League
+          </a>
+        )}
+        <button className={`btn ${saveHref ? "secondary" : ""} block`} onClick={onPlayAgain}>
           <Icon name="play" size={17} /> Play again
         </button>
         {onShare && (
