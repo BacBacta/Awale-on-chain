@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { readContract, waitForTransactionReceipt } from "viem/actions";
-import { parseUnits, type Address } from "viem";
+import { parseUnits, type Address, type Hex } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../../src/lib/minipay.js";
 import { escrowConfig } from "../../src/lib/escrow.js";
 import {
@@ -36,6 +36,7 @@ export default function League() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [prize, setPrize] = useState<{ amount: bigint; proof: Hex[] } | null>(null);
 
   const refresh = useCallback(async () => {
     if (!vault || !cfg) return;
@@ -73,6 +74,19 @@ export default function League() {
   useEffect(() => {
     refresh().catch((e) => setError(humanizeError(e)));
   }, [refresh]);
+
+  // Once finalized, pull this player's prize (amount + Merkle proof) from the
+  // published standings file written by the finalize tool.
+  useEffect(() => {
+    if (!account || season?.status !== SEASON_STATUS.Finalized) return;
+    fetch(`/league/prizes-${LEAGUE_SEASON.toString()}.json`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { claims?: Record<string, { amount: string; proof: Hex[] }> } | null) => {
+        const c = data?.claims?.[account.toLowerCase()];
+        setPrize(c ? { amount: BigInt(c.amount), proof: c.proof } : null);
+      })
+      .catch(() => setPrize(null));
+  }, [account, season]);
 
   async function tx(label: string, run: () => Promise<`0x${string}`>) {
     if (!cfg) return;
@@ -135,6 +149,19 @@ export default function League() {
     await tx("Claiming principal", () =>
       wallet.writeContract({ address: vault, abi: harvestVaultAbi, functionName: "claimPrincipal", args: [LEAGUE_SEASON] }),
     );
+  }
+
+  async function claimPrize() {
+    if (!wallet || !vault || !prize) return;
+    await tx("Claiming prize", () =>
+      wallet.writeContract({
+        address: vault,
+        abi: harvestVaultAbi,
+        functionName: "claimPrize",
+        args: [LEAGUE_SEASON, prize.amount, prize.proof],
+      }),
+    );
+    setPrize(null);
   }
 
   if (!vault) {
@@ -204,11 +231,22 @@ export default function League() {
               {fmt(season!.yieldPot, STAKE_DECIMALS)} {SYMBOL}
             </span>
           </div>
-          <button className="btn block" onClick={claimPrincipal} disabled={busy || mine === 0n}>
+          {prize && prize.amount > 0n && (
+            <button className="btn block" onClick={claimPrize} disabled={busy}>
+              🏆 Claim your {fmt(prize.amount, STAKE_DECIMALS)} {SYMBOL} prize
+            </button>
+          )}
+          <button
+            className={`btn ${prize && prize.amount > 0n ? "secondary" : ""} block`}
+            onClick={claimPrincipal}
+            disabled={busy || mine === 0n}
+          >
             {mine === 0n ? "Principal claimed" : `Claim your ${fmt(mine, STAKE_DECIMALS)} ${SYMBOL} back`}
           </button>
           <span className="faint" style={{ textAlign: "center" }}>
-            Prizes are distributed to the final standings via Merkle proof.
+            {prize && prize.amount > 0n
+              ? "You placed in the standings — claim your prize and your principal."
+              : "Prizes go to the top of the final standings. Your principal always returns in full."}
           </span>
         </div>
       ) : (
