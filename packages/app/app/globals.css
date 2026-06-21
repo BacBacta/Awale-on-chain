@@ -119,6 +119,8 @@ body {
   max-width: 384px;
   min-height: 100dvh;
   margin: 0 auto;
+  /* clear the device status bar / notch (viewport-fit=cover) */
+  padding-top: env(safe-area-inset-top);
   background:
     radial-gradient(90% 24% at 50% 0%, rgba(76, 229, 132, 0.05), transparent 72%),
     linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 180px), rgba(11, 10, 8, 0.82);

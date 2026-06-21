@@ -91,8 +91,8 @@ export default function Lobby() {
           <span className="brand" style={{ fontSize: 26 }}>
             Awalé
           </span>
-          <span className="faint" style={{ fontSize: 9, opacity: 0.6 }}>
-            v17
+          <span className="faint" style={{ fontSize: 9, opacity: 0.55, alignSelf: "flex-start", marginTop: 3 }}>
+            v18
           </span>
         </span>
         {address ? (
