@@ -93,7 +93,7 @@ export default function Lobby() {
             Awalé
           </span>
           <span className="faint" style={{ fontSize: 9, opacity: 0.55, alignSelf: "flex-start", marginTop: 3 }}>
-            v20
+            v21
           </span>
         </span>
         {address ? (
