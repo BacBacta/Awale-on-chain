@@ -119,14 +119,15 @@ export default function Lobby() {
           style={{
             position: "absolute",
             inset: 0,
-            opacity: 0.4,
+            opacity: 0.5,
             display: "grid",
             placeItems: "center",
-            WebkitMaskImage: "radial-gradient(120% 90% at 50% 35%, #000 40%, transparent 78%)",
-            maskImage: "radial-gradient(120% 90% at 50% 35%, #000 40%, transparent 78%)",
+            filter: "blur(3px) saturate(1.1)",
+            WebkitMaskImage: "radial-gradient(130% 80% at 50% 30%, #000 35%, transparent 72%)",
+            maskImage: "radial-gradient(130% 80% at 50% 30%, #000 35%, transparent 72%)",
           }}
         >
-          <div style={{ width: "150%", transform: "translateY(-6%)" }}>
+          <div style={{ width: "168%", transform: "translateY(-20%)" }}>
             <HeroBoard />
           </div>
         </div>
