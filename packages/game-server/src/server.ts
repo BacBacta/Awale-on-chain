@@ -72,6 +72,9 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
           io.to(msg.matchId).emit("state", { matchId: msg.matchId, state, ply });
           if (state.over) {
             io.to(msg.matchId).emit("gameover", { matchId: msg.matchId, winner: state.winner });
+            // Arm the abandonment fallback: if a player never signs the result,
+            // the server proposes it on-chain so the winner can still be paid.
+            deps.coordinator?.armProposalFallback(hub, matchId, state.winner);
             deps.onGameOver?.(matchId, state.winner);
           }
         } catch (err) {

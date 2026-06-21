@@ -15,6 +15,7 @@ import { attachSocketIO } from "./server.js";
 import { watchMatchJoined, watchStartFinalized, type ChainMatch, type EventWatcher } from "./listener.js";
 import { SettlementClient } from "./chain.js";
 import { SettlementCoordinator } from "./settlement-coordinator.js";
+import { keeperActions, runKeeper, EscrowStatus, type KeeperMatch } from "./keeper.js";
 import { matchEscrowAbi } from "../../protocol/src/abis.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
 import { InMemoryPersonhoodRegistry } from "./personhood/registry.js";
@@ -28,6 +29,12 @@ const VERIFIER = required("VERIFIER_ADDRESS") as Address;
 const PORT = Number(process.env.PORT ?? "8080");
 const SIGNER = process.env.SERVER_SIGNER_KEY;
 const FEE_CURRENCY = (process.env.FEE_CURRENCY || undefined) as Address | undefined;
+const KEEPER_INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS ?? "30000");
+
+// Match ids the server has seen join, polled by the keeper for time-based
+// actions (finalize proposed results, void expired matches). Terminal matches
+// are pruned.
+const tracked = new Set<string>();
 
 function required(name: string): string {
   const v = process.env[name];
@@ -121,6 +128,7 @@ if (settlement) {
   watchMatchJoined(publicClient as unknown as EventWatcher, {
     escrow: ESCROW,
     finalize: async (matchId) => {
+      tracked.add(matchId.toString()); // keeper now watches this match's lifecycle
       try {
         await settlement!.finalizeStart(matchId);
       } catch {
@@ -128,6 +136,58 @@ if (settlement) {
       }
     },
   });
+}
+
+// Keeper loop: finalize proposed results past their challenge window, fix the
+// first move when its reveal block is mined, and void matches that expired.
+async function keeperTick(): Promise<void> {
+  if (!settlement || tracked.size === 0) return;
+  let blockNumber = 0;
+  try {
+    blockNumber = Number(await publicClient.getBlockNumber());
+  } catch {
+    /* fall back to 0 — finalizeStart simply won't be emitted this tick */
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const matches: KeeperMatch[] = [];
+  for (const idStr of tracked) {
+    try {
+      const m = (await publicClient.readContract({
+        address: ESCROW,
+        abi: matchEscrowAbi,
+        functionName: "getMatch",
+        args: [BigInt(idStr)],
+      })) as { status: number; startTurn: number; challengeDeadline: bigint; activeDeadline: bigint; revealBlock: bigint };
+      const status = Number(m.status);
+      if (status === EscrowStatus.Resolved || status === EscrowStatus.Voided || status === EscrowStatus.Cancelled) {
+        tracked.delete(idStr); // terminal — stop watching
+        continue;
+      }
+      matches.push({
+        matchId: BigInt(idStr),
+        status,
+        startTurn: Number(m.startTurn),
+        challengeDeadline: Number(m.challengeDeadline),
+        activeDeadline: Number(m.activeDeadline),
+        revealBlock: Number(m.revealBlock),
+      });
+    } catch {
+      /* transient RPC error — retry next tick */
+    }
+  }
+  const actions = keeperActions(matches, now, blockNumber);
+  if (actions.length === 0) return;
+  try {
+    await runKeeper(settlement, actions);
+    for (const a of actions) console.log(`[keeper] ${a.action} match ${a.matchId}`);
+  } catch (err) {
+    console.warn(`[keeper] action failed: ${(err as Error).message}`);
+  }
+}
+
+if (settlement) {
+  const t = setInterval(() => void keeperTick(), KEEPER_INTERVAL_MS);
+  if ("unref" in t) t.unref();
 }
 watchStartFinalized(
   publicClient as unknown as EventWatcher,
