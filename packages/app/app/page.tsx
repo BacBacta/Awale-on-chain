@@ -52,7 +52,7 @@ export default function Lobby() {
             Awalé
           </span>
           <span className="chip gold" style={{ fontSize: 10 }}>
-            v9
+            v10
           </span>
         </span>
         {address ? (
@@ -100,10 +100,6 @@ export default function Lobby() {
       </Link>
 
       <div className="spacer" />
-
-      <Link className="btn ghost block" href="/stats">
-        View stats →
-      </Link>
     </main>
   );
 }

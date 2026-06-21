@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Sora, Fraunces } from "next/font/google";
 import "./globals.css";
+import { BottomNav } from "../src/components/BottomNav.js";
 
 // Modern, characterful pairing: Sora for UI + numerals, Fraunces for the brand
 // wordmark and big display moments (warm, editorial — nods to the heritage).
@@ -23,7 +24,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${sora.variable} ${fraunces.variable}`}>
       <body>
-        <div className="frame">{children}</div>
+        <div className="frame">
+          {children}
+          <BottomNav />
+        </div>
       </body>
     </html>
   );

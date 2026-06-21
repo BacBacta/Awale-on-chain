@@ -10,6 +10,7 @@ import { createSessionKey, persistSession } from "../lib/session.js";
 import { receiptDeeplink } from "../lib/deeplinks.js";
 import { computePayout, fmt, rakePct } from "../lib/money.js";
 import { humanizeError } from "../lib/errors.js";
+import { recordLocalMatch } from "../lib/matches.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
 
 const STAKE_TOKEN = process.env.NEXT_PUBLIC_STAKE_TOKEN as Address | undefined;
@@ -87,6 +88,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
 
       const session = createSessionKey();
       persistSession(matchId, session);
+      recordLocalMatch(matchId);
 
       await ensureAllowance(client, STAKE_TOKEN, amount);
       setStep("staking");
@@ -121,6 +123,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
 
       const session = createSessionKey();
       persistSession(matchId, session);
+      recordLocalMatch(matchId);
 
       await ensureAllowance(client, m.token, m.stake);
       setStep("staking");
