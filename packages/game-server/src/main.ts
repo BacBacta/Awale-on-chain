@@ -114,6 +114,7 @@ attachSocketIO(io, {
   hub,
   coordinator,
   personhood: selfVerifier ? personhood : undefined,
+  casualCtx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER },
   onGameOver: (matchId, winner) => {
     console.log(`[match ${matchId}] over, winner=${winner} — awaiting result signatures`);
   },

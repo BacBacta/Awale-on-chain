@@ -9,6 +9,7 @@ import { shortAddress } from "../src/lib/identity.js";
 import { escrowConfig, type WriteClient, type EscrowConfig } from "../src/lib/escrow.js";
 import { MatchActions } from "../src/components/MatchActions.js";
 import { PersonhoodVerify } from "../src/components/PersonhoodVerify.js";
+import { QuickMatch } from "../src/components/QuickMatch.js";
 
 const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
@@ -52,7 +53,7 @@ export default function Lobby() {
             Awalé
           </span>
           <span className="chip gold" style={{ fontSize: 10 }}>
-            v13
+            v14
           </span>
         </span>
         {address ? (
@@ -85,11 +86,13 @@ export default function Lobby() {
               Sow, capture, and win the pot. Non-custodial · winner takes the stake, minus a small protocol fee.
             </span>
           </div>
-          <Link className="btn block" href="/play">
+          <Link className="btn secondary block" href="/play">
             Play a demo game
           </Link>
         </>
       )}
+
+      <QuickMatch account={address ?? undefined} />
 
       <a className="btn secondary block" href={addCashDeeplink()}>
         Deposit stablecoin

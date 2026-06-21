@@ -28,8 +28,10 @@ function legalHouses(s: GameState): number[] {
   return out;
 }
 
-/** A real match played over the game server: live board, session-key-signed moves. */
-export function LiveMatch({ matchId }: { matchId: bigint }) {
+/** A real match played over the game server: live board, session-key-signed moves.
+ *  `casualRole` (from Quick Match) plays an off-chain casual match — role is known
+ *  from matchmaking, so it skips the on-chain match read and the settlement step. */
+export function LiveMatch({ matchId, casualRole }: { matchId: bigint; casualRole?: 0 | 1 }) {
   const [state, setState] = useState<GameState | null>(null);
   const [ply, setPly] = useState(0);
   const [role, setRole] = useState<0 | 1 | null>(null);
@@ -51,30 +53,35 @@ export function LiveMatch({ matchId }: { matchId: bigint }) {
     let sock: Socket | null = null;
 
     (async () => {
-      const provider = getInjectedProvider();
-      if (!provider) {
-        setStatus("Open in MiniPay to play");
-        return;
-      }
-      const { address } = await connect(provider, cfg.chainId);
-      const client = publicClient(cfg.rpcUrl, cfg.chainId);
-      const m = (await readContract(client, {
-        address: cfg.escrow,
-        abi: matchEscrowAbi,
-        functionName: "getMatch",
-        args: [matchId],
-      })) as { player0: Address; player1: Address; stake: bigint; rakeBps: number };
-      stakeInfo.current = { stake: m.stake, rakeBps: Number(m.rakeBps) };
-
-      const myRole =
-        address.toLowerCase() === m.player0.toLowerCase()
-          ? 0
-          : address.toLowerCase() === m.player1.toLowerCase()
-            ? 1
-            : null;
-      if (myRole === null) {
-        setStatus("This wallet is not a player in this match");
-        return;
+      let myRole: 0 | 1;
+      if (casualRole != null) {
+        myRole = casualRole; // role known from matchmaking; no on-chain match exists
+      } else {
+        const provider = getInjectedProvider();
+        if (!provider) {
+          setStatus("Open in MiniPay to play");
+          return;
+        }
+        const { address } = await connect(provider, cfg.chainId);
+        const client = publicClient(cfg.rpcUrl, cfg.chainId);
+        const m = (await readContract(client, {
+          address: cfg.escrow,
+          abi: matchEscrowAbi,
+          functionName: "getMatch",
+          args: [matchId],
+        })) as { player0: Address; player1: Address; stake: bigint; rakeBps: number };
+        stakeInfo.current = { stake: m.stake, rakeBps: Number(m.rakeBps) };
+        const r =
+          address.toLowerCase() === m.player0.toLowerCase()
+            ? 0
+            : address.toLowerCase() === m.player1.toLowerCase()
+              ? 1
+              : null;
+        if (r === null) {
+          setStatus("This wallet is not a player in this match");
+          return;
+        }
+        myRole = r;
       }
       const sk = loadSession(matchId);
       if (!sk) {
@@ -98,7 +105,7 @@ export function LiveMatch({ matchId }: { matchId: bigint }) {
       sock.on("gameover", async (msg: { winner: number }) => {
         setStatus(msg.winner === myRole ? "You win 🎉" : msg.winner === 2 ? "Draw" : "You lose");
         setOutcome(msg.winner === myRole ? 0 : msg.winner === 2 ? 2 : 1);
-        if (session.current && ctx.current) {
+        if (casualRole == null && session.current && ctx.current) {
           const sig = await signResult(session.current, matchId, msg.winner, {
             chainId: ctx.current.chainId,
             escrow: cfg.escrow,
@@ -116,7 +123,7 @@ export function LiveMatch({ matchId }: { matchId: bigint }) {
     return () => {
       sock?.close();
     };
-  }, [matchId]);
+  }, [matchId, casualRole]);
 
   async function play(house: number) {
     if (!state || state.over || role === null || state.turn !== role) return;

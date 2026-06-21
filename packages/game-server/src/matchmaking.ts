@@ -11,6 +11,7 @@ export interface Player {
   address: Address;
   elo: number;
   enqueuedAt: number; // ms epoch
+  sessionPubKey?: Address; // per-match session key for casual quick-match play
 }
 
 export interface Pairing {
