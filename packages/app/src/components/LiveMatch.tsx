@@ -16,6 +16,7 @@ import { PlayerPanel } from "./PlayerPanel.js";
 import { computePayout, fmt } from "../lib/money.js";
 import { shareResult } from "../lib/share.js";
 import { getEquipped, type EquippedSkin } from "../lib/skins.js";
+import { displayName } from "../lib/names.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
@@ -32,7 +33,15 @@ function legalHouses(s: GameState): number[] {
 /** A real match played over the game server: live board, session-key-signed moves.
  *  `casualRole` (from Quick Match) plays an off-chain casual match — role is known
  *  from matchmaking, so it skips the on-chain match read and the settlement step. */
-export function LiveMatch({ matchId, casualRole }: { matchId: bigint; casualRole?: 0 | 1 }) {
+export function LiveMatch({
+  matchId,
+  casualRole,
+  opponentAddress,
+}: {
+  matchId: bigint;
+  casualRole?: 0 | 1;
+  opponentAddress?: Address;
+}) {
   const [state, setState] = useState<GameState | null>(null);
   const [ply, setPly] = useState(0);
   const [role, setRole] = useState<0 | 1 | null>(null);
@@ -40,6 +49,7 @@ export function LiveMatch({ matchId, casualRole }: { matchId: bigint; casualRole
   const [outcome, setOutcome] = useState<0 | 1 | 2 | null>(null); // viewer perspective
   const [settled, setSettled] = useState(false);
   const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
+  const [oppAddr, setOppAddr] = useState<Address | null>(opponentAddress ?? null);
 
   useEffect(() => setSkin(getEquipped()), []);
 
@@ -86,6 +96,7 @@ export function LiveMatch({ matchId, casualRole }: { matchId: bigint; casualRole
           return;
         }
         myRole = r;
+        setOppAddr(r === 0 ? m.player1 : m.player0);
       }
       const sk = loadSession(matchId);
       if (!sk) {
@@ -162,7 +173,7 @@ export function LiveMatch({ matchId, casualRole }: { matchId: bigint; casualRole
       {state ? (
         <div className="stack" style={{ flex: 1, justifyContent: "center", gap: 12 }}>
           <PlayerPanel
-            name="Opponent"
+            name={displayName(oppAddr)}
             score={oppScore ?? 0}
             active={!state.over && role !== null && state.turn !== role}
           />

@@ -11,14 +11,11 @@ import { receiptDeeplink } from "../lib/deeplinks.js";
 import { computePayout, fmt, rakePct } from "../lib/money.js";
 import { humanizeError } from "../lib/errors.js";
 import { recordLocalMatch } from "../lib/matches.js";
+import { stakeTokens, preferredIndex } from "../lib/stakeTokens.js";
+import { faucetAbi } from "../lib/league.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
 
-const STAKE_TOKEN = process.env.NEXT_PUBLIC_STAKE_TOKEN as Address | undefined;
-const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
-const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
-// empty/unset -> omit feeCurrency and let MiniPay handle gas abstraction
-const FEE_CURRENCY = (process.env.NEXT_PUBLIC_FEE_CURRENCY || undefined) as Address | undefined;
-
+const TOKENS = stakeTokens();
 const QUICK_STAKES = ["1", "5", "10"];
 
 type Step = "idle" | "approving" | "staking" | "done" | "error";
@@ -33,25 +30,69 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   const [balance, setBalance] = useState<bigint | null>(null);
   const [rakeBps, setRakeBps] = useState<number>(0);
   const [copied, setCopied] = useState(false);
+  const [sel, setSel] = useState(0); // index into TOKENS
 
   const busy = step === "approving" || step === "staking";
+  const tok = TOKENS[sel];
+  const token = tok?.address;
+  const dec = tok?.decimals ?? 18;
+  const sym = tok?.symbol ?? "";
+  const feeCurrency = tok?.feeCurrency;
 
-  // Read the player's balance and the live rake once, for the payout preview.
+  // Read balances across all stake tokens + the live rake; default to the
+  // user's highest-balance token (preferred stablecoin).
   useEffect(() => {
-    if (!STAKE_TOKEN) return;
+    if (TOKENS.length === 0) return;
     const client = publicClient(cfg.rpcUrl, cfg.chainId);
     Promise.all([
-      readContract(client, { address: STAKE_TOKEN, abi: erc20Abi, functionName: "balanceOf", args: [account] }),
+      Promise.all(
+        TOKENS.map((t) => readContract(client, { address: t.address, abi: erc20Abi, functionName: "balanceOf", args: [account] })),
+      ),
       readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "rakeBps" }),
     ])
-      .then(([bal, rake]) => {
-        setBalance(bal as bigint);
+      .then(([bals, rake]) => {
+        const balances = bals as bigint[];
+        const pref = preferredIndex(TOKENS, balances);
+        setSel(pref);
+        setBalance(balances[pref]);
         setRakeBps(Number(rake));
       })
       .catch(() => {
         /* preview is best-effort */
       });
   }, [account, cfg]);
+
+  // keep the displayed balance in sync with the selected token
+  useEffect(() => {
+    if (!token) return;
+    const client = publicClient(cfg.rpcUrl, cfg.chainId);
+    readContract(client, { address: token, abi: erc20Abi, functionName: "balanceOf", args: [account] })
+      .then((b) => setBalance(b as bigint))
+      .catch(() => {});
+  }, [sel, token, account, cfg]);
+
+  async function onFaucet() {
+    if (!tok?.faucet || !token || busy) return;
+    setError(null);
+    setStep("staking");
+    try {
+      const client = publicClient(cfg.rpcUrl, cfg.chainId);
+      const hash = await wallet.writeContract({
+        address: token,
+        abi: faucetAbi,
+        functionName: "mint",
+        args: [account, parseStake("100", dec)],
+        account,
+        feeCurrency,
+      });
+      await client.waitForTransactionReceipt({ hash });
+      const b = (await readContract(client, { address: token, abi: erc20Abi, functionName: "balanceOf", args: [account] })) as bigint;
+      setBalance(b);
+      setStep("idle");
+    } catch (e) {
+      fail(e);
+    }
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   async function ensureAllowance(client: any, token: Address, amount: bigint) {
@@ -63,7 +104,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     })) as bigint;
     if (allowance >= amount) return;
     setStep("approving");
-    const hash = await approve(wallet, { account, token, spender: cfg.escrow, amount, feeCurrency: FEE_CURRENCY });
+    const hash = await approve(wallet, { account, token, spender: cfg.escrow, amount, feeCurrency: feeCurrency });
     await client.waitForTransactionReceipt({ hash });
   }
 
@@ -73,12 +114,12 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   }
 
   async function onCreate() {
-    if (!STAKE_TOKEN || busy) return;
+    if (!token || busy) return;
     setError(null);
     try {
-      const amount = parseStake(stake, STAKE_DECIMALS);
+      const amount = parseStake(stake, dec);
       if (amount <= 0n) return setError("Enter a stake greater than zero.");
-      if (balance !== null && amount > balance) return setError(`Not enough ${STAKE_SYMBOL} for this stake.`);
+      if (balance !== null && amount > balance) return setError(`Not enough ${sym} for this stake.`);
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
       const matchId = (await readContract(client, {
         address: cfg.escrow,
@@ -90,15 +131,15 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       persistSession(matchId, session);
       recordLocalMatch(matchId);
 
-      await ensureAllowance(client, STAKE_TOKEN, amount);
+      await ensureAllowance(client, token, amount);
       setStep("staking");
       const hash = await createMatch(wallet, {
         account,
         escrow: cfg.escrow,
-        token: STAKE_TOKEN,
+        token: token,
         stake: amount,
         session: session.address,
-        feeCurrency: FEE_CURRENCY,
+        feeCurrency: feeCurrency,
       });
       setTx(hash);
       setOpenId(matchId);
@@ -132,7 +173,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         escrow: cfg.escrow,
         matchId,
         session: session.address,
-        feeCurrency: FEE_CURRENCY,
+        feeCurrency: feeCurrency,
       });
       setTx(hash);
       setOpenId(matchId);
@@ -145,7 +186,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   function shareInvite() {
     if (openId === null) return;
     const url = `${window.location.origin}/play?match=${openId.toString()}`;
-    const data = { title: "Awalé", text: `Join my Awalé match #${openId} for ${stake} ${STAKE_SYMBOL}`, url };
+    const data = { title: "Awalé", text: `Join my Awalé match #${openId} for ${stake} ${sym}`, url };
     if (navigator.share) navigator.share(data).catch(() => {});
     else
       navigator.clipboard?.writeText(url).then(() => {
@@ -157,7 +198,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   // payout preview
   const stakeRaw = (() => {
     try {
-      return parseStake(stake || "0", STAKE_DECIMALS);
+      return parseStake(stake || "0", dec);
     } catch {
       return 0n;
     }
@@ -175,7 +216,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
           </span>
           <span className="display">Match #{openId.toString()}</span>
           <span className="muted">
-            Pot {fmt(pot, STAKE_DECIMALS)} {STAKE_SYMBOL} · winner takes {fmt(prize, STAKE_DECIMALS)}
+            Pot {fmt(pot, dec)} {sym} · winner takes {fmt(prize, dec)}
           </span>
         </div>
         <button className="btn block" onClick={shareInvite}>
@@ -201,10 +242,26 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
           <span className="h2">Create a match</span>
           {balance !== null && (
             <span className="faint">
-              Balance {fmt(balance, STAKE_DECIMALS)} {STAKE_SYMBOL}
+              Balance {fmt(balance, dec)} {sym}
             </span>
           )}
         </div>
+
+        {/* preferred-stablecoin selector (shows when several are configured) */}
+        {TOKENS.length > 1 && (
+          <div className="row" style={{ gap: 6 }}>
+            {TOKENS.map((t, i) => (
+              <button
+                key={t.address}
+                className={`chip ${i === sel ? "positive" : ""}`}
+                onClick={() => setSel(i)}
+                style={{ cursor: "pointer", flex: 1, justifyContent: "center", padding: "8px 0" }}
+              >
+                {t.symbol}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="row" style={{ gap: 8 }}>
           <div className="row input" style={{ gap: 6 }}>
@@ -216,7 +273,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
               style={{ background: "transparent", border: "none", color: "var(--text)", width: "100%", outline: "none" }}
             />
             <span className="muted" style={{ fontWeight: 700 }}>
-              {STAKE_SYMBOL}
+              {sym}
             </span>
           </div>
         </div>
@@ -237,22 +294,27 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         {/* payout preview — mirrors MatchEscrow._payout */}
         <div className="card flat row" style={{ padding: "10px 12px" }}>
           <span className="muted">
-            Pot <b style={{ color: "var(--text)" }}>{fmt(pot, STAKE_DECIMALS)}</b>
+            Pot <b style={{ color: "var(--text)" }}>{fmt(pot, dec)}</b>
           </span>
           <span className="muted">
             You win{" "}
             <b style={{ color: "var(--accent)" }}>
-              {fmt(prize, STAKE_DECIMALS)} {STAKE_SYMBOL}
+              {fmt(prize, dec)} {sym}
             </b>
           </span>
           <span className="faint">
-            fee {fmt(rake, STAKE_DECIMALS)} ({rakePct(rakeBps)})
+            fee {fmt(rake, dec)} ({rakePct(rakeBps)})
           </span>
         </div>
 
-        <button className="btn block" onClick={onCreate} disabled={busy || !STAKE_TOKEN}>
-          {step === "approving" ? "Approving…" : step === "staking" ? "Staking…" : `Stake ${stake || "0"} ${STAKE_SYMBOL} & create`}
+        <button className="btn block" onClick={onCreate} disabled={busy || !token}>
+          {step === "approving" ? "Approving…" : step === "staking" ? "Staking…" : `Stake ${stake || "0"} ${sym} & create`}
         </button>
+        {tok?.faucet && (
+          <button className="btn secondary block" onClick={onFaucet} disabled={busy}>
+            Get test {sym} (faucet)
+          </button>
+        )}
       </div>
 
       {/* Join */}

@@ -6,6 +6,7 @@ import type { Address } from "viem";
 import { getInjectedProvider, isMiniPay, connect } from "../src/lib/minipay.js";
 import { addCashDeeplink } from "../src/lib/deeplinks.js";
 import { shortAddress } from "../src/lib/identity.js";
+import { friendlyName } from "../src/lib/names.js";
 import { escrowConfig, type WriteClient, type EscrowConfig } from "../src/lib/escrow.js";
 import { MatchActions } from "../src/components/MatchActions.js";
 import { PersonhoodVerify } from "../src/components/PersonhoodVerify.js";
@@ -53,13 +54,13 @@ export default function Lobby() {
             Awalé
           </span>
           <span className="chip gold" style={{ fontSize: 10 }}>
-            v15
+            v16
           </span>
         </span>
         {address ? (
-          <span className="chip positive" title={address}>
+          <span className="chip positive" title={shortAddress(address)}>
             <span className="dot" />
-            {shortAddress(address)}
+            {friendlyName(address)}
           </span>
         ) : (
           <span className="chip">

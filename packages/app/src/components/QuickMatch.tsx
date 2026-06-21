@@ -30,11 +30,12 @@ export function QuickMatch({ account }: { account?: Address }) {
       // address is for display/ELO only; moves are signed by the session key
       sock.emit("queue", { address: account ?? session.address, elo: 1000, mode: "casual", sessionPubKey: session.address });
     });
-    sock.on("matched", (msg: { matchId?: string; role?: 0 | 1 }) => {
+    sock.on("matched", (msg: { matchId?: string; role?: 0 | 1; opponent?: string }) => {
       if (!msg.matchId) return;
       persistSession(BigInt(msg.matchId), session); // LiveMatch loads it by matchId
       sock.close();
-      window.location.href = `/play?match=${msg.matchId}&casual=1&role=${msg.role ?? 0}`;
+      const opp = msg.opponent ? `&opp=${msg.opponent}` : "";
+      window.location.href = `/play?match=${msg.matchId}&casual=1&role=${msg.role ?? 0}${opp}`;
     });
     sock.on("error", () => cancel());
     sock.on("connect_error", () => cancel());
