@@ -129,4 +129,13 @@ export const matchEscrowAbi = [
       { name: "startTurn", type: "uint8", indexed: false },
     ],
   },
+  {
+    type: "event",
+    name: "MatchSettled",
+    inputs: [
+      { name: "matchId", type: "uint256", indexed: true },
+      { name: "winner", type: "uint8", indexed: false },
+      { name: "prize", type: "uint256", indexed: false },
+    ],
+  },
 ] as const;

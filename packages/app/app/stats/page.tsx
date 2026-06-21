@@ -1,6 +1,6 @@
-import Link from "next/link";
 import { getStats } from "../../src/lib/stats.js";
 import { CELO_MAINNET_TOKENS, formatAmount } from "../../../protocol/src/tokens.js";
+import { PlayerStats } from "../../src/components/PlayerStats.js";
 
 // Public stats page — a MiniPay listing requirement. Metrics come from the
 // indexer (chunked eth_getLogs over the settlement events). Network fees paid
@@ -19,6 +19,8 @@ function decimalsForSymbol(symbol?: string): number {
 export default async function Stats() {
   const s = await getStats();
 
+  // Operator metrics (MiniPay listing requirement). "—" placeholders are hidden
+  // rather than shown raw.
   const rows: { label: string; value: string }[] = [
     { label: "Daily active users", value: String(s.dau) },
     { label: "Monthly active users", value: String(s.mau) },
@@ -28,19 +30,17 @@ export default async function Stats() {
       label: "D1 / D7 / D30 retention",
       value: `${pct(s.retention.d1)} / ${pct(s.retention.d7)} / ${pct(s.retention.d30)}`,
     },
-    { label: "Network fees paid", value: "—" },
-    { label: "Failed-transaction rate", value: "—" },
   ];
 
   return (
     <main className="pad" style={{ display: "flex", flexDirection: "column", gap: 12, flex: 1 }}>
-      <div className="row">
-        <Link className="muted" href="/">
-          ← Back
-        </Link>
-        <span className="title">Stats</span>
-      </div>
+      <span className="title">Stats</span>
 
+      <PlayerStats />
+
+      <span className="h2" style={{ marginTop: 8 }}>
+        Global
+      </span>
       {rows.map((m) => (
         <div className="card row" key={m.label}>
           <span className="muted">{m.label}</span>

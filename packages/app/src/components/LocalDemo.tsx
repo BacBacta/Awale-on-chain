@@ -6,6 +6,7 @@ import { initialState, applyMove, legalMovesMask, type GameState } from "../../.
 import { Board, moveDurationMs } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
+import { shareResult } from "../lib/share.js";
 import { createSessionKey, signMove, type SessionKey } from "../lib/session.js";
 
 // Demo context — in a real match these come from the on-chain join events.
@@ -100,7 +101,13 @@ export function LocalDemo() {
         <PlayerPanel name="You" you score={state.store0} active={state.turn === 0 && !state.over} />
       </div>
 
-      {showOverlay && result !== null && <GameOverlay result={result} onPlayAgain={reset} />}
+      {showOverlay && result !== null && (
+        <GameOverlay
+          result={result}
+          onPlayAgain={reset}
+          onShare={() => shareResult({ result, scoreMine: state.store0, scoreOpp: state.store1 })}
+        />
+      )}
     </main>
   );
 }

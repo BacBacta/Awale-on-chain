@@ -14,6 +14,7 @@ import { Board } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
 import { computePayout, fmt } from "../lib/money.js";
+import { shareResult } from "../lib/share.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
@@ -183,6 +184,17 @@ export function LiveMatch({ matchId }: { matchId: bigint }) {
               : undefined
           }
           onPlayAgain={() => (window.location.href = "/")}
+          onShare={() =>
+            shareResult({
+              result: outcome,
+              scoreMine: myScore ?? 0,
+              scoreOpp: oppScore ?? 0,
+              payout:
+                outcome === 0 && stakeInfo.current
+                  ? `${fmt(computePayout(stakeInfo.current.stake, stakeInfo.current.rakeBps).prize, STAKE_DECIMALS)} ${STAKE_SYMBOL}`
+                  : undefined,
+            })
+          }
         />
       )}
     </main>
