@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "../../src/components/Icon.js";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { readContract, waitForTransactionReceipt } from "viem/actions";
@@ -169,7 +170,9 @@ export default function League() {
       <main className="pad stack" style={{ flex: 1, gap: 14 }}>
         <span className="title">No-loss League</span>
         <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
-          <span style={{ fontSize: 34 }}>🏅</span>
+          <span className="lead gold" style={{ width: 52, height: 52, borderRadius: 16 }}>
+            <Icon name="trophy" size={26} />
+          </span>
           <span className="h2">Coming soon</span>
           <span className="muted">
             Deposit a stablecoin for the season, play ranked games, and share the yield — your deposit always comes back in
@@ -233,7 +236,7 @@ export default function League() {
           </div>
           {prize && prize.amount > 0n && (
             <button className="btn block" onClick={claimPrize} disabled={busy}>
-              🏆 Claim your {fmt(prize.amount, STAKE_DECIMALS)} {SYMBOL} prize
+              <Icon name="trophy" size={17} /> Claim your {fmt(prize.amount, STAKE_DECIMALS)} {SYMBOL} prize
             </button>
           )}
           <button

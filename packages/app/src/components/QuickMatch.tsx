@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import type { Address } from "viem";
 import { createSessionKey, persistSession } from "../lib/session.js";
+import { Icon } from "./Icon.js";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
 
@@ -44,12 +45,12 @@ export function QuickMatch({ account }: { account?: Address }) {
   if (!SERVER_URL) return null;
 
   return searching ? (
-    <button className="btn block" onClick={cancel}>
-      <span className="dot pulse" style={{ background: "currentColor" }} /> Finding an opponent… (tap to cancel)
+    <button className="btn block" onClick={cancel} style={{ fontSize: 16, padding: "16px 18px" }}>
+      <Icon name="spinner" size={18} /> Finding an opponent… · tap to cancel
     </button>
   ) : (
-    <button className="btn block" onClick={find}>
-      ⚡ Quick match
+    <button className="btn block" onClick={find} style={{ fontSize: 16, padding: "16px 18px" }}>
+      <Icon name="bolt" size={18} /> Quick match
     </button>
   );
 }

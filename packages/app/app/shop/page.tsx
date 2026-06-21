@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "../../src/components/Icon.js";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { readContract, waitForTransactionReceipt } from "viem/actions";
@@ -129,7 +130,9 @@ export default function Shop() {
       <main className="pad stack" style={{ flex: 1, gap: 14 }}>
         <span className="title">Skins</span>
         <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
-          <span style={{ fontSize: 34 }}>🎨</span>
+          <span className="lead" style={{ width: 52, height: 52, borderRadius: 16 }}>
+            <Icon name="palette" size={26} />
+          </span>
           <span className="h2">Coming soon</span>
           <span className="muted">Board and seed skins (tradeable, with on-chain royalties) aren’t configured on this deployment yet.</span>
           <Link className="btn block" href="/" style={{ marginTop: 4 }}>

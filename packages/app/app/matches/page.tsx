@@ -1,5 +1,6 @@
 "use client";
 
+import { Icon } from "../../src/components/Icon.js";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { readContract } from "viem/actions";
@@ -77,7 +78,9 @@ export default function Matches() {
         </div>
       ) : rows.length === 0 ? (
         <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
-          <span style={{ fontSize: 34 }}>🎯</span>
+          <span className="lead" style={{ width: 52, height: 52, borderRadius: 16 }}>
+            <Icon name="target" size={26} />
+          </span>
           <span className="h2">No matches yet</span>
           <span className="muted">{error ?? "Create or join a match from the home screen and it will show up here."}</span>
           <Link className="btn block" href="/" style={{ marginTop: 4 }}>

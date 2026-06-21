@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { Icon } from "./Icon.js";
 
 // End-of-game celebration moment. Win/lose/draw each get a distinct treatment.
 // TODO(premium): swap the CSS confetti for a Lottie burst — lottie-react is
@@ -90,7 +91,20 @@ export function GameOverlay({
         </div>
       )}
 
-      <div style={{ fontSize: 56, lineHeight: 1 }}>{win ? "🏆" : draw ? "🤝" : "😔"}</div>
+      <div
+        style={{
+          display: "grid",
+          placeItems: "center",
+          width: 92,
+          height: 92,
+          borderRadius: "50%",
+          color: win ? "var(--gold)" : draw ? "var(--text)" : "var(--muted)",
+          background: win ? "var(--gold-soft)" : "rgba(255,255,255,0.05)",
+          boxShadow: `inset 0 0 0 1.5px ${win ? "rgba(246,200,99,0.4)" : "var(--line)"}`,
+        }}
+      >
+        <Icon name={win ? "trophy" : draw ? "versus" : "seed"} size={44} stroke={1.6} />
+      </div>
       <div className="display" style={{ color: win ? "var(--gold)" : "var(--text)", textAlign: "center" }}>
         {title}
       </div>
@@ -100,11 +114,11 @@ export function GameOverlay({
 
       <div className="stack" style={{ width: "100%", maxWidth: 260, marginTop: 8 }}>
         <button className="btn block" onClick={onPlayAgain}>
-          Play again
+          <Icon name="play" size={17} /> Play again
         </button>
         {onShare && (
           <button className="btn secondary block" onClick={onShare}>
-            Share result
+            <Icon name="share" size={17} /> Share result
           </button>
         )}
       </div>

@@ -9,12 +9,14 @@
    ============================================================================ */
 
 :root {
-  /* --- color: surfaces --- */
-  --bg: #0d100c;
-  --bg-elev: #141a13;
-  --panel: #18201a;
-  --panel-2: #1e2820;
-  --line: #2a3528;
+  /* --- color: surfaces (warm charcoal, layered) --- */
+  --bg: #0b0a08;
+  --bg-elev: #141210;
+  --panel: rgba(255, 255, 255, 0.045);
+  --panel-2: rgba(255, 255, 255, 0.075);
+  --line: rgba(255, 255, 255, 0.09);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --hi: rgba(255, 255, 255, 0.07); /* top inner highlight */
 
   /* --- color: wood & seeds (the board) --- */
   --wood: #7a512e;
@@ -25,17 +27,19 @@
   --seed-light: #fbe6b0;
   --seed-shadow: #b88c3f;
 
-  /* --- color: text --- */
-  --text: #f1f5ef;
-  --muted: #a6bca7;
-  --faint: #6e8470;
+  /* --- color: text (warm ivory) --- */
+  --text: #f4f1ea;
+  --muted: #b4ada0;
+  --faint: #837c6f;
 
   /* --- color: semantic --- */
-  --accent: #3ddc6f;
-  --accent-deep: #1f8f48;
-  --accent-ink: #05210f;
-  --gold: #f5c451;
-  --danger: #ff6b6b;
+  --accent: #4ce584;
+  --accent-deep: #1f9b4d;
+  --accent-ink: #04210f;
+  --accent-soft: rgba(76, 229, 132, 0.14);
+  --gold: #f6c863;
+  --gold-soft: rgba(246, 200, 99, 0.14);
+  --danger: #ff7a7a;
   --warn: #ffc24b;
 
   /* --- spacing (8pt-ish) --- */
@@ -89,13 +93,13 @@ body {
   font-family: var(--font-ui), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  /* Ambient mesh-gradient stage — colored blobs give depth and a modern feel. */
+  /* Ambient mesh — restrained, warm; depth without the "crypto template" look. */
   background:
-    radial-gradient(60% 50% at 15% 0%, rgba(61, 220, 111, 0.16) 0%, transparent 55%),
-    radial-gradient(55% 45% at 90% 8%, rgba(245, 196, 81, 0.13) 0%, transparent 55%),
-    radial-gradient(70% 55% at 50% 110%, rgba(122, 81, 46, 0.22) 0%, transparent 60%),
-    radial-gradient(40% 40% at 80% 95%, rgba(61, 220, 111, 0.08) 0%, transparent 55%),
-    #07090a;
+    radial-gradient(50% 40% at 12% -5%, rgba(76, 229, 132, 0.1) 0%, transparent 60%),
+    radial-gradient(45% 38% at 95% 4%, rgba(246, 200, 99, 0.08) 0%, transparent 60%),
+    radial-gradient(70% 50% at 50% 112%, rgba(122, 81, 46, 0.16) 0%, transparent 62%),
+    #07060500;
+  background-color: #060504;
   background-attachment: fixed;
   min-height: 100dvh;
 }
@@ -110,27 +114,44 @@ body {
 
 /* MiniPay viewport: design and verify at 360x640, but center on larger screens. */
 .frame {
+  position: relative;
   width: 100%;
-  max-width: 380px;
+  max-width: 384px;
   min-height: 100dvh;
   margin: 0 auto;
   background:
-    radial-gradient(80% 30% at 50% 0%, rgba(61, 220, 111, 0.06), transparent 70%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.025), transparent 160px),
-    rgba(13, 16, 12, 0.72);
-  backdrop-filter: blur(2px);
+    radial-gradient(90% 24% at 50% 0%, rgba(76, 229, 132, 0.05), transparent 72%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 180px), rgba(11, 10, 8, 0.82);
   display: flex;
   flex-direction: column;
   box-shadow: var(--shadow-lg);
+  isolation: isolate;
+}
+/* fine film grain — tactile, premium texture */
+.frame::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+.frame > * {
+  position: relative;
+  z-index: 1;
 }
 
 @media (min-width: 420px) {
   .frame {
-    min-height: 720px;
+    min-height: 740px;
     margin: 28px auto;
-    border-radius: var(--r-xl);
+    border-radius: 28px;
     overflow: hidden;
-    box-shadow: var(--shadow-lg), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+    box-shadow:
+      0 30px 80px rgba(0, 0, 0, 0.6),
+      inset 0 0 0 1px rgba(255, 255, 255, 0.07);
   }
 }
 
@@ -215,13 +236,12 @@ body {
   transform: none;
 }
 .btn.secondary {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--panel);
   color: var(--text);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(6px);
+  box-shadow: inset 0 0 0 1px var(--line-strong), inset 0 1px 0 var(--hi);
 }
 .btn.secondary:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--panel-2);
 }
 .btn.ghost {
   background: transparent;
@@ -232,22 +252,143 @@ body {
   width: 100%;
 }
 
-/* --- cards & surfaces (glass) --- */
+/* --- cards & surfaces (crisp, layered — hairline + soft shadow) --- */
 .card {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.025));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02));
   border-radius: var(--r-lg);
   padding: var(--space-4);
   box-shadow:
-    var(--shadow-md),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+    0 1px 0 var(--hi) inset,
+    0 0 0 1px var(--line) inset,
+    0 10px 30px -12px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
 }
 .card.flat {
-  background: rgba(0, 0, 0, 0.25);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  background: rgba(0, 0, 0, 0.22);
+  box-shadow: inset 0 0 0 1px var(--line);
   backdrop-filter: none;
+}
+
+/* --- list rows (tappable, with leading icon + chevron) --- */
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 13px 14px;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  box-shadow:
+    inset 0 0 0 1px var(--line),
+    inset 0 1px 0 var(--hi);
+  color: var(--text);
+  text-decoration: none;
+  cursor: pointer;
+  border: none;
+  text-align: left;
+  transition:
+    transform var(--dur-fast) var(--ease-out),
+    background var(--dur-fast) var(--ease-out);
+}
+.list-row:hover {
+  background: var(--panel-2);
+}
+.list-row:active {
+  transform: scale(0.985);
+}
+.list-row .lead {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(76, 229, 132, 0.22);
+}
+.list-row .lead.gold {
+  background: var(--gold-soft);
+  color: var(--gold);
+  box-shadow: inset 0 0 0 1px rgba(246, 200, 99, 0.22);
+}
+.list-row .lead.neutral {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* --- segmented control --- */
+.segmented {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: var(--r-md);
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+.segmented button {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 650;
+  font-size: var(--t-sm);
+  padding: 8px 0;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.segmented button[data-on="true"] {
+  background: var(--panel-2);
+  color: var(--text);
+  box-shadow: 0 1px 0 var(--hi) inset, 0 2px 8px -2px rgba(0, 0, 0, 0.6);
+}
+
+/* --- icon button --- */
+.icon-btn {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  color: var(--text);
+  border: none;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px var(--line);
+  transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.icon-btn:hover {
+  background: var(--panel-2);
+}
+.icon-btn:active {
+  transform: scale(0.94);
+}
+
+/* --- section label --- */
+.section-label {
+  font-size: var(--t-xs);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* --- skeleton shimmer --- */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--r-sm);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  transform: translateX(-100%);
+  animation: shimmer 1.4s infinite;
 }
 
 .row {
@@ -384,11 +525,27 @@ body {
   }
 }
 
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 .animate-in {
   animation: fade-up var(--dur-med) var(--ease-out) both;
 }
 .shake {
   animation: shake 0.4s var(--ease-out);
+}
+/* staggered reveal for lists — set --i on each child */
+.stagger > * {
+  animation: fade-up var(--dur-med) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
 }
 
 @media (prefers-reduced-motion: reduce) {
