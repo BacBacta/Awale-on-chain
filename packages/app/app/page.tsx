@@ -12,6 +12,7 @@ import { MatchActions } from "../src/components/MatchActions.js";
 import { PersonhoodVerify } from "../src/components/PersonhoodVerify.js";
 import { QuickMatch } from "../src/components/QuickMatch.js";
 import { Icon, type IconName } from "../src/components/Icon.js";
+import { HeroBoard } from "../src/components/HeroBoard.js";
 
 const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
@@ -92,7 +93,7 @@ export default function Lobby() {
             Awalé
           </span>
           <span className="faint" style={{ fontSize: 9, opacity: 0.55, alignSelf: "flex-start", marginTop: 3 }}>
-            v19
+            v20
           </span>
         </span>
         {address ? (
@@ -108,30 +109,44 @@ export default function Lobby() {
         )}
       </div>
 
-      {/* hero */}
+      {/* hero — a living, self-playing board behind the headline */}
       <div
         className="card animate-in"
-        style={{ display: "flex", flexDirection: "column", gap: 10, padding: 18, overflow: "hidden", position: "relative" }}
+        style={{ position: "relative", overflow: "hidden", padding: 18, minHeight: 210 }}
       >
         <div
           aria-hidden
           style={{
             position: "absolute",
-            right: -40,
-            top: -40,
-            width: 160,
-            height: 160,
-            borderRadius: "50%",
-            background: "radial-gradient(circle, rgba(246,200,99,0.18), transparent 70%)",
+            inset: 0,
+            opacity: 0.4,
+            display: "grid",
+            placeItems: "center",
+            WebkitMaskImage: "radial-gradient(120% 90% at 50% 35%, #000 40%, transparent 78%)",
+            maskImage: "radial-gradient(120% 90% at 50% 35%, #000 40%, transparent 78%)",
+          }}
+        >
+          <div style={{ width: "150%", transform: "translateY(-6%)" }}>
+            <HeroBoard />
+          </div>
+        </div>
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 0,
+            background: "linear-gradient(180deg, rgba(11,10,8,0.35) 0%, rgba(11,10,8,0.5) 45%, rgba(11,10,8,0.9) 100%)",
           }}
         />
-        <span className="chip gold" style={{ alignSelf: "flex-start" }}>
-          One of the oldest games on Earth
-        </span>
-        <span className="display" style={{ fontSize: 34 }}>
-          Play Awalé for stablecoin
-        </span>
-        <span className="muted">Sow, capture, win the pot. Non-custodial — winner takes the stake, minus a small fee.</span>
+        <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 10 }}>
+          <span className="chip gold" style={{ alignSelf: "flex-start" }}>
+            One of the oldest games on Earth
+          </span>
+          <span className="display" style={{ fontSize: 34, textShadow: "0 2px 16px rgba(0,0,0,0.6)" }}>
+            Play Awalé for stablecoin
+          </span>
+          <span className="muted">Sow, capture, win the pot. Non-custodial — winner takes the stake, minus a small fee.</span>
+        </div>
       </div>
 
       {/* primary action */}

@@ -14,6 +14,8 @@ export interface BoardProps {
   playable?: number[];
   /** Cosmetic skin asset urls (wood texture + seed sprite). */
   skin?: { wood: string; seed: string };
+  /** Decorative use (e.g. the home hero): no sound, no haptics. */
+  silent?: boolean;
 }
 
 const DEFAULT_SKIN = { wood: "/assets/wood.png", seed: "/assets/seed.png" };
@@ -185,7 +187,7 @@ function Pit({
   );
 }
 
-export function Board({ state, perspective = 0, onPlay, playable = [], skin = DEFAULT_SKIN }: BoardProps) {
+export function Board({ state, perspective = 0, onPlay, playable = [], skin = DEFAULT_SKIN, silent = false }: BoardProps) {
   // `disp` is what we render; it animates toward the real `state`.
   const [disp, setDisp] = useState<GameState>(state);
   const prevDisp = usePrevious(disp);
@@ -214,8 +216,10 @@ export function Board({ state, perspective = 0, onPlay, playable = [], skin = DE
         const frames = sowFrames(cur.pits, move.idx);
         for (let f = 1; f < frames.length; f++) {
           setDisp({ ...cur, pits: frames[f], over: false, winner: 0 });
-          haptic(4);
-          sfx("tick");
+          if (!silent) {
+            haptic(4);
+            sfx("tick");
+          }
           await sleep(SOW_MS);
         }
         const settled = applyMove(cur, move.house);
@@ -238,8 +242,10 @@ export function Board({ state, perspective = 0, onPlay, playable = [], skin = DE
     for (let i = 0; i < 12; i++) if (prevDisp.pits[i] > 0 && disp.pits[i] === 0) emptied.push(i);
     if (emptied.length) {
       setCaptured(emptied);
-      haptic([14, 40, 22]);
-      sfx("capture");
+      if (!silent) {
+        haptic([14, 40, 22]);
+        sfx("capture");
+      }
       const t = setTimeout(() => setCaptured([]), 680);
       return () => clearTimeout(t);
     }

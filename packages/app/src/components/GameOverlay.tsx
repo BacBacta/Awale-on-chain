@@ -22,12 +22,15 @@ function haptic(p: number | number[]) {
 export function GameOverlay({
   result,
   payout,
+  stats,
   onPlayAgain,
   onShare,
 }: {
   result: 0 | 1 | 2; // 0 = you win, 1 = you lose, 2 = draw (viewer perspective)
   /** Optional human-readable winnings string, e.g. "1.95 USDC". */
   payout?: string;
+  /** End-of-game stats for the result card. */
+  stats?: { mine: number; opp: number; moves?: number };
   onPlayAgain: () => void;
   onShare?: () => void;
 }) {
@@ -113,6 +116,26 @@ export function GameOverlay({
       <div className="muted" style={{ textAlign: "center" }}>
         {sub}
       </div>
+
+      {stats && (
+        <div
+          className="card flat"
+          style={{ display: "flex", width: "100%", maxWidth: 280, padding: "12px 8px", marginTop: 4 }}
+        >
+          {[
+            { label: "You", value: stats.mine, tone: "var(--accent)" },
+            { label: "Opponent", value: stats.opp, tone: "var(--text)" },
+            ...(stats.moves != null ? [{ label: "Moves", value: stats.moves, tone: "var(--muted)" }] : []),
+          ].map((s) => (
+            <div key={s.label} className="col" style={{ flex: 1, alignItems: "center", gap: 2 }}>
+              <span className="title score" style={{ color: s.tone, fontSize: 22 }}>
+                {s.value}
+              </span>
+              <span className="faint">{s.label}</span>
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="stack" style={{ width: "100%", maxWidth: 260, marginTop: 8 }}>
         <button className="btn block" onClick={onPlayAgain}>

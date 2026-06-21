@@ -114,6 +114,7 @@ export function LocalDemo() {
       {showOverlay && result !== null && (
         <GameOverlay
           result={result}
+          stats={{ mine: state.store0, opp: state.store1, moves: ply }}
           onPlayAgain={reset}
           onShare={() => shareResult({ result, scoreMine: state.store0, scoreOpp: state.store1 })}
         />

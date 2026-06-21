@@ -203,6 +203,7 @@ export function LiveMatch({
       {outcome !== null && state?.over && (
         <GameOverlay
           result={outcome}
+          stats={{ mine: myScore ?? 0, opp: oppScore ?? 0, moves: ply }}
           payout={
             outcome === 0 && stakeInfo.current
               ? `${fmt(computePayout(stakeInfo.current.stake, stakeInfo.current.rakeBps).prize, STAKE_DECIMALS)} ${STAKE_SYMBOL}`
