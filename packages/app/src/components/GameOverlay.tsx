@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { Icon } from "./Icon.js";
+import { sfx } from "../lib/sound.js";
 
 // End-of-game celebration moment. Win/lose/draw each get a distinct treatment.
 // TODO(premium): swap the CSS confetti for a Lottie burst — lottie-react is
@@ -35,6 +36,7 @@ export function GameOverlay({
 
   useEffect(() => {
     haptic(win ? [18, 50, 18, 50, 40] : draw ? [20, 40] : 30);
+    sfx(win ? "win" : draw ? "draw" : "lose");
   }, [win, draw]);
 
   const title = win ? "You win!" : draw ? "It's a draw" : "You lost";

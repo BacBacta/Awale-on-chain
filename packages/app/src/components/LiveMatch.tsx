@@ -17,6 +17,8 @@ import { computePayout, fmt } from "../lib/money.js";
 import { shareResult } from "../lib/share.js";
 import { getEquipped, type EquippedSkin } from "../lib/skins.js";
 import { displayName } from "../lib/names.js";
+import { Icon } from "./Icon.js";
+import { SoundToggle } from "./SoundToggle.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
@@ -154,10 +156,10 @@ export function LiveMatch({
   const oppScore = role === 1 ? state?.store0 : state?.store1;
 
   return (
-    <main className="pad stack" style={{ flex: 1, gap: 16, position: "relative" }}>
-      <div className="row">
+    <main className="stack" style={{ flex: 1, gap: 14, position: "relative", padding: "12px 8px" }}>
+      <div className="row" style={{ padding: "0 6px" }}>
         <Link className="btn ghost" href="/" style={{ padding: "6px 10px" }}>
-          ← Back
+          <Icon name="back" size={16} /> Back
         </Link>
         <span className="row" style={{ gap: 8 }}>
           {settled && (
@@ -167,11 +169,12 @@ export function LiveMatch({
             </span>
           )}
           <span className="chip">match #{matchId.toString()}</span>
+          <SoundToggle />
         </span>
       </div>
 
       {state ? (
-        <div className="stack" style={{ flex: 1, justifyContent: "center", gap: 12 }}>
+        <div className="stack" style={{ gap: 14, marginTop: 4 }}>
           <PlayerPanel
             name={displayName(oppAddr)}
             score={oppScore ?? 0}

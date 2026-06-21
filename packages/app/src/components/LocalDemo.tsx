@@ -7,6 +7,8 @@ import { Board, moveDurationMs } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
 import { shareResult } from "../lib/share.js";
+import { Icon } from "./Icon.js";
+import { SoundToggle } from "./SoundToggle.js";
 import { getEquipped, type EquippedSkin } from "../lib/skins.js";
 import { createSessionKey, signMove, type SessionKey } from "../lib/session.js";
 
@@ -91,19 +93,23 @@ export function LocalDemo() {
   }
 
   return (
-    <main className="pad stack" style={{ flex: 1, gap: 12, position: "relative" }}>
-      <div className="row">
+    <main className="stack" style={{ flex: 1, gap: 12, position: "relative", padding: "12px 8px" }}>
+      <div className="row" style={{ padding: "0 6px" }}>
         <Link className="btn ghost" href="/" style={{ padding: "6px 10px" }}>
-          ← Back
+          <Icon name="back" size={16} /> Back
         </Link>
-        <span className="chip">demo · move {ply}</span>
+        <span className="row" style={{ gap: 8 }}>
+          <span className="chip">demo · move {ply}</span>
+          <SoundToggle />
+        </span>
       </div>
 
-      <div className="stack" style={{ flex: 1, justifyContent: "center", gap: 12 }}>
+      <div className="stack" style={{ gap: 14, marginTop: 4 }}>
         <PlayerPanel name="Bot" score={state.store1} active={state.turn === 1 && !state.over} thinking={thinking} />
         <Board state={state} onPlay={play} playable={playable} skin={skin} />
         <PlayerPanel name="You" you score={state.store0} active={state.turn === 0 && !state.over} />
       </div>
+      <div className="spacer" />
 
       {showOverlay && result !== null && (
         <GameOverlay

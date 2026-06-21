@@ -19,7 +19,9 @@ export type IconName =
   | "check"
   | "spinner"
   | "info"
-  | "target";
+  | "target"
+  | "sound"
+  | "mute";
 
 const PATHS: Record<IconName, React.ReactNode> = {
   play: <path d="M7 5.5v13l11-6.5z" fill="currentColor" stroke="none" />,
@@ -75,6 +77,18 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <circle cx="12" cy="12" r="8.5" />
       <circle cx="12" cy="12" r="4.5" />
       <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  sound: (
+    <>
+      <path d="M4 9v6h3l5 4V5L7 9z" />
+      <path d="M16 8.5a4 4 0 0 1 0 7M18.5 6a7 7 0 0 1 0 12" />
+    </>
+  ),
+  mute: (
+    <>
+      <path d="M4 9v6h3l5 4V5L7 9z" />
+      <path d="M16 9.5l5 5M21 9.5l-5 5" />
     </>
   ),
 };

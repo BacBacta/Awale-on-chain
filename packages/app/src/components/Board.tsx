@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { applyMove, legalMovesMask, type GameState } from "../../../engine/src/awale.js";
+import { sfx } from "../lib/sound.js";
 
 export interface BoardProps {
   state: GameState;
@@ -214,6 +215,7 @@ export function Board({ state, perspective = 0, onPlay, playable = [], skin = DE
         for (let f = 1; f < frames.length; f++) {
           setDisp({ ...cur, pits: frames[f], over: false, winner: 0 });
           haptic(4);
+          sfx("tick");
           await sleep(SOW_MS);
         }
         const settled = applyMove(cur, move.house);
@@ -237,6 +239,7 @@ export function Board({ state, perspective = 0, onPlay, playable = [], skin = DE
     if (emptied.length) {
       setCaptured(emptied);
       haptic([14, 40, 22]);
+      sfx("capture");
       const t = setTimeout(() => setCaptured([]), 680);
       return () => clearTimeout(t);
     }
@@ -256,6 +259,7 @@ export function Board({ state, perspective = 0, onPlay, playable = [], skin = DE
     if (animating.current) return;
     if (playable.includes(col)) {
       haptic(8);
+      sfx("select");
       onPlay?.(col);
     } else if (onPlay) {
       haptic([20, 30, 20]);

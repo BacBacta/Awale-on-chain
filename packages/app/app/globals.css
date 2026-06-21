@@ -532,6 +532,19 @@ body {
     transform: rotate(360deg);
   }
 }
+@keyframes route-in {
+  from {
+    opacity: 0;
+    transform: translateY(7px) scale(0.992);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.route-enter {
+  animation: route-in 300ms var(--ease-out);
+}
 @keyframes shimmer {
   100% {
     transform: translateX(100%);
