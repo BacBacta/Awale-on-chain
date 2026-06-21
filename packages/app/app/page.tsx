@@ -52,7 +52,7 @@ export default function Lobby() {
             Awalé
           </span>
           <span className="chip gold" style={{ fontSize: 10 }}>
-            v11
+            v12
           </span>
         </span>
         {address ? (
