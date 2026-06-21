@@ -11,7 +11,11 @@ export interface BoardProps {
   onPlay?: (house: number) => void;
   /** Houses (0..5, relative to `perspective`) currently playable; [] disables input. */
   playable?: number[];
+  /** Cosmetic skin asset urls (wood texture + seed sprite). */
+  skin?: { wood: string; seed: string };
 }
+
+const DEFAULT_SKIN = { wood: "/assets/wood.png", seed: "/assets/seed.png" };
 
 const W = 360;
 const H = 300;
@@ -118,6 +122,7 @@ function Pit({
   active,
   captured,
   origin,
+  seedAsset,
   onClick,
 }: {
   x: number;
@@ -127,6 +132,7 @@ function Pit({
   active: boolean;
   captured: boolean;
   origin: boolean;
+  seedAsset: string;
   onClick?: () => void;
 }) {
   const shown = Math.min(seeds, MAX_SEEDS);
@@ -156,7 +162,7 @@ function Pit({
         {SEED_SLOTS.slice(0, shown).map((s, i) => (
           <image
             key={i}
-            href="/assets/seed.png"
+            href={seedAsset}
             x={x + s.dx - SEED_PX / 2}
             y={y + s.dy - SEED_PX / 2}
             width={SEED_PX}
@@ -178,7 +184,7 @@ function Pit({
   );
 }
 
-export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardProps) {
+export function Board({ state, perspective = 0, onPlay, playable = [], skin = DEFAULT_SKIN }: BoardProps) {
   // `disp` is what we render; it animates toward the real `state`.
   const [disp, setDisp] = useState<GameState>(state);
   const prevDisp = usePrevious(disp);
@@ -304,7 +310,7 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
 
       {/* board body: photographic wood + sheen + vignette + framed rim */}
       <g clipPath="url(#boardClip)">
-        <image href="/assets/wood.png" x="0" y="0" width={W} height={H} preserveAspectRatio="xMidYMid slice" />
+        <image href={skin.wood} x="0" y="0" width={W} height={H} preserveAspectRatio="xMidYMid slice" />
         <rect x="0" y="0" width={W} height={H} fill="url(#sheen)" />
         <rect x="0" y="0" width={W} height={H} fill="url(#vignette)" />
       </g>
@@ -325,7 +331,7 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
             {STORE_SLOTS.slice(0, Math.min(count, STORE_SLOTS.length)).map((s, i) => (
               <image
                 key={i}
-                href="/assets/seed.png"
+                href={skin.seed}
                 x={x + s.dx - 6.5}
                 y={H / 2 + 18 + s.dy - 6.5}
                 width={13}
@@ -350,6 +356,7 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
           active={false}
           captured={captured.includes(idx)}
           origin={origin === idx}
+          seedAsset={skin.seed}
         />
       ))}
 
@@ -365,6 +372,7 @@ export function Board({ state, perspective = 0, onPlay, playable = [] }: BoardPr
               active={active}
               captured={captured.includes(idx)}
               origin={origin === idx}
+              seedAsset={skin.seed}
               onClick={onPlay ? () => tap(col, idx) : undefined}
             />
           </g>

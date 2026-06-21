@@ -15,6 +15,7 @@ import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
 import { computePayout, fmt } from "../lib/money.js";
 import { shareResult } from "../lib/share.js";
+import { getEquipped, type EquippedSkin } from "../lib/skins.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
@@ -38,6 +39,9 @@ export function LiveMatch({ matchId, casualRole }: { matchId: bigint; casualRole
   const [status, setStatus] = useState("Connecting…");
   const [outcome, setOutcome] = useState<0 | 1 | 2 | null>(null); // viewer perspective
   const [settled, setSettled] = useState(false);
+  const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
+
+  useEffect(() => setSkin(getEquipped()), []);
 
   const session = useRef<SessionKey | null>(null);
   const socket = useRef<Socket | null>(null);
@@ -162,7 +166,7 @@ export function LiveMatch({ matchId, casualRole }: { matchId: bigint; casualRole
             score={oppScore ?? 0}
             active={!state.over && role !== null && state.turn !== role}
           />
-          <Board state={state} perspective={role ?? 0} onPlay={play} playable={playable} />
+          <Board state={state} perspective={role ?? 0} onPlay={play} playable={playable} skin={skin} />
           <PlayerPanel name="You" you score={myScore ?? 0} active={myTurn} />
           {state.over && (
             <div className="row" style={{ justifyContent: "center" }}>

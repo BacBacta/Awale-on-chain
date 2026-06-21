@@ -7,6 +7,7 @@ import { Board, moveDurationMs } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
 import { shareResult } from "../lib/share.js";
+import { getEquipped, type EquippedSkin } from "../lib/skins.js";
 import { createSessionKey, signMove, type SessionKey } from "../lib/session.js";
 
 // Demo context — in a real match these come from the on-chain join events.
@@ -29,6 +30,9 @@ export function LocalDemo() {
   const [busy, setBusy] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [showOverlay, setShowOverlay] = useState(false);
+  const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
+
+  useEffect(() => setSkin(getEquipped()), []);
 
   const sessions = useMemo<[SessionKey, SessionKey]>(() => [createSessionKey(), createSessionKey()], []);
 
@@ -97,7 +101,7 @@ export function LocalDemo() {
 
       <div className="stack" style={{ flex: 1, justifyContent: "center", gap: 12 }}>
         <PlayerPanel name="Bot" score={state.store1} active={state.turn === 1 && !state.over} thinking={thinking} />
-        <Board state={state} onPlay={play} playable={playable} />
+        <Board state={state} onPlay={play} playable={playable} skin={skin} />
         <PlayerPanel name="You" you score={state.store0} active={state.turn === 0 && !state.over} />
       </div>
 
