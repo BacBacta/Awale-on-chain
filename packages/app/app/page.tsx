@@ -52,7 +52,7 @@ export default function Lobby() {
             Awalé
           </span>
           <span className="chip gold" style={{ fontSize: 10 }}>
-            v8
+            v9
           </span>
         </span>
         {address ? (
@@ -96,7 +96,7 @@ export default function Lobby() {
       </a>
 
       <Link className={`btn ${showLearnHint ? "" : "secondary"} block`} href="/learn">
-        {showLearnHint ? "🌱 Nouveau ? Apprends à jouer" : "Comment jouer"}
+        {showLearnHint ? "🌱 New here? Learn to play" : "How to play"}
       </Link>
 
       <div className="spacer" />

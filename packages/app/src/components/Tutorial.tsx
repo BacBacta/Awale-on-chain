@@ -5,9 +5,9 @@ import Link from "next/link";
 import { initialState, applyMove, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "./Board.js";
 
-// Interactive "how to play" — teaches sowing then capture by doing, in French
-// (the novice audience this is built for). Each interactive step only lets the
-// learner tap the highlighted house; the board animates the result.
+// Interactive "how to play" — teaches sowing then capture by doing. Each
+// interactive step only lets the learner tap the highlighted house; the board
+// animates the result.
 
 function makeState(pits: number[], turn: 0 | 1 = 0, store0 = 0, store1 = 0): GameState {
   return { pits: pits.slice(), store0, store1, turn, over: false, winner: 0 };
@@ -26,28 +26,28 @@ interface Step {
 
 const STEPS: Step[] = [
   {
-    title: "Le but du jeu",
-    body: "L'Awalé se joue à deux. Chacun sème des graines autour du plateau et tente d'en capturer le plus possible dans son grenier. Celui qui a le plus de graines à la fin gagne.",
+    title: "The goal",
+    body: "Awalé is a two-player game. Each player sows seeds around the board and tries to capture as many as possible into their store. Whoever holds the most seeds at the end wins.",
     success: "",
   },
   {
-    title: "Semer",
-    body: "Touche la case surlignée. Ses graines sont ramassées puis déposées une à une dans les cases suivantes, dans le sens anti-horaire.",
+    title: "Sowing",
+    body: "Tap the highlighted house. Its seeds are scooped up and dropped one by one into the following houses, going counter-clockwise.",
     board: initialState(),
     target: 2,
-    success: "Voilà le semis : chaque graine tombe dans la case suivante. C'est le cœur du jeu.",
+    success: "That's sowing: each seed lands in the next house. It's the heart of the game.",
   },
   {
-    title: "Capturer",
-    body: "Si ta dernière graine tombe dans une case de l'adversaire (la rangée du haut) et la porte à 2 ou 3 graines, tu captures ces graines ! Touche la case surlignée.",
+    title: "Capturing",
+    body: "If your last seed lands in one of your opponent's houses (the top row) and brings it to 2 or 3 seeds, you capture them! Tap the highlighted house.",
     // bottom row: only house 5 has a seed; opponent pit 6 has 1 → playing 5 lands in 6 making it 2 → capture
     board: makeState([0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0]),
     target: 5,
-    success: "Capture ! Les graines partent dans ton grenier (à droite). C'est comme ça qu'on marque.",
+    success: "Capture! The seeds go into your store (on the right). That's how you score.",
   },
   {
-    title: "Prêt·e à jouer",
-    body: "C'est tout ce qu'il faut savoir pour commencer. Tu apprendras les subtilités en jouant. Bonne partie !",
+    title: "Ready to play",
+    body: "That's all you need to get started. You'll pick up the finer points as you play. Have a great game!",
     success: "",
   },
 ];
@@ -82,10 +82,10 @@ export function Tutorial() {
     <main className="pad stack" style={{ flex: 1, gap: 16, position: "relative" }}>
       <div className="row">
         <Link className="btn ghost" href="/" style={{ padding: "6px 10px" }}>
-          ← Retour
+          ← Back
         </Link>
         <span className="chip">
-          Étape {step + 1}/{STEPS.length}
+          Step {step + 1}/{STEPS.length}
         </span>
       </div>
 
@@ -100,7 +100,7 @@ export function Tutorial() {
         {s.target != null && !solved && (
           <span className="chip gold" style={{ alignSelf: "center" }}>
             <span className="dot pulse" />
-            Touche la case surlignée
+            Tap the highlighted house
           </span>
         )}
       </div>
@@ -109,11 +109,11 @@ export function Tutorial() {
       {(s.target == null || solved) &&
         (isLast ? (
           <Link className="btn block" href="/play">
-            Jouer une démo
+            Play a demo
           </Link>
         ) : (
           <button className="btn block" onClick={() => setStep((n) => n + 1)}>
-            Continuer
+            Continue
           </button>
         ))}
     </main>
