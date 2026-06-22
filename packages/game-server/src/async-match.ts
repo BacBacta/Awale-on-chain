@@ -27,7 +27,11 @@ export interface AsyncMatchState {
   over: boolean;
   ply: number;
   players: [Address, Address];
+  /** true while waiting for a second player to join (correspondence invite). */
+  open: boolean;
 }
+
+const ZERO = "0x0000000000000000000000000000000000000000" as Address;
 
 export class AsyncMatchService {
   constructor(
@@ -64,12 +68,57 @@ export class AsyncMatchService {
     return opts.matchId.toString();
   }
 
+  /**
+   * Open a correspondence match with only the creator; a second player joins via
+   * an invite link. Returns the match id.
+   */
+  async createOpen(opts: {
+    matchId: bigint;
+    chainId: bigint;
+    verifier: Address;
+    creator: Address;
+    session0: Address;
+    startTurn: 0 | 1;
+    mode: "casual" | "cash";
+  }): Promise<string> {
+    const m = new Match({
+      matchId: opts.matchId,
+      chainId: opts.chainId,
+      verifier: opts.verifier,
+      sessions: [opts.session0, ZERO],
+      startTurn: opts.startTurn,
+    });
+    await this.store.save({
+      snapshot: m.snapshot(),
+      players: [opts.creator, ZERO],
+      mode: opts.mode,
+      turn: m.turn,
+      over: m.over,
+      ply: m.ply,
+      updatedAt: Date.now(),
+    });
+    return opts.matchId.toString();
+  }
+
+  /** Second player joins an open match (binds their session key). */
+  async join(matchId: string, joiner: Address, session1: Address): Promise<AsyncMatchState> {
+    const rec = await this.store.get(matchId);
+    if (!rec) throw new Error("no such match");
+    if (rec.players[1] !== ZERO) throw new Error("match already full");
+    if (rec.players[0].toLowerCase() === joiner.toLowerCase()) throw new Error("cannot join your own game");
+    rec.players[1] = joiner;
+    rec.snapshot.session1 = session1;
+    rec.updatedAt = Date.now();
+    await this.store.save(rec);
+    return (await this.getState(matchId))!;
+  }
+
   /** Current replayed state of a match (null if unknown). */
   async getState(matchId: string): Promise<AsyncMatchState | null> {
     const rec = await this.store.get(matchId);
     if (!rec) return null;
     const m = Match.rehydrate(rec.snapshot);
-    return { matchId, state: m.state, turn: m.turn, over: m.over, ply: m.ply, players: rec.players };
+    return { matchId, state: m.state, turn: m.turn, over: m.over, ply: m.ply, players: rec.players, open: rec.players[1] === ZERO };
   }
 
   /**

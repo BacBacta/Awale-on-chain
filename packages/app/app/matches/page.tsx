@@ -10,6 +10,8 @@ import { escrowConfig } from "../../src/lib/escrow.js";
 import { listLocalMatches, statusView } from "../../src/lib/matches.js";
 import { computePayout, fmt } from "../../src/lib/money.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
+import { createSessionKey, persistSession } from "../../src/lib/session.js";
+import { asyncEnabled, createAsync } from "../../src/lib/asyncClient.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
@@ -60,14 +62,29 @@ export default function Matches() {
       });
   }, []);
 
+  const [creating, setCreating] = useState(false);
+  async function newCorrespondence() {
+    if (creating) return;
+    setCreating(true);
+    try {
+      const session = createSessionKey();
+      const id = await createAsync(session.address);
+      persistSession(BigInt(id), session);
+      window.location.href = `/play?async=${id}`;
+    } catch {
+      setCreating(false);
+    }
+  }
+
   return (
     <main className="pad stack" style={{ flex: 1, gap: 12 }}>
-      <div className="row">
-        <span className="title">Your matches</span>
-        <Link className="chip" href="/">
-          + New
-        </Link>
-      </div>
+      <span className="title">Your matches</span>
+
+      {asyncEnabled() && (
+        <button className="btn block" onClick={newCorrespondence} disabled={creating}>
+          <Icon name="versus" size={17} /> {creating ? "Creating…" : "New correspondence game"}
+        </button>
+      )}
 
       {rows === null ? (
         <div className="card">

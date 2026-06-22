@@ -121,6 +121,37 @@ const httpServer = createServer((req, res) => {
   };
 
   // --- async / correspondence play ---
+  if (req.method === "POST" && url.pathname === "/async/create") {
+    readJson(req)
+      .then((b) => {
+        const { address, session } = b as { address: Address; session: Address };
+        if (!address || !session) throw new Error("address + session required");
+        const matchId = (1n << 200n) + BigInt(Math.floor(Math.random() * 1e15)) * 1000n + BigInt(Math.floor(Math.random() * 1000));
+        return asyncMatches.createOpen({
+          matchId,
+          chainId: BigInt(CHAIN_ID),
+          verifier: VERIFIER,
+          creator: address,
+          session0: session,
+          startTurn: Math.random() < 0.5 ? 0 : 1,
+          mode: "casual",
+        });
+      })
+      .then((matchId) => json(200, { matchId }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/async/join") {
+    readJson(req)
+      .then((b) => {
+        const { matchId, address, session } = b as { matchId: string; address: Address; session: Address };
+        if (!matchId || !address || !session) throw new Error("matchId + address + session required");
+        return asyncMatches.join(matchId, address, session);
+      })
+      .then((state) => json(200, state))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/async/matches") {
     const address = url.searchParams.get("address") as Address | null;
     if (!address) return json(400, { error: "address required" });

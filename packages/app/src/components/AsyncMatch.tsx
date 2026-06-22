@@ -1,0 +1,189 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import type { Hex } from "viem";
+import { legalMovesMask, type GameState } from "../../../engine/src/awale.js";
+import { Board } from "./Board.js";
+import { PlayerPanel } from "./PlayerPanel.js";
+import { Icon } from "./Icon.js";
+import { SoundToggle } from "./SoundToggle.js";
+import { GameOverlay } from "./GameOverlay.js";
+import { createSessionKey, loadSession, persistSession, signMove, type SessionKey } from "../lib/session.js";
+import { escrowConfig } from "../lib/escrow.js";
+import { getEquipped, type EquippedSkin } from "../lib/skins.js";
+import { displayName } from "../lib/names.js";
+import { sfx } from "../lib/sound.js";
+import { getAsync, joinAsync, moveAsync, roleOf, type AsyncState } from "../lib/asyncClient.js";
+
+const POLL_MS = 3500;
+
+export function AsyncMatch({ matchId }: { matchId: string }) {
+  const [data, setData] = useState<AsyncState | null>(null);
+  const [role, setRole] = useState<0 | 1 | null>(null);
+  const [status, setStatus] = useState("Loading…");
+  const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
+  const session = useRef<SessionKey | null>(null);
+  const cfg = escrowConfig();
+  const prevTurn = useRef<number | null>(null);
+
+  useEffect(() => {
+    setSkin(getEquipped());
+    let alive = true;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    (async () => {
+      try {
+        let s = await getAsync(matchId);
+        let sk = loadSession(BigInt(matchId));
+
+        if (!sk) {
+          if (s.open) {
+            // visitor opening an invite → join as player 1
+            sk = createSessionKey();
+            s = await joinAsync(matchId, sk.address);
+            persistSession(BigInt(matchId), sk);
+          } else {
+            setStatus("This game is full.");
+            setData(s);
+            return;
+          }
+        }
+        session.current = sk;
+        const r = roleOf(s, sk.address);
+        if (alive) {
+          setRole(r);
+          setData(s);
+          try {
+            localStorage.setItem("awale_played", "1");
+          } catch {
+            /* ignore */
+          }
+        }
+
+        timer = setInterval(async () => {
+          try {
+            const next = await getAsync(matchId);
+            if (!alive) return;
+            // "your turn" cue when the opponent has just moved
+            if (prevTurn.current !== null && next.turn !== prevTurn.current && r !== null && next.turn === r && !next.over) {
+              sfx("select");
+            }
+            prevTurn.current = next.turn;
+            setData(next);
+          } catch {
+            /* transient — keep last state */
+          }
+        }, POLL_MS);
+      } catch (e) {
+        if (alive) setStatus((e as Error).message);
+      }
+    })();
+
+    return () => {
+      alive = false;
+      if (timer) clearInterval(timer);
+    };
+  }, [matchId]);
+
+  async function play(house: number) {
+    if (!data || !session.current || !cfg || role === null) return;
+    if (data.over || data.open || data.turn !== role) return;
+    try {
+      const sig = await signMove(session.current, BigInt(matchId), BigInt(data.ply), house, {
+        chainId: BigInt(cfg.chainId),
+        verifier: cfg.verifier,
+      });
+      const state = await moveAsync(matchId, role, house, sig as Hex);
+      setData({ ...data, state, turn: 1 - role, ply: data.ply + 1, over: state.over });
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+  }
+
+  function copyInvite() {
+    const url = `${window.location.origin}/play?async=${matchId}`;
+    if (navigator.share) navigator.share({ title: "Awalé", text: "Join my Awalé game", url }).catch(() => {});
+    else navigator.clipboard?.writeText(url).catch(() => {});
+  }
+
+  if (!data) {
+    return (
+      <main className="pad stack" style={{ flex: 1, gap: 12 }}>
+        <Link className="btn ghost" href="/" style={{ alignSelf: "flex-start", padding: "6px 10px" }}>
+          <Icon name="back" size={16} /> Back
+        </Link>
+        <div className="card">
+          <span className="chip">
+            <span className="dot pulse" /> {status}
+          </span>
+        </div>
+      </main>
+    );
+  }
+
+  const r = role ?? 0;
+  const myScore = r === 1 ? data.state.store1 : data.state.store0;
+  const oppScore = r === 1 ? data.state.store0 : data.state.store1;
+  const myTurn = !data.over && !data.open && data.turn === r;
+  const playable = myTurn ? legalHouses(data.state) : [];
+  const outcome: 0 | 1 | 2 | null = data.over ? (data.state.winner === 2 ? 2 : data.state.winner === r ? 0 : 1) : null;
+
+  const statusLabel = data.open
+    ? "Waiting for an opponent to join"
+    : data.over
+      ? "Game over"
+      : myTurn
+        ? "Your turn"
+        : "Opponent's turn — come back later";
+
+  return (
+    <main className="stack" style={{ flex: 1, gap: 14, position: "relative", padding: "12px 8px" }}>
+      <div className="row" style={{ padding: "0 6px" }}>
+        <Link className="btn ghost" href="/" style={{ padding: "6px 10px" }}>
+          <Icon name="back" size={16} /> Back
+        </Link>
+        <span className="row" style={{ gap: 8 }}>
+          <span className="chip">correspondence</span>
+          <SoundToggle />
+        </span>
+      </div>
+
+      {data.open && (
+        <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
+          <span className="chip positive">
+            <span className="dot pulse" /> Waiting for an opponent
+          </span>
+          <span className="muted">Share the link — your friend can join and play whenever. You'll be notified to come back.</span>
+          <button className="btn block" onClick={copyInvite}>
+            <Icon name="share" size={17} /> Invite a friend
+          </button>
+        </div>
+      )}
+
+      <div className="stack" style={{ gap: 14, marginTop: 4 }}>
+        <PlayerPanel name={displayName(data.open ? null : data.players[1 - r])} score={oppScore} active={!data.over && !data.open && data.turn !== r} />
+        <Board state={data.state} perspective={r} onPlay={play} playable={playable} skin={skin} />
+        <PlayerPanel name="You" you score={myScore} active={myTurn} />
+      </div>
+
+      <div className="row" style={{ justifyContent: "center" }}>
+        <span className={`chip ${myTurn ? "positive" : ""}`}>
+          {!data.over && <span className={`dot ${myTurn ? "pulse" : ""}`} />}
+          {statusLabel}
+        </span>
+      </div>
+
+      <div className="spacer" />
+
+      {outcome !== null && <GameOverlay result={outcome} stats={{ mine: myScore, opp: oppScore, moves: data.ply }} onPlayAgain={() => (window.location.href = "/")} />}
+    </main>
+  );
+}
+
+function legalHouses(s: GameState): number[] {
+  const mask = legalMovesMask(s);
+  const out: number[] = [];
+  for (let h = 0; h < 6; h++) if (mask & (1 << h)) out.push(h);
+  return out;
+}
