@@ -15,6 +15,7 @@ import { Icon, type IconName } from "../src/components/Icon.js";
 import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
 import { streakCount, solvedToday } from "../src/lib/daily.js";
+import { tournamentsEnabled } from "../src/lib/tournaments.js";
 
 const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
@@ -98,7 +99,6 @@ export default function Lobby() {
         <span className="brand" style={{ fontSize: 26 }}>
           Awalé
         </span>
-        <span style={{ display: "none" }}>v30</span>
         {address ? (
           <Link href="/profile" className="chip positive" title={shortAddress(address)} style={{ textDecoration: "none" }}>
             <span className="dot" />
@@ -154,8 +154,17 @@ export default function Lobby() {
           <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
         ))}
 
-      {/* secondary — only what isn't already in the bottom nav */}
+      {/* secondary — discovery for the modes not surfaced above */}
       <div className="stack" style={{ gap: 8 }}>
+        {tournamentsEnabled() && (
+          <NavRow
+            href="/tournaments"
+            icon="medal"
+            tone="gold"
+            title="Tournaments"
+            sub="One buy-in, win a multiplied prize"
+          />
+        )}
         <NavRow
           href="/daily"
           icon="bolt"

@@ -7,7 +7,6 @@ import type { Address } from "viem";
 import { getInjectedProvider, connect } from "../../src/lib/minipay.js";
 import { escrowConfig, type WriteClient } from "../../src/lib/escrow.js";
 import { fmt } from "../../src/lib/money.js";
-import { friendlyName } from "../../src/lib/names.js";
 import {
   listOpenTournaments,
   joinTournament,
@@ -16,7 +15,7 @@ import {
   type Tournament,
 } from "../../src/lib/tournaments.js";
 
-const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
+const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
 const FEE_CURRENCY = (process.env.NEXT_PUBLIC_FEE_CURRENCY || undefined) as Address | undefined;
 
@@ -63,73 +62,95 @@ export default function Tournaments() {
   }
 
   return (
-    <main className="pad stack" style={{ flex: 1, gap: 12 }}>
-      <span className="title">Tournaments</span>
-      <span className="muted" style={{ marginTop: -6 }}>
-        One buy-in, a bracket of quick games, winner takes the pool.
-      </span>
+    <main className="pad stack" style={{ flex: 1, gap: 14 }}>
+      {/* soft intro */}
+      <div className="card row animate-in" style={{ gap: 13, padding: 16 }}>
+        <span className="lead gold" style={{ width: 46, height: 46, borderRadius: 15 }}>
+          <Icon name="medal" size={23} />
+        </span>
+        <span className="col" style={{ flex: 1, gap: 3 }}>
+          <span className="h2">Tournaments</span>
+          <span className="muted" style={{ lineHeight: 1.35 }}>
+            One buy-in, a bracket of quick games — the winner takes the pool.
+          </span>
+        </span>
+      </div>
 
       {!tournamentsEnabled() ? (
-        <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
-          <span className="lead" style={{ width: 52, height: 52, borderRadius: 16 }}>
-            <Icon name="trophy" size={26} />
-          </span>
-          <span className="h2">Coming soon</span>
-          <span className="muted">Tournaments aren&apos;t live in this build yet.</span>
-        </div>
+        <EmptyState title="Coming soon" sub="Tournaments aren't live in this build yet." />
       ) : list === null ? (
-        <div className="card">
+        <div className="card flat row" style={{ justifyContent: "center", padding: 22 }}>
           <span className="chip">
-            <span className="dot pulse" /> Loading…
+            <span className="dot pulse" /> Loading tables…
           </span>
         </div>
       ) : list.length === 0 ? (
-        <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
-          <span className="lead" style={{ width: 52, height: 52, borderRadius: 16 }}>
-            <Icon name="trophy" size={26} />
-          </span>
-          <span className="h2">No open tournaments</span>
-          <span className="muted">Check back soon — new Sit-and-Go tables open through the day.</span>
-          <Link className="btn block" href="/" style={{ marginTop: 4 }}>
-            Back to lobby
-          </Link>
-        </div>
+        <EmptyState
+          title="No open tables right now"
+          sub="New Sit-and-Go tables open through the day — check back soon."
+          back
+        />
       ) : (
-        list.map((t) => {
-          const free = BigInt(t.entryFee) === 0n;
-          const seats = `${t.entrants.length}/${t.maxPlayers}`;
-          return (
-            <div className="list-row" key={t.id} style={{ cursor: "default" }}>
-              <span className={`lead ${free ? "" : "gold"}`}>
-                <Icon name={free ? "gift" : "trophy"} size={18} />
-              </span>
-              <span className="col" style={{ flex: 1, gap: 1 }}>
-                <span style={{ fontWeight: 700, fontSize: 14 }}>
-                  {free ? "Free-roll" : `${fmt(BigInt(t.entryFee), STAKE_DECIMALS)} ${STAKE_SYMBOL}`} ·{" "}
-                  {t.maxPlayers}-player SNG
-                </span>
-                <span className="faint">
-                  {seats} seated · win up to {fmt(topPrize(t), STAKE_DECIMALS)} {STAKE_SYMBOL}
-                </span>
-              </span>
-              <button
-                className="btn"
-                style={{ padding: "8px 14px" }}
-                onClick={() => join(t)}
-                disabled={!wallet || joining !== null}
+        <div className="stack stagger" style={{ gap: 10 }}>
+          {list.map((t, i) => {
+            const free = BigInt(t.entryFee) === 0n;
+            return (
+              <div
+                className="card stack"
+                key={t.id}
+                style={{ gap: 13, padding: 14, ["--i" as string]: i }}
               >
-                {joining === t.id ? "Joining…" : free ? "Enter" : "Join"}
-              </button>
-            </div>
-          );
-        })
+                <div className="row" style={{ alignItems: "center" }}>
+                  <span className={`lead ${free ? "" : "gold"}`}>
+                    <Icon name={free ? "gift" : "trophy"} size={18} />
+                  </span>
+                  <span className="col" style={{ flex: 1, gap: 2, marginLeft: 12 }}>
+                    <span style={{ fontWeight: 700, fontSize: 15 }}>
+                      {free ? "Free-roll" : `${fmt(BigInt(t.entryFee), STAKE_DECIMALS)} ${STAKE_SYMBOL}`} ·{" "}
+                      {t.maxPlayers}-player SNG
+                    </span>
+                    <span className="faint">{t.entrants.length}/{t.maxPlayers} seated</span>
+                  </span>
+                  <span className="chip gold" style={{ alignSelf: "center" }}>
+                    win {fmt(topPrize(t), STAKE_DECIMALS)} {STAKE_SYMBOL}
+                  </span>
+                </div>
+                <button
+                  className="btn block"
+                  onClick={() => join(t)}
+                  disabled={!wallet || joining !== null}
+                  style={{ padding: "12px 16px" }}
+                >
+                  {joining === t.id ? "Joining…" : free ? "Enter free-roll" : "Join table"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
       )}
 
       {error && (
-        <span className="chip negative" style={{ alignSelf: "flex-start" }}>
+        <span className="chip danger" style={{ alignSelf: "flex-start" }}>
           {error}
         </span>
       )}
     </main>
+  );
+}
+
+function EmptyState({ title, sub, back }: { title: string; sub: string; back?: boolean }) {
+  return (
+    <div className="card stack animate-in" style={{ gap: 12, alignItems: "center", textAlign: "center", padding: 28 }}>
+      <span className="lead gold" style={{ width: 54, height: 54, borderRadius: 17 }}>
+        <Icon name="medal" size={27} />
+      </span>
+      <span className="h2">{title}</span>
+      <span className="muted" style={{ maxWidth: 240, lineHeight: 1.4 }}>{sub}</span>
+      {back && (
+        <Link className="btn secondary block" href="/" style={{ marginTop: 4 }}>
+          Back to lobby
+        </Link>
+      )}
+    </div>
   );
 }
