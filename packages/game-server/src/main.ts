@@ -55,7 +55,12 @@ function chainFor(id: number) {
   return celo;
 }
 
-const publicClient = createPublicClient({ chain: chainFor(CHAIN_ID), transport: http(RPC_URL) });
+// 30s timeout (default 10s): the public Celo Sepolia RPC (forno) is often slow
+// from Fly, which was timing out the tournament lobby sync's nextTournamentId read.
+const publicClient = createPublicClient({
+  chain: chainFor(CHAIN_ID),
+  transport: http(RPC_URL, { timeout: 30_000, retryCount: 2 }),
+});
 const hub = new GameHub();
 
 /** Read an on-chain match into the hub's ChainMatch shape. */
