@@ -90,14 +90,10 @@ export default function Lobby() {
       <Welcome />
       {/* header: brand + identity */}
       <div className="row">
-        <span className="row" style={{ gap: 7 }}>
-          <span className="brand" style={{ fontSize: 26 }}>
-            Awalé
-          </span>
-          <span className="faint" style={{ fontSize: 9, opacity: 0.55, alignSelf: "flex-start", marginTop: 3 }}>
-            v23
-          </span>
+        <span className="brand" style={{ fontSize: 26 }}>
+          Awalé
         </span>
+        <span style={{ display: "none" }}>v24</span>
         {address ? (
           <Link href="/profile" className="chip positive" title={shortAddress(address)} style={{ textDecoration: "none" }}>
             <span className="dot" />
@@ -111,44 +107,34 @@ export default function Lobby() {
         )}
       </div>
 
-      {/* hero — a living, self-playing board behind the headline */}
-      <div
-        className="card animate-in"
-        style={{ position: "relative", overflow: "hidden", padding: 18, minHeight: 210 }}
-      >
+      {/* hero — a calm, living board behind the headline */}
+      <div className="card animate-in" style={{ position: "relative", overflow: "hidden", padding: 18, minHeight: 168 }}>
         <div
           aria-hidden
           style={{
             position: "absolute",
             inset: 0,
-            opacity: 0.5,
+            opacity: 0.28,
             display: "grid",
             placeItems: "center",
-            filter: "blur(3px) saturate(1.1)",
-            WebkitMaskImage: "radial-gradient(130% 80% at 50% 30%, #000 35%, transparent 72%)",
-            maskImage: "radial-gradient(130% 80% at 50% 30%, #000 35%, transparent 72%)",
+            filter: "blur(5px)",
+            WebkitMaskImage: "radial-gradient(130% 75% at 50% 28%, #000 30%, transparent 70%)",
+            maskImage: "radial-gradient(130% 75% at 50% 28%, #000 30%, transparent 70%)",
           }}
         >
-          <div style={{ width: "168%", transform: "translateY(-20%)" }}>
+          <div style={{ width: "168%", transform: "translateY(-22%)" }}>
             <HeroBoard />
           </div>
         </div>
         <div
           aria-hidden
-          style={{
-            position: "absolute",
-            inset: 0,
-            background: "linear-gradient(180deg, rgba(11,10,8,0.35) 0%, rgba(11,10,8,0.5) 45%, rgba(11,10,8,0.9) 100%)",
-          }}
+          style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(11,10,8,0.3), rgba(11,10,8,0.86))" }}
         />
-        <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 10 }}>
-          <span className="chip gold" style={{ alignSelf: "flex-start" }}>
-            One of the oldest games on Earth
-          </span>
-          <span className="display" style={{ fontSize: 34, textShadow: "0 2px 16px rgba(0,0,0,0.6)" }}>
+        <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 8 }}>
+          <span className="display" style={{ fontSize: 32, textShadow: "0 2px 16px rgba(0,0,0,0.6)" }}>
             Play Awalé for stablecoin
           </span>
-          <span className="muted">Sow, capture, win the pot. Non-custodial — winner takes the stake, minus a small fee.</span>
+          <span className="muted">Sow, capture, win the pot. Winner takes the stake.</span>
         </div>
       </div>
 
@@ -158,17 +144,13 @@ export default function Lobby() {
       {/* stake-a-match (when connected) */}
       {staking &&
         (verified ? (
-          <>
-            <span className="section-label">Play for stablecoin</span>
-            <MatchActions wallet={wallet} account={address} cfg={cfg} />
-          </>
+          <MatchActions wallet={wallet} account={address} cfg={cfg} />
         ) : (
           <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
         ))}
 
-      {/* secondary navigation */}
-      <span className="section-label">Explore</span>
-      <div className="stack stagger" style={{ gap: 8 }}>
+      {/* secondary — only what isn't already in the bottom nav */}
+      <div className="stack" style={{ gap: 8 }}>
         <NavRow href="/play" icon="play" title="Practice vs bot" sub="A quick game, no stake" />
         <NavRow
           href="/learn"
@@ -177,12 +159,12 @@ export default function Lobby() {
           title="How to play"
           sub={showLearnHint ? "New here? Learn in 30 seconds" : "Sowing, capturing, winning"}
         />
-        <NavRow href="/league" icon="trophy" tone="gold" title="No-loss League" sub="Deposit, climb, share the yield" />
-        <NavRow href="/shop" icon="palette" title="Skins" sub="Board & seed cosmetics" />
-        <NavRow href={addCashDeeplink()} external icon="wallet" tone="neutral" title="Deposit" sub="Add stablecoin to play" />
       </div>
 
       <div className="spacer" />
+      <a className="btn ghost block" href={addCashDeeplink()} style={{ gap: 8 }}>
+        <Icon name="wallet" size={16} /> Deposit stablecoin
+      </a>
     </main>
   );
 }
