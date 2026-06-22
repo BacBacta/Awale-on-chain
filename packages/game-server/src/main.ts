@@ -19,6 +19,7 @@ import { keeperActions, runKeeper, EscrowStatus, type KeeperMatch } from "./keep
 import { AsyncMatchService } from "./async-match.js";
 import { InMemoryMatchStore, type MatchStore } from "./persistence/store.js";
 import { RedisMatchStore } from "./persistence/redis-store.js";
+import IORedis from "ioredis";
 import { InMemorySubscriptionStore, LogNotifier, WebPushNotifier, type Notifier, type WebPushSubscription } from "./notifications/notifier.js";
 import { matchEscrowAbi } from "../../protocol/src/abis.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
@@ -99,11 +100,17 @@ const notifier: Notifier =
     ? new WebPushNotifier(subStore, { publicKey: VAPID_PUBLIC, privateKey: VAPID_PRIVATE, subject: process.env.VAPID_SUBJECT ?? "mailto:ops@awale.app" })
     : new LogNotifier();
 // Durable async store when REDIS_URL is set (survives restarts, shared across
-// machines — lifts the single-machine constraint); in-memory otherwise.
+// machines); in-memory otherwise. The client connects in the background and an
+// `error` handler keeps a transient Redis hiccup from crashing the server (an
+// unhandled ioredis 'error' event would otherwise exit the process). `family: 6`
+// is required for Fly's internal IPv6 network.
 let matchStore: MatchStore = new InMemoryMatchStore();
 if (process.env.REDIS_URL) {
-  const { default: IORedis } = await import("ioredis");
-  matchStore = new RedisMatchStore(new IORedis(process.env.REDIS_URL));
+  const redis = new IORedis(process.env.REDIS_URL, { family: 6, maxRetriesPerRequest: 5, lazyConnect: true });
+  redis.on("error", (e) => console.warn(`[redis] ${e.message}`));
+  redis.on("ready", () => console.log("[redis] connected"));
+  redis.connect().catch((e) => console.warn(`[redis] initial connect failed: ${(e as Error).message}`));
+  matchStore = new RedisMatchStore(redis);
   console.log("async store: redis");
 } else {
   console.log("async store: in-memory (set REDIS_URL for durability + scaling)");
