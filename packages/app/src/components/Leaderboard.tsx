@@ -48,7 +48,7 @@ export function Leaderboard() {
           <div
             className="list-row"
             key={r.address}
-            style={mine ? { boxShadow: "inset 0 0 0 1.5px rgba(76,229,132,0.5)" } : undefined}
+            style={mine ? { boxShadow: "inset 0 0 0 1.5px rgba(87,201,138,0.45)" } : undefined}
           >
             <span
               className="lead neutral"

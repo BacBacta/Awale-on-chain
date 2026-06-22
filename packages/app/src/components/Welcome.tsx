@@ -46,9 +46,8 @@ export function Welcome() {
         justifyContent: "center",
         gap: 18,
         padding: 28,
-        background: "radial-gradient(120% 80% at 50% 20%, rgba(20,18,14,0.96), rgba(6,5,4,0.99))",
-        backdropFilter: "blur(6px)",
-        animation: "fade-up 360ms cubic-bezier(0.16,1,0.3,1) both",
+        background: "var(--bg)",
+        animation: "fade-up 360ms var(--ease-out) both",
       }}
     >
       <div
@@ -56,12 +55,11 @@ export function Welcome() {
         style={{
           position: "absolute",
           inset: 0,
-          opacity: 0.35,
-          filter: "blur(4px)",
+          opacity: 0.12,
           display: "grid",
           placeItems: "center",
-          WebkitMaskImage: "radial-gradient(90% 60% at 50% 35%, #000 30%, transparent 70%)",
-          maskImage: "radial-gradient(90% 60% at 50% 35%, #000 30%, transparent 70%)",
+          WebkitMaskImage: "radial-gradient(80% 55% at 50% 38%, #000 20%, transparent 72%)",
+          maskImage: "radial-gradient(80% 55% at 50% 38%, #000 20%, transparent 72%)",
         }}
       >
         <div style={{ width: "150%" }}>
@@ -70,8 +68,8 @@ export function Welcome() {
       </div>
 
       <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 14, maxWidth: 300 }}>
-        <span className="chip gold">One of the oldest games on Earth</span>
-        <span className="brand" style={{ fontSize: 46, textShadow: "0 2px 20px rgba(0,0,0,0.6)" }}>
+        <span className="chip">One of the oldest games on Earth</span>
+        <span className="brand" style={{ fontSize: 44 }}>
           Awalé
         </span>
         <span className="muted" style={{ textAlign: "center", lineHeight: 1.5 }}>
