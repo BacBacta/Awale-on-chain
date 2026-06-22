@@ -11,7 +11,9 @@ import { listLocalMatches, statusView } from "../../src/lib/matches.js";
 import { computePayout, fmt } from "../../src/lib/money.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 import { createSessionKey, persistSession } from "../../src/lib/session.js";
-import { asyncEnabled, createAsync } from "../../src/lib/asyncClient.js";
+import { asyncEnabled, createAsync, recordAsyncMatch, listAsyncMatchIds, getAsync, roleOf } from "../../src/lib/asyncClient.js";
+import { loadSession } from "../../src/lib/session.js";
+import { displayName } from "../../src/lib/names.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
@@ -23,9 +25,41 @@ interface Row {
   rakeBps: number;
 }
 
+interface AsyncRow {
+  id: string;
+  opponent: string;
+  yourTurn: boolean;
+  open: boolean;
+  over: boolean;
+}
+
 export default function Matches() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [asyncRows, setAsyncRows] = useState<AsyncRow[]>([]);
+
+  useEffect(() => {
+    const ids = listAsyncMatchIds();
+    if (ids.length === 0) return;
+    Promise.all(
+      ids.map(async (id) => {
+        try {
+          const s = await getAsync(id);
+          const sk = loadSession(BigInt(id));
+          const role = sk ? roleOf(s, sk.address) : null;
+          return {
+            id,
+            opponent: s.open ? "Waiting for opponent" : displayName(role === 0 ? s.players[1] : s.players[0]),
+            yourTurn: !s.over && !s.open && role !== null && s.turn === role,
+            open: s.open,
+            over: s.over,
+          } as AsyncRow;
+        } catch {
+          return null;
+        }
+      }),
+    ).then((r) => setAsyncRows(r.filter((x): x is AsyncRow => x !== null)));
+  }, []);
 
   useEffect(() => {
     const cfg = escrowConfig();
@@ -70,6 +104,7 @@ export default function Matches() {
       const session = createSessionKey();
       const id = await createAsync(session.address);
       persistSession(BigInt(id), session);
+      recordAsyncMatch(id);
       window.location.href = `/play?async=${id}`;
     } catch {
       setCreating(false);
@@ -84,6 +119,37 @@ export default function Matches() {
         <button className="btn block" onClick={newCorrespondence} disabled={creating}>
           <Icon name="versus" size={17} /> {creating ? "Creating…" : "New correspondence game"}
         </button>
+      )}
+
+      {asyncRows.length > 0 && (
+        <>
+          <span className="section-label">
+            Correspondence
+            {asyncRows.some((r) => r.yourTurn) && (
+              <span className="chip positive" style={{ marginLeft: 8 }}>
+                {asyncRows.filter((r) => r.yourTurn).length} need your move
+              </span>
+            )}
+          </span>
+          {asyncRows.map((r) => (
+            <Link className="list-row" key={r.id} href={`/play?async=${r.id}`}>
+              <span className={`lead ${r.yourTurn ? "" : "neutral"}`}>
+                <Icon name="versus" size={18} />
+              </span>
+              <span className="col" style={{ flex: 1, gap: 2 }}>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>{r.opponent}</span>
+                <span className="faint">
+                  {r.over ? "Finished" : r.open ? "Invite pending" : r.yourTurn ? "Your turn" : "Their turn"}
+                </span>
+              </span>
+              {r.yourTurn && (
+                <span className="chip positive" style={{ marginRight: 4 }}>
+                  <span className="dot pulse" /> Play
+                </span>
+              )}
+            </Link>
+          ))}
+        </>
       )}
 
       {rows === null ? (

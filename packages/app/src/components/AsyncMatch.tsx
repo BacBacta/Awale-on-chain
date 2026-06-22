@@ -14,7 +14,7 @@ import { escrowConfig } from "../lib/escrow.js";
 import { getEquipped, type EquippedSkin } from "../lib/skins.js";
 import { displayName } from "../lib/names.js";
 import { sfx } from "../lib/sound.js";
-import { getAsync, joinAsync, moveAsync, roleOf, type AsyncState } from "../lib/asyncClient.js";
+import { getAsync, joinAsync, moveAsync, roleOf, recordAsyncMatch, type AsyncState } from "../lib/asyncClient.js";
 
 const POLL_MS = 3500;
 
@@ -43,6 +43,7 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
             sk = createSessionKey();
             s = await joinAsync(matchId, sk.address);
             persistSession(BigInt(matchId), sk);
+            recordAsyncMatch(matchId);
           } else {
             setStatus("This game is full.");
             setData(s);

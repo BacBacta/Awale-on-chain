@@ -61,3 +61,27 @@ export function roleOf(s: AsyncState, sessionAddress: Address): 0 | 1 | null {
   if (s.players[1].toLowerCase() === me) return 1;
   return null;
 }
+
+// Device-local index of correspondence matches this player is in (identity is the
+// per-match session key, so there's no single server-side address to list by).
+const IDX = "awale.async";
+
+export function recordAsyncMatch(id: string): void {
+  if (typeof localStorage === "undefined") return;
+  try {
+    const ids = listAsyncMatchIds();
+    if (!ids.includes(id)) localStorage.setItem(IDX, JSON.stringify([id, ...ids]));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function listAsyncMatchIds(): string[] {
+  if (typeof localStorage === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(IDX);
+    return raw ? (JSON.parse(raw) as string[]) : [];
+  } catch {
+    return [];
+  }
+}

@@ -17,7 +17,8 @@ import { SettlementClient } from "./chain.js";
 import { SettlementCoordinator } from "./settlement-coordinator.js";
 import { keeperActions, runKeeper, EscrowStatus, type KeeperMatch } from "./keeper.js";
 import { AsyncMatchService } from "./async-match.js";
-import { InMemoryMatchStore } from "./persistence/store.js";
+import { InMemoryMatchStore, type MatchStore } from "./persistence/store.js";
+import { RedisMatchStore } from "./persistence/redis-store.js";
 import { InMemorySubscriptionStore, LogNotifier, WebPushNotifier, type Notifier, type WebPushSubscription } from "./notifications/notifier.js";
 import { matchEscrowAbi } from "../../protocol/src/abis.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
@@ -97,7 +98,17 @@ const notifier: Notifier =
   VAPID_PUBLIC && VAPID_PRIVATE
     ? new WebPushNotifier(subStore, { publicKey: VAPID_PUBLIC, privateKey: VAPID_PRIVATE, subject: process.env.VAPID_SUBJECT ?? "mailto:ops@awale.app" })
     : new LogNotifier();
-const asyncMatches = new AsyncMatchService(new InMemoryMatchStore(), notifier);
+// Durable async store when REDIS_URL is set (survives restarts, shared across
+// machines — lifts the single-machine constraint); in-memory otherwise.
+let matchStore: MatchStore = new InMemoryMatchStore();
+if (process.env.REDIS_URL) {
+  const { default: IORedis } = await import("ioredis");
+  matchStore = new RedisMatchStore(new IORedis(process.env.REDIS_URL));
+  console.log("async store: redis");
+} else {
+  console.log("async store: in-memory (set REDIS_URL for durability + scaling)");
+}
+const asyncMatches = new AsyncMatchService(matchStore, notifier);
 
 function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
