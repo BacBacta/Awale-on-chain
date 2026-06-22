@@ -13,10 +13,13 @@ import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 import { createSessionKey, persistSession } from "../../src/lib/session.js";
 import { asyncEnabled, createAsync, recordAsyncMatch, listAsyncMatchIds, getAsync, roleOf } from "../../src/lib/asyncClient.js";
 import { loadSession } from "../../src/lib/session.js";
-import { displayName } from "../../src/lib/names.js";
+import { displayName, friendlyName } from "../../src/lib/names.js";
+import { listOpenMatches, joinOpenMatch, type OpenMatch } from "../../src/lib/lobby.js";
+import type { WriteClient } from "../../src/lib/escrow.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
+const FEE_CURRENCY = (process.env.NEXT_PUBLIC_FEE_CURRENCY || undefined) as Address | undefined;
 
 interface Row {
   id: bigint;
@@ -37,6 +40,47 @@ export default function Matches() {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [asyncRows, setAsyncRows] = useState<AsyncRow[]>([]);
+  const [openMatches, setOpenMatches] = useState<OpenMatch[]>([]);
+  const [wallet, setWallet] = useState<WriteClient | null>(null);
+  const [account, setAccount] = useState<Address | null>(null);
+  const [joining, setJoining] = useState<bigint | null>(null);
+
+  // Connect (best-effort) and load the open-match lobby — staked games anyone can join.
+  useEffect(() => {
+    const cfg = escrowConfig();
+    if (!cfg) return;
+    (async () => {
+      const provider = getInjectedProvider();
+      let addr: Address | undefined;
+      if (provider) {
+        try {
+          const c = await connect(provider, cfg.chainId);
+          setWallet(c.wallet as unknown as WriteClient);
+          setAccount((addr = c.address));
+        } catch {
+          /* read-only */
+        }
+      }
+      try {
+        setOpenMatches(await listOpenMatches(cfg, addr));
+      } catch {
+        /* best-effort */
+      }
+    })();
+  }, []);
+
+  async function joinOpen(matchId: bigint) {
+    const cfg = escrowConfig();
+    if (!cfg || !wallet || !account || joining !== null) return;
+    setJoining(matchId);
+    try {
+      await joinOpenMatch({ wallet, account, cfg, matchId, feeCurrency: FEE_CURRENCY });
+      window.location.href = `/play?match=${matchId.toString()}`;
+    } catch (e) {
+      setError((e as Error).message);
+      setJoining(null);
+    }
+  }
 
   useEffect(() => {
     const ids = listAsyncMatchIds();
@@ -119,6 +163,31 @@ export default function Matches() {
         <button className="btn block" onClick={newCorrespondence} disabled={creating}>
           <Icon name="versus" size={17} /> {creating ? "Creating…" : "New correspondence game"}
         </button>
+      )}
+
+      {openMatches.length > 0 && (
+        <>
+          <span className="section-label">Open games to join</span>
+          {openMatches.map((o) => {
+            const { prize } = computePayout(o.stake, o.rakeBps);
+            return (
+              <div className="list-row" key={o.id.toString()} style={{ cursor: "default" }}>
+                <span className="lead gold">
+                  <Icon name="bolt" size={18} />
+                </span>
+                <span className="col" style={{ flex: 1, gap: 1 }}>
+                  <span style={{ fontWeight: 700, fontSize: 14 }}>{friendlyName(o.creator)}</span>
+                  <span className="faint">
+                    Stake {fmt(o.stake, STAKE_DECIMALS)} · win {fmt(prize, STAKE_DECIMALS)} {STAKE_SYMBOL}
+                  </span>
+                </span>
+                <button className="btn" style={{ padding: "8px 14px" }} onClick={() => joinOpen(o.id)} disabled={!wallet || joining !== null}>
+                  {joining === o.id ? "Joining…" : "Join"}
+                </button>
+              </div>
+            );
+          })}
+        </>
       )}
 
       {asyncRows.length > 0 && (

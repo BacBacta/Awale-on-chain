@@ -1,6 +1,7 @@
 import { getStats } from "../../src/lib/stats.js";
 import { CELO_MAINNET_TOKENS, formatAmount } from "../../../protocol/src/tokens.js";
 import { PlayerStats } from "../../src/components/PlayerStats.js";
+import { Leaderboard } from "../../src/components/Leaderboard.js";
 
 // Public stats page — a MiniPay listing requirement. Metrics come from the
 // indexer (chunked eth_getLogs over the settlement events). Network fees paid
@@ -37,6 +38,11 @@ export default async function Stats() {
       <span className="title">Stats</span>
 
       <PlayerStats />
+
+      <span className="h2" style={{ marginTop: 8 }}>
+        Leaderboard
+      </span>
+      <Leaderboard />
 
       <span className="h2" style={{ marginTop: 8 }}>
         Global
