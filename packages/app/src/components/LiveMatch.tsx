@@ -15,6 +15,7 @@ import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
 import { computePayout, fmt } from "../lib/money.js";
 import { harvestAddress } from "../lib/league.js";
+import { recordOpponent } from "../lib/social.js";
 import { shareResult } from "../lib/share.js";
 import { getEquipped, type EquippedSkin } from "../lib/skins.js";
 import { displayName } from "../lib/names.js";
@@ -62,6 +63,10 @@ export function LiveMatch({
       /* ignore */
     }
   }, []);
+
+  useEffect(() => {
+    if (oppAddr) recordOpponent(oppAddr); // for "recent opponents" / re-challenge
+  }, [oppAddr]);
 
   const session = useRef<SessionKey | null>(null);
   const socket = useRef<Socket | null>(null);

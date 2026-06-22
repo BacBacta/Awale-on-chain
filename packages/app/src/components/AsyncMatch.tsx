@@ -14,7 +14,8 @@ import { escrowConfig } from "../lib/escrow.js";
 import { getEquipped, type EquippedSkin } from "../lib/skins.js";
 import { displayName } from "../lib/names.js";
 import { sfx } from "../lib/sound.js";
-import { getAsync, joinAsync, moveAsync, roleOf, recordAsyncMatch, type AsyncState } from "../lib/asyncClient.js";
+import { getAsync, joinAsync, moveAsync, roleOf, recordAsyncMatch, createAsync, type AsyncState } from "../lib/asyncClient.js";
+import { recordOpponent } from "../lib/social.js";
 
 const POLL_MS = 3500;
 
@@ -62,10 +63,13 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
           }
         }
 
+        if (!s.open && r !== null) recordOpponent(r === 0 ? s.players[1] : s.players[0]);
+
         timer = setInterval(async () => {
           try {
             const next = await getAsync(matchId);
             if (!alive) return;
+            if (!next.open && r !== null) recordOpponent(r === 0 ? next.players[1] : next.players[0]);
             // "your turn" cue when the opponent has just moved
             if (prevTurn.current !== null && next.turn !== prevTurn.current && r !== null && next.turn === r && !next.over) {
               sfx("select");
@@ -106,6 +110,18 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
     const url = `${window.location.origin}/play?async=${matchId}`;
     if (navigator.share) navigator.share({ title: "Awalé", text: "Join my Awalé game", url }).catch(() => {});
     else navigator.clipboard?.writeText(url).catch(() => {});
+  }
+
+  async function rematch() {
+    try {
+      const ns = createSessionKey();
+      const id = await createAsync(ns.address);
+      persistSession(BigInt(id), ns);
+      recordAsyncMatch(id);
+      window.location.href = `/play?async=${id}`;
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
   }
 
   if (!data) {
@@ -177,7 +193,7 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
 
       <div className="spacer" />
 
-      {outcome !== null && <GameOverlay result={outcome} stats={{ mine: myScore, opp: oppScore, moves: data.ply }} onPlayAgain={() => (window.location.href = "/")} />}
+      {outcome !== null && <GameOverlay result={outcome} stats={{ mine: myScore, opp: oppScore, moves: data.ply }} onPlayAgain={rematch} />}
     </main>
   );
 }

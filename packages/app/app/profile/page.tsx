@@ -10,6 +10,9 @@ import { shortAddress } from "../../src/lib/identity.js";
 import { getEquipped, ALL_SKINS } from "../../src/lib/skins.js";
 import { PlayerStats } from "../../src/components/PlayerStats.js";
 import { Icon } from "../../src/components/Icon.js";
+import { listOpponents } from "../../src/lib/social.js";
+import { asyncEnabled, createAsync, recordAsyncMatch } from "../../src/lib/asyncClient.js";
+import { createSessionKey, persistSession } from "../../src/lib/session.js";
 
 function avatarGradient(seed: string): string {
   let h = 0;
@@ -27,6 +30,24 @@ export default function Profile() {
     const p = getInjectedProvider();
     if (p) connect(p, cfg?.chainId).then(({ address }) => setAddress(address)).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [opponents, setOpponents] = useState<Address[]>([]);
+  const [challenging, setChallenging] = useState(false);
+  useEffect(() => setOpponents(listOpponents()), []);
+
+  async function challenge() {
+    if (challenging) return;
+    setChallenging(true);
+    try {
+      const s = createSessionKey();
+      const id = await createAsync(s.address);
+      persistSession(BigInt(id), s);
+      recordAsyncMatch(id);
+      window.location.href = `/play?async=${id}`;
+    } catch {
+      setChallenging(false);
+    }
+  }
 
   const name = friendlyName(address);
   const initial = name.trim()[0]?.toUpperCase() ?? "?";
@@ -103,6 +124,35 @@ export default function Profile() {
           <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
         </Link>
       </div>
+
+      {/* rivals — opponents you've faced */}
+      {(opponents.length > 0 || asyncEnabled()) && (
+        <>
+          <span className="section-label">Rivals</span>
+          {opponents.length === 0 ? (
+            <span className="faint">Play someone to start a rivalry.</span>
+          ) : (
+            <div className="stack" style={{ gap: 8 }}>
+              {opponents.slice(0, 6).map((addr) => (
+                <div className="list-row" key={addr} style={{ cursor: "default" }}>
+                  <span className="lead neutral">
+                    <Icon name="versus" size={18} />
+                  </span>
+                  <span className="col" style={{ flex: 1, gap: 1 }}>
+                    <span style={{ fontWeight: 700, fontSize: 14 }}>{friendlyName(addr)}</span>
+                    <span className="faint">{shortAddress(addr)}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {asyncEnabled() && (
+            <button className="btn secondary block" onClick={challenge} disabled={challenging}>
+              <Icon name="versus" size={16} /> {challenging ? "Creating…" : "Challenge a friend"}
+            </button>
+          )}
+        </>
+      )}
 
       <div className="spacer" />
     </main>
