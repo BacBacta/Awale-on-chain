@@ -18,6 +18,7 @@ import {
 } from "../../src/lib/league.js";
 import { fmt } from "../../src/lib/money.js";
 import { humanizeError } from "../../src/lib/errors.js";
+import { Leaderboard } from "../../src/components/Leaderboard.js";
 import { erc20Abi } from "../../../protocol/src/abis.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
@@ -296,6 +297,14 @@ export default function League() {
           {error}
         </div>
       )}
+
+      {/* ranking lives here too — the League is the competition hub */}
+      <span className="section-label" style={{ marginTop: 6 }}>
+        Leaderboard
+      </span>
+      <Leaderboard />
+
+      <div className="spacer" />
     </main>
   );
 }

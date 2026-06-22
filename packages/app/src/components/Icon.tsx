@@ -22,6 +22,7 @@ export type IconName =
   | "target"
   | "gift"
   | "medal"
+  | "user"
   | "sound"
   | "mute";
 
@@ -93,6 +94,12 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <path d="M9 3l3 6 3-6" />
       <circle cx="12" cy="15" r="6" />
       <path d="M12 12.5l1 2 2 .2-1.5 1.4.4 2-1.9-1-1.9 1 .4-2L10 14.7l2-.2z" />
+    </>
+  ),
+  user: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4.5 20a7.5 7.5 0 0 1 15 0" />
     </>
   ),
   sound: (

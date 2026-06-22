@@ -123,6 +123,16 @@ export default function Profile() {
           </span>
           <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
         </Link>
+        <Link className="list-row" href="/stats">
+          <span className="lead neutral">
+            <Icon name="chart" size={19} />
+          </span>
+          <span className="col" style={{ flex: 1, gap: 1 }}>
+            <span style={{ fontWeight: 700, fontSize: 14.5 }}>Stats & ranking</span>
+            <span className="faint">Your full record and the leaderboard</span>
+          </span>
+          <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
+        </Link>
       </div>
 
       {/* rivals — opponents you've faced */}

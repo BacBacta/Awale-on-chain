@@ -143,36 +143,10 @@ export default function Lobby() {
         </div>
       </div>
 
-      {/* primary action */}
+      {/* ——— Play (free, no friction) — what a newcomer should reach for first ——— */}
       <QuickMatch account={address ?? undefined} />
-
-      {/* stake-a-match (when connected) */}
-      {staking &&
-        (verified ? (
-          <MatchActions wallet={wallet} account={address} cfg={cfg} />
-        ) : (
-          <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
-        ))}
-
-      {/* secondary — discovery for the modes not surfaced above */}
       <div className="stack" style={{ gap: 8 }}>
-        {tournamentsEnabled() && (
-          <NavRow
-            href="/tournaments"
-            icon="medal"
-            tone="gold"
-            title="Tournaments"
-            sub="One buy-in, win a multiplied prize"
-          />
-        )}
-        <NavRow
-          href="/daily"
-          icon="bolt"
-          tone={didDaily ? "neutral" : "gold"}
-          title="Daily puzzle"
-          sub={didDaily ? `Solved · ${streak}-day streak 🔥` : streak > 0 ? `Keep your ${streak}-day streak 🔥` : "Solve one capture a day"}
-        />
-        <NavRow href="/play" icon="play" title="Practice vs AI" sub="Pick your level, no stake" />
+        <NavRow href="/play" icon="play" title="Practice vs AI" sub="Pick your level — free, no stake" />
         <NavRow
           href="/learn"
           icon="info"
@@ -180,7 +154,32 @@ export default function Lobby() {
           title="How to play"
           sub={showLearnHint ? "New here? Learn in 30 seconds" : "Sowing, capturing, winning"}
         />
+        <NavRow
+          href="/daily"
+          icon="bolt"
+          tone={didDaily ? "neutral" : "gold"}
+          title="Daily puzzle"
+          sub={didDaily ? `Solved · ${streak}-day streak 🔥` : streak > 0 ? `Keep your ${streak}-day streak 🔥` : "Solve one capture a day"}
+        />
       </div>
+
+      {/* ——— Play for stablecoin (real money) — clearly set apart from free play ——— */}
+      {(tournamentsEnabled() || staking) && (
+        <>
+          <span className="section-label" style={{ marginTop: 4 }}>
+            Play for stablecoin
+          </span>
+          {tournamentsEnabled() && (
+            <NavRow href="/tournaments" icon="medal" tone="gold" title="Tournaments" sub="One buy-in, win a multiplied prize" />
+          )}
+          {staking &&
+            (verified ? (
+              <MatchActions wallet={wallet} account={address} cfg={cfg} />
+            ) : (
+              <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
+            ))}
+        </>
+      )}
 
       <div className="spacer" />
       <a className="btn ghost block" href={addCashDeeplink()} style={{ gap: 8 }}>
