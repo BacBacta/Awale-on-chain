@@ -285,12 +285,11 @@ const httpServer = createServer((req, res) => {
   }
   if (req.method === "GET" && url.pathname === "/tournaments") {
     const open = url.searchParams.get("open") === "1";
-    // lazy, debounced on-chain sync: a suspend-on-idle machine can miss the
-    // startup sync (cold-start RPC timeout), so refresh from chain on the warm
-    // request that actually needs the lobby, then respond with fresh data.
-    void maybeSyncTournaments().finally(() =>
-      json(200, { tournaments: open ? tournaments.openLobbies() : tournaments.list() }),
-    );
+    // kick a debounced on-chain refresh in the background (never block the
+    // response — a cold-start RPC can hang), and answer immediately with what we
+    // have; the next poll sees the freshly-synced lobby.
+    void maybeSyncTournaments();
+    json(200, { tournaments: open ? tournaments.openLobbies() : tournaments.list() });
     return;
   }
   if (req.method === "GET" && url.pathname === "/tournaments/state") {
