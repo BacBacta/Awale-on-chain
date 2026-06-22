@@ -20,6 +20,8 @@ export type IconName =
   | "spinner"
   | "info"
   | "target"
+  | "gift"
+  | "medal"
   | "sound"
   | "mute";
 
@@ -77,6 +79,20 @@ const PATHS: Record<IconName, React.ReactNode> = {
       <circle cx="12" cy="12" r="8.5" />
       <circle cx="12" cy="12" r="4.5" />
       <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+    </>
+  ),
+  gift: (
+    <>
+      <rect x="4" y="9" width="16" height="11" rx="1.5" />
+      <path d="M4 13h16M12 9v11" />
+      <path d="M12 9C12 6 10.5 4.5 9 4.5S6.5 7 9 9h3zM12 9c0-3 1.5-4.5 3-4.5S17.5 7 15 9h-3z" />
+    </>
+  ),
+  medal: (
+    <>
+      <path d="M9 3l3 6 3-6" />
+      <circle cx="12" cy="15" r="6" />
+      <path d="M12 12.5l1 2 2 .2-1.5 1.4.4 2-1.9-1-1.9 1 .4-2L10 14.7l2-.2z" />
     </>
   ),
   sound: (

@@ -519,6 +519,33 @@ contract MatchEscrowTest is Test {
         escrow.proposeResult(id, 0, bytes32(uint256(1)));
     }
 
+    // ------------------------- stake floor ------------------------------- //
+
+    function test_minStake_defaultsToZero_noFloor() public view {
+        assertEq(escrow.minStake(), 0);
+    }
+
+    function test_setMinStake_blocksDustMatches() public {
+        vm.prank(owner);
+        escrow.setMinStake(STAKE); // floor at the standard stake
+
+        // below the floor reverts
+        vm.prank(alice);
+        vm.expectRevert(bytes("MatchEscrow: stake below floor"));
+        escrow.createMatch(address(usdc), STAKE - 1, session0);
+
+        // at/above the floor still works
+        vm.prank(alice);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Open));
+    }
+
+    function test_setMinStake_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        escrow.setMinStake(STAKE);
+    }
+
     function _buildPartialTranscript(uint256 matchId, uint8 startTurn, uint256 plies)
         internal
         returns (ReplayVerifier.Transcript memory t)

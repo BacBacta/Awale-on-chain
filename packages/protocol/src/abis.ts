@@ -81,6 +81,13 @@ export const matchEscrowAbi = [
   },
   {
     type: "function",
+    name: "minStake",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint128" }],
+  },
+  {
+    type: "function",
     name: "getMatch",
     stateMutability: "view",
     inputs: [{ name: "matchId", type: "uint256" }],
@@ -136,6 +143,81 @@ export const matchEscrowAbi = [
       { name: "matchId", type: "uint256", indexed: true },
       { name: "winner", type: "uint8", indexed: false },
       { name: "prize", type: "uint256", indexed: false },
+    ],
+  },
+] as const;
+
+// TournamentEscrow: entry-fee Sit-and-Go custody. The client reads/joins; the
+// server operator finalises standings.
+export const tournamentEscrowAbi = [
+  {
+    type: "function",
+    name: "join",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "id", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "finalize",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "id", type: "uint256" },
+      { name: "winners", type: "address[]" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "getTournament",
+    stateMutability: "view",
+    inputs: [{ name: "id", type: "uint256" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "token", type: "address" },
+          { name: "entryFee", type: "uint128" },
+          { name: "prizePool", type: "uint128" },
+          { name: "sponsored", type: "uint128" },
+          { name: "maxPlayers", type: "uint32" },
+          { name: "playerCount", type: "uint32" },
+          { name: "cutBps", type: "uint16" },
+          { name: "status", type: "uint8" },
+          { name: "joinDeadline", type: "uint64" },
+          { name: "refundDeadline", type: "uint64" },
+          { name: "creator", type: "address" },
+          { name: "payoutBps", type: "uint16[]" },
+        ],
+      },
+    ],
+  },
+  {
+    type: "function",
+    name: "prizeBreakdown",
+    stateMutability: "view",
+    inputs: [{ name: "id", type: "uint256" }],
+    outputs: [
+      { name: "pool", type: "uint256" },
+      { name: "cut", type: "uint256" },
+      { name: "prizes", type: "uint256[]" },
+    ],
+  },
+  {
+    type: "function",
+    name: "nextTournamentId",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint256" }],
+  },
+  {
+    type: "event",
+    name: "Joined",
+    inputs: [
+      { name: "id", type: "uint256", indexed: true },
+      { name: "player", type: "address", indexed: true },
+      { name: "playerCount", type: "uint32", indexed: false },
     ],
   },
 ] as const;

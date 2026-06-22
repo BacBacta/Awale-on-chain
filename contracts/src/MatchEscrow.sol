@@ -79,6 +79,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     uint16 public rakeBps;
     uint64 public challengeWindow;
     uint64 public matchTtl; // how long an Active match may sit unsettled before it can be voided
+    uint128 public minStake; // floor on the per-player stake; 0 ⇒ no floor (default)
 
     uint256 public nextMatchId = 1;
     mapping(uint256 => Match) public matches;
@@ -95,6 +96,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     event FeeCollected(uint256 indexed matchId, address indexed token, uint256 amount);
 
     event RakeUpdated(uint16 rakeBps);
+    event MinStakeUpdated(uint128 minStake);
     event ChallengeWindowUpdated(uint64 challengeWindow);
     event MatchTtlUpdated(uint64 matchTtl);
     event TreasuryUpdated(address indexed treasury);
@@ -133,6 +135,9 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     {
         require(allowedToken[token], "MatchEscrow: token not allowed");
         require(stake > 0, "MatchEscrow: stake zero");
+        // a stake floor kills dust matches whose rake rounds to ~0 yet still cost
+        // gas + infra to settle (negative-margin); 0 disables the floor
+        require(stake >= minStake, "MatchEscrow: stake below floor");
         require(session0 != address(0), "MatchEscrow: session zero");
 
         matchId = nextMatchId++;
@@ -370,6 +375,13 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         require(rakeBps_ <= MAX_RAKE_BPS, "MatchEscrow: rake too high");
         rakeBps = rakeBps_;
         emit RakeUpdated(rakeBps_);
+    }
+
+    /// @notice Set the minimum per-player stake. Only gates new matches; in-flight
+    ///         matches keep their terms. 0 disables the floor.
+    function setMinStake(uint128 minStake_) external onlyOwner {
+        minStake = minStake_;
+        emit MinStakeUpdated(minStake_);
     }
 
     function setChallengeWindow(uint64 challengeWindow_) external onlyOwner {

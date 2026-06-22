@@ -7,7 +7,7 @@
 
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import { createPublicClient, http, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, http, type Address, type Hex } from "viem";
 import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { GameHub } from "./hub.js";
@@ -22,7 +22,8 @@ import { RedisMatchStore } from "./persistence/redis-store.js";
 import IORedis from "ioredis";
 import { InMemorySubscriptionStore, LogNotifier, WebPushNotifier, type Notifier, type WebPushSubscription } from "./notifications/notifier.js";
 import { InMemorySocialStore, RedisSocialStore, type SocialStore } from "./social/store.js";
-import { matchEscrowAbi } from "../../protocol/src/abis.js";
+import { TournamentService, type TournamentMeta } from "./tournament/service.js";
+import { matchEscrowAbi, tournamentEscrowAbi } from "../../protocol/src/abis.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
 import { InMemoryPersonhoodRegistry } from "./personhood/registry.js";
 import { verifyAndRegister } from "./personhood/gate.js";
@@ -119,6 +120,34 @@ if (process.env.REDIS_URL) {
   console.log("async store: in-memory (set REDIS_URL for durability + scaling)");
 }
 const asyncMatches = new AsyncMatchService(matchStore, notifier);
+
+// Tournaments: in-memory lobby + bracket orchestration (same single-machine
+// model as matchmaking). When a bracket completes, the finalize hook reports the
+// ordered standings to TournamentEscrow — but only if a funded operator signer and
+// the contract address are configured; otherwise it logs (dev/scaffold).
+const TOURNAMENT = (process.env.TOURNAMENT_ADDRESS || undefined) as Address | undefined;
+const tournamentFinalize =
+  SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66 && TOURNAMENT
+    ? async (id: string, winners: Address[]) => {
+        const wallet = createWalletClient({
+          chain: chainFor(CHAIN_ID),
+          transport: http(RPC_URL),
+          account: privateKeyToAccount(SIGNER as Hex),
+        });
+        const hash = await wallet.writeContract({
+          address: TOURNAMENT,
+          abi: tournamentEscrowAbi,
+          functionName: "finalize",
+          args: [BigInt(id), winners],
+          ...(FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {}),
+        } as Parameters<typeof wallet.writeContract>[0]);
+        console.log(`[tournament] finalized ${id} → ${winners.join(", ")} (${hash})`);
+      }
+    : async (id: string, winners: Address[]) => {
+        console.log(`[tournament] (no signer) would finalize ${id} → ${winners.join(", ")}`);
+      };
+const tournaments = new TournamentService(tournamentFinalize);
+console.log(TOURNAMENT ? `tournaments: on-chain @ ${TOURNAMENT}` : "tournaments: off-chain (set TOURNAMENT_ADDRESS)");
 
 function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -236,6 +265,87 @@ const httpServer = createServer((req, res) => {
         const { address, id } = b as { address: Address; id: string };
         if (!address || !id) throw new Error("address + id required");
         return socialStore.removeChallenge(address, id);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  // --- tournaments: Sit-and-Go lobby + bracket ---
+  if (req.method === "POST" && url.pathname === "/tournaments/register") {
+    // operator registers a tournament it just created on-chain
+    readJson(req)
+      .then((b) => {
+        const meta = b as TournamentMeta;
+        if (!meta?.id || !meta.token || !meta.maxPlayers) throw new Error("id + token + maxPlayers required");
+        tournaments.register(meta);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/tournaments") {
+    const open = url.searchParams.get("open") === "1";
+    json(200, { tournaments: open ? tournaments.openLobbies() : tournaments.list() });
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/tournaments/state") {
+    const id = url.searchParams.get("id");
+    if (!id) return json(400, { error: "id required" });
+    try {
+      json(200, tournaments.state(id));
+    } catch (e) {
+      json(404, { error: (e as Error).message });
+    }
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/tournaments/join") {
+    // mirror an on-chain join so the server can seat the bracket
+    readJson(req)
+      .then((b) => {
+        const { id, address } = b as { id: string; address: Address };
+        if (!id || !address) throw new Error("id + address required");
+        tournaments.join(id, address);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/tournaments/my-game") {
+    // a player's current bracket obligation (which game to play, and as host/guest)
+    const id = url.searchParams.get("id");
+    const address = url.searchParams.get("address") as Address | null;
+    if (!id || !address) return json(400, { error: "id + address required" });
+    try {
+      json(200, { assignment: tournaments.assignment(id, address) });
+    } catch (e) {
+      json(404, { error: (e as Error).message });
+    }
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/tournaments/game-created") {
+    // the host reports the async match id it created so the guest can join
+    readJson(req)
+      .then((b) => {
+        const { id, round, index, asyncMatchId } = b as {
+          id: string;
+          round: number;
+          index: number;
+          asyncMatchId: string;
+        };
+        if (!id || asyncMatchId == null) throw new Error("id + round + index + asyncMatchId required");
+        tournaments.attachGame(id, round, index, asyncMatchId);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/tournaments/result") {
+    // a bracket game's winner (reported by the match coordinator)
+    readJson(req)
+      .then((b) => {
+        const { id, round, index, winner } = b as { id: string; round: number; index: number; winner: Address };
+        if (!id || winner == null) throw new Error("id + round + index + winner required");
+        return tournaments.reportResult(id, round, index, winner);
       })
       .then(() => json(200, { ok: true }))
       .catch((e) => json(400, { error: (e as Error).message }));
