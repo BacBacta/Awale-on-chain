@@ -7,9 +7,14 @@ primary_region = "cdg"
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = false
+  # Cost: suspend the single machine when idle (no traffic) and resume on the
+  # next request — preserves in-memory state (matchmaking queue, keeper tracked)
+  # so we don't pay for a 24/7 machine. Durable async state lives in Redis.
+  auto_stop_machines = "suspend"
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 0
+  # keep one machine max — matchmaking is in-memory per process (see memory note)
+  max_machines_running = 1
 
 [[vm]]
   memory = "256mb"
