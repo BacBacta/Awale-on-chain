@@ -14,6 +14,7 @@ import { QuickMatch } from "../src/components/QuickMatch.js";
 import { Icon, type IconName } from "../src/components/Icon.js";
 import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
+import { streakCount, solvedToday } from "../src/lib/daily.js";
 
 const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
@@ -61,6 +62,8 @@ export default function Lobby() {
   const [inMiniPay, setInMiniPay] = useState(false);
   const [verified, setVerified] = useState(!SELF_CONFIGURED);
   const [showLearnHint, setShowLearnHint] = useState(false);
+  const [streak, setStreak] = useState(0);
+  const [didDaily, setDidDaily] = useState(true);
   const cfg: EscrowConfig | null = escrowConfig();
 
   useEffect(() => {
@@ -69,6 +72,8 @@ export default function Lobby() {
     } catch {
       /* ignore */
     }
+    setStreak(streakCount());
+    setDidDaily(solvedToday());
   }, []);
 
   useEffect(() => {
@@ -151,7 +156,14 @@ export default function Lobby() {
 
       {/* secondary — only what isn't already in the bottom nav */}
       <div className="stack" style={{ gap: 8 }}>
-        <NavRow href="/play" icon="play" title="Practice vs bot" sub="A quick game, no stake" />
+        <NavRow
+          href="/daily"
+          icon="bolt"
+          tone={didDaily ? "neutral" : "gold"}
+          title="Daily puzzle"
+          sub={didDaily ? `Solved · ${streak}-day streak 🔥` : streak > 0 ? `Keep your ${streak}-day streak 🔥` : "Solve one capture a day"}
+        />
+        <NavRow href="/play" icon="play" title="Practice vs AI" sub="Pick your level, no stake" />
         <NavRow
           href="/learn"
           icon="info"

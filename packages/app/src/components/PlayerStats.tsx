@@ -114,6 +114,13 @@ export function PlayerStats() {
   const winRate = decided > 0 ? Math.round((stats.won / decided) * 100) : null;
   const netPositive = stats.net >= 0n;
 
+  // A simple visible rating derived from results (server ELO is the source of
+  // truth once persistence is wired; this gives players a number + tier now).
+  const rating = 1000 + stats.won * 24 - stats.lost * 18 + stats.drawn * 2;
+  const tier =
+    rating >= 1400 ? "Master" : rating >= 1250 ? "Gold" : rating >= 1120 ? "Silver" : rating >= 1000 ? "Bronze" : "Wood";
+  const tierColor = tier === "Master" ? "var(--accent)" : tier === "Gold" ? "var(--gold)" : "var(--text)";
+
   const cells: { label: string; value: string; tone?: string }[] = [
     { label: "Played", value: String(stats.played) },
     { label: "Won", value: String(stats.won), tone: "var(--accent)" },
@@ -126,6 +133,16 @@ export function PlayerStats() {
       <div className="row">
         <span className="h2">Your record</span>
         {!connected && <span className="chip">connect wallet for full stats</span>}
+      </div>
+
+      <div className="card row" style={{ alignItems: "center" }}>
+        <div className="col" style={{ gap: 1 }}>
+          <span className="faint">Rank</span>
+          <span style={{ fontWeight: 750, fontSize: 17, color: tierColor }}>{tier}</span>
+        </div>
+        <span className="title score" style={{ color: tierColor }}>
+          {rating}
+        </span>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
