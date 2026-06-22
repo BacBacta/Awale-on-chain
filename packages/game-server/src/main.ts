@@ -468,6 +468,54 @@ if (settlement) {
   const t = setInterval(() => void keeperTick(), KEEPER_INTERVAL_MS);
   if ("unref" in t) t.unref();
 }
+
+// Auto-register on-chain tournaments into the lobby: read every Open tournament
+// from TournamentEscrow and register it (idempotent). Runs at startup (backfills
+// the seed + anything created while we were down) and on an interval to pick up
+// new ones, so no manual POST /tournaments/register is needed.
+async function syncTournaments() {
+  if (!TOURNAMENT) return;
+  try {
+    const next = (await publicClient.readContract({
+      address: TOURNAMENT,
+      abi: tournamentEscrowAbi,
+      functionName: "nextTournamentId",
+    })) as bigint;
+    for (let i = 1n; i < next; i++) {
+      const t = (await publicClient.readContract({
+        address: TOURNAMENT,
+        abi: tournamentEscrowAbi,
+        functionName: "getTournament",
+        args: [i],
+      })) as {
+        token: Address;
+        entryFee: bigint;
+        maxPlayers: number;
+        cutBps: number;
+        status: number;
+        joinDeadline: bigint;
+        payoutBps: readonly number[];
+      };
+      if (Number(t.status) !== 1) continue; // 1 = Open
+      tournaments.register({
+        id: i.toString(),
+        token: t.token,
+        entryFee: t.entryFee.toString(),
+        maxPlayers: Number(t.maxPlayers),
+        cutBps: Number(t.cutBps),
+        payoutBps: (t.payoutBps as readonly (number | bigint)[]).map(Number),
+        joinDeadline: Number(t.joinDeadline) * 1000,
+      });
+    }
+  } catch (e) {
+    console.warn(`[tournament] sync failed: ${(e as Error).message}`);
+  }
+}
+if (TOURNAMENT) {
+  void syncTournaments();
+  const ts = setInterval(() => void syncTournaments(), 60_000);
+  if ("unref" in ts) ts.unref();
+}
 watchStartFinalized(
   publicClient as unknown as EventWatcher,
   { escrow: ESCROW, ctx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER }, readMatch },
