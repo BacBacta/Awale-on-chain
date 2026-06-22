@@ -67,6 +67,22 @@ layers are complete and independently tested; the seam is the live-pairing wirin
 (reuse the MatchEscrow `TREASURY`; set `OPERATOR` = the server signer). Then set
 `TOURNAMENT_ADDRESS` (server) and `NEXT_PUBLIC_TOURNAMENT_ADDRESS` (app).
 
+### Live (Celo Sepolia, 2026-06-22)
+- **TournamentEscrow:** `0x952F9a4034D901e4b64eCB0a5ADeed8409048652` (verified)
+- **Treasury:** `0x1c5ABCf9dBB9Bd37a4BDE5858b5ad88eD5B7184A` (the live MatchEscrow's)
+- **Operator / owner:** `0x8E30b1e9dcC1F868A0df75e80B454aE466ca29c6` (deployer)
+- **Stake token allowed:** `0xe34e2ab5245edcb9e2206ca693002795d349212f`
+- **Seed tournament:** id 1 (8-player, 1-unit entry, 8% cut, 65/35)
+- Local env wired (`app/.env.local`, `game-server/.env`).
+
+**Remaining wiring for finalize to work:** the operator is the deployer. Either
+`setOperator(<production server signer>)` (owner-only) so the existing Fly signer
+can finalize, or set the server's `SERVER_SIGNER_KEY` to the deployer key. Also: the
+server discovers tournaments via `POST /tournaments/register` (no on-chain
+TournamentCreated listener yet) — register the seed id 1, and add a listener or
+auto-register-on-create flow next. Production also needs the Fly secret
+`TOURNAMENT_ADDRESS` + a redeploy, and the Vercel `NEXT_PUBLIC_TOURNAMENT_ADDRESS`.
+
 ## Economics (from economic-model.md)
 8-player SNG, 1 USDC entry, 8% cut → pool 8 USDC, Treasury 0.64, prizes 4.78 / 2.58.
 Tournament take = **8% of volume**; 1v1 rake = 2.5% of volume. House edge per buy-in:
