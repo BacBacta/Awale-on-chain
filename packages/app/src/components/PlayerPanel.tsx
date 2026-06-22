@@ -30,10 +30,14 @@ export function PlayerPanel({
         gap: 12,
         padding: "10px 14px",
         borderRadius: 14,
-        background: active ? "var(--accent-soft)" : "var(--panel)",
+        background: active
+          ? "linear-gradient(180deg, rgba(61,220,111,0.16), rgba(61,220,111,0.05))"
+          : "linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02))",
         boxShadow: active
-          ? "inset 0 0 0 1px rgba(87,201,138,0.4)"
-          : "inset 0 0 0 1px var(--line)",
+          ? "inset 0 0 0 1.5px rgba(61,220,111,0.55), 0 6px 20px rgba(61,220,111,0.15)"
+          : "inset 0 0 0 1px rgba(255,255,255,0.07)",
+        backdropFilter: "blur(10px)",
+        WebkitBackdropFilter: "blur(10px)",
         transition: "background 220ms var(--ease-out), box-shadow 220ms var(--ease-out)",
       }}
     >

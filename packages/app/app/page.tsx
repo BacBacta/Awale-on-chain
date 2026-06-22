@@ -12,6 +12,7 @@ import { MatchActions } from "../src/components/MatchActions.js";
 import { PersonhoodVerify } from "../src/components/PersonhoodVerify.js";
 import { QuickMatch } from "../src/components/QuickMatch.js";
 import { Icon, type IconName } from "../src/components/Icon.js";
+import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
 import { streakCount, solvedToday } from "../src/lib/daily.js";
 import { tournamentsEnabled } from "../src/lib/tournaments.js";
@@ -111,12 +112,35 @@ export default function Lobby() {
         )}
       </div>
 
-      {/* headline — quiet, legible, no busy artwork */}
-      <div className="stack animate-in" style={{ gap: 7, paddingTop: 2 }}>
-        <span className="display">Play Awalé for stablecoin</span>
-        <span className="muted" style={{ lineHeight: 1.4 }}>
-          Sow, capture, win the pot. Winner takes the stake.
-        </span>
+      {/* hero — a calm, living board behind the headline */}
+      <div className="card animate-in" style={{ position: "relative", overflow: "hidden", padding: 18, minHeight: 168 }}>
+        <div
+          aria-hidden
+          style={{
+            position: "absolute",
+            inset: 0,
+            opacity: 0.28,
+            display: "grid",
+            placeItems: "center",
+            filter: "blur(5px)",
+            WebkitMaskImage: "radial-gradient(130% 75% at 50% 28%, #000 30%, transparent 70%)",
+            maskImage: "radial-gradient(130% 75% at 50% 28%, #000 30%, transparent 70%)",
+          }}
+        >
+          <div style={{ width: "168%", transform: "translateY(-22%)" }}>
+            <HeroBoard />
+          </div>
+        </div>
+        <div
+          aria-hidden
+          style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(11,10,8,0.3), rgba(11,10,8,0.86))" }}
+        />
+        <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 8 }}>
+          <span className="display" style={{ fontSize: 32, textShadow: "0 2px 16px rgba(0,0,0,0.6)" }}>
+            Play Awalé for stablecoin
+          </span>
+          <span className="muted">Sow, capture, win the pot. Winner takes the stake.</span>
+        </div>
       </div>
 
       {/* primary action */}

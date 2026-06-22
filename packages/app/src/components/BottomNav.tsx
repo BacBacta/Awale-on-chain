@@ -40,9 +40,9 @@ export function BottomNav() {
         display: "flex",
         padding: "8px 6px calc(8px + env(safe-area-inset-bottom))",
         borderTop: "1px solid var(--line)",
-        background: "color-mix(in srgb, var(--bg) 86%, transparent)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
+        background: "rgba(10, 9, 7, 0.72)",
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)",
       }}
     >
       {tabs.map((t) => {
@@ -70,10 +70,11 @@ export function BottomNav() {
               style={{
                 display: "grid",
                 placeItems: "center",
-                width: 42,
-                height: 28,
+                width: 44,
+                height: 30,
                 borderRadius: 999,
                 background: active ? "var(--accent-soft)" : "transparent",
+                boxShadow: active ? "inset 0 0 0 1px rgba(76,229,132,0.25)" : "none",
                 transition: "background 200ms var(--ease-out)",
               }}
             >

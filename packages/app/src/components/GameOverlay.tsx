@@ -67,11 +67,10 @@ export function GameOverlay({
         justifyContent: "center",
         gap: 16,
         padding: 24,
-        background: "color-mix(in srgb, var(--bg) 94%, transparent)",
-        backdropFilter: "blur(6px)",
-        WebkitBackdropFilter: "blur(6px)",
+        background: "radial-gradient(120% 80% at 50% 30%, rgba(20,26,19,0.92), rgba(7,9,6,0.97))",
+        backdropFilter: "blur(4px)",
         zIndex: 10,
-        animation: "fade-up 320ms var(--ease-out) both",
+        animation: "fade-up 320ms cubic-bezier(0.16,1,0.3,1) both",
       }}
     >
       {win && (
@@ -109,7 +108,7 @@ export function GameOverlay({
           borderRadius: "50%",
           color: win ? "var(--gold)" : draw ? "var(--text)" : "var(--muted)",
           background: win ? "var(--gold-soft)" : "rgba(255,255,255,0.05)",
-          boxShadow: `inset 0 0 0 1.5px ${win ? "rgba(216,181,102,0.4)" : "var(--line)"}`,
+          boxShadow: `inset 0 0 0 1.5px ${win ? "rgba(246,200,99,0.4)" : "var(--line)"}`,
         }}
       >
         <Icon name={win ? "trophy" : draw ? "versus" : "seed"} size={44} stroke={1.6} />
@@ -143,7 +142,7 @@ export function GameOverlay({
 
       <div className="stack" style={{ width: "100%", maxWidth: 260, marginTop: 8 }}>
         {saveHref && (
-          <a className="btn block" href={saveHref} style={{ background: "var(--gold)" }}>
+          <a className="btn block" href={saveHref} style={{ background: "linear-gradient(180deg, #f7d27a, var(--gold))" }}>
             <Icon name="trophy" size={17} /> Grow winnings in the League
           </a>
         )}
