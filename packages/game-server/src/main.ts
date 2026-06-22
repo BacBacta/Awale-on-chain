@@ -21,6 +21,7 @@ import { InMemoryMatchStore, type MatchStore } from "./persistence/store.js";
 import { RedisMatchStore } from "./persistence/redis-store.js";
 import IORedis from "ioredis";
 import { InMemorySubscriptionStore, LogNotifier, WebPushNotifier, type Notifier, type WebPushSubscription } from "./notifications/notifier.js";
+import { InMemorySocialStore, RedisSocialStore, type SocialStore } from "./social/store.js";
 import { matchEscrowAbi } from "../../protocol/src/abis.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
 import { InMemoryPersonhoodRegistry } from "./personhood/registry.js";
@@ -105,13 +106,15 @@ const notifier: Notifier =
 // unhandled ioredis 'error' event would otherwise exit the process). `family: 6`
 // is required for Fly's internal IPv6 network.
 let matchStore: MatchStore = new InMemoryMatchStore();
+let socialStore: SocialStore = new InMemorySocialStore();
 if (process.env.REDIS_URL) {
   const redis = new IORedis(process.env.REDIS_URL, { family: 6, maxRetriesPerRequest: 5, lazyConnect: true });
   redis.on("error", (e) => console.warn(`[redis] ${e.message}`));
   redis.on("ready", () => console.log("[redis] connected"));
   redis.connect().catch((e) => console.warn(`[redis] initial connect failed: ${(e as Error).message}`));
   matchStore = new RedisMatchStore(redis);
-  console.log("async store: redis");
+  socialStore = new RedisSocialStore(redis);
+  console.log("async store: redis · social store: redis");
 } else {
   console.log("async store: in-memory (set REDIS_URL for durability + scaling)");
 }
@@ -192,6 +195,53 @@ const httpServer = createServer((req, res) => {
       .catch((e) => json(400, { error: (e as Error).message }));
     return;
   }
+  // --- social: friends + challenge inbox (durable, wallet-identity) ---
+  if (req.method === "POST" && url.pathname === "/social/befriend") {
+    readJson(req)
+      .then((b) => {
+        const { a, b: friend } = b as { a: Address; b: Address };
+        if (!a || !friend) throw new Error("a + b required");
+        return socialStore.befriend(a, friend);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/social/friends") {
+    const address = url.searchParams.get("address") as Address | null;
+    if (!address) return json(400, { error: "address required" });
+    socialStore.friends(address).then((f) => json(200, { friends: f })).catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/social/challenge") {
+    readJson(req)
+      .then((b) => {
+        const { from, to, matchId } = b as { from: Address; to: Address; matchId: string };
+        if (!from || !to || !matchId) throw new Error("from + to + matchId required");
+        return socialStore.addChallenge(to, { id: `${matchId}-${Date.now()}`, from, matchId, createdAt: Date.now() });
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/social/challenges") {
+    const address = url.searchParams.get("address") as Address | null;
+    if (!address) return json(400, { error: "address required" });
+    socialStore.challenges(address).then((c) => json(200, { challenges: c })).catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/social/challenge/dismiss") {
+    readJson(req)
+      .then((b) => {
+        const { address, id } = b as { address: Address; id: string };
+        if (!address || !id) throw new Error("address + id required");
+        return socialStore.removeChallenge(address, id);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/push/subscribe") {
     readJson(req)
       .then((b) => {
