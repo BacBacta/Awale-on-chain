@@ -285,7 +285,12 @@ const httpServer = createServer((req, res) => {
   }
   if (req.method === "GET" && url.pathname === "/tournaments") {
     const open = url.searchParams.get("open") === "1";
-    json(200, { tournaments: open ? tournaments.openLobbies() : tournaments.list() });
+    // lazy, debounced on-chain sync: a suspend-on-idle machine can miss the
+    // startup sync (cold-start RPC timeout), so refresh from chain on the warm
+    // request that actually needs the lobby, then respond with fresh data.
+    void maybeSyncTournaments().finally(() =>
+      json(200, { tournaments: open ? tournaments.openLobbies() : tournaments.list() }),
+    );
     return;
   }
   if (req.method === "GET" && url.pathname === "/tournaments/state") {
@@ -511,8 +516,24 @@ async function syncTournaments() {
     console.warn(`[tournament] sync failed: ${(e as Error).message}`);
   }
 }
+let lastTournamentSync = 0;
+/** Debounced sync — safe to call on every lobby request without hammering the RPC. */
+async function maybeSyncTournaments() {
+  if (!TOURNAMENT) return;
+  const now = Date.now();
+  if (now - lastTournamentSync < 15_000) return;
+  lastTournamentSync = now;
+  await syncTournaments();
+}
 if (TOURNAMENT) {
-  void syncTournaments();
+  // best-effort startup sync with a couple of retries (cold-start RPC can time out)
+  void (async () => {
+    for (let i = 0; i < 3; i++) {
+      await syncTournaments();
+      if (tournaments.list().length > 0) break;
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  })();
   const ts = setInterval(() => void syncTournaments(), 60_000);
   if ("unref" in ts) ts.unref();
 }
