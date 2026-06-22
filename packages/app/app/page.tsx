@@ -98,7 +98,7 @@ export default function Lobby() {
         <span className="brand" style={{ fontSize: 26 }}>
           Awalé
         </span>
-        <span style={{ display: "none" }}>v24</span>
+        <span style={{ display: "none" }}>v26</span>
         {address ? (
           <Link href="/profile" className="chip positive" title={shortAddress(address)} style={{ textDecoration: "none" }}>
             <span className="dot" />
