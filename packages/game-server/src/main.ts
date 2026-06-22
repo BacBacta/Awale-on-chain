@@ -16,6 +16,9 @@ import { watchMatchJoined, watchStartFinalized, type ChainMatch, type EventWatch
 import { SettlementClient } from "./chain.js";
 import { SettlementCoordinator } from "./settlement-coordinator.js";
 import { keeperActions, runKeeper, EscrowStatus, type KeeperMatch } from "./keeper.js";
+import { AsyncMatchService } from "./async-match.js";
+import { InMemoryMatchStore } from "./persistence/store.js";
+import { InMemorySubscriptionStore, LogNotifier, WebPushNotifier, type Notifier, type WebPushSubscription } from "./notifications/notifier.js";
 import { matchEscrowAbi } from "../../protocol/src/abis.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
 import { InMemoryPersonhoodRegistry } from "./personhood/registry.js";
@@ -85,7 +88,73 @@ const selfVerifier = SELF_SCOPE && SELF_ENDPOINT
     })
   : undefined;
 
+// Async / correspondence play + push (scaffold; in-memory store + log notifier
+// by default — swap for Redis/Postgres + web-push, see docs/async-push-milestone.md).
+const subStore = new InMemorySubscriptionStore();
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
+const notifier: Notifier =
+  VAPID_PUBLIC && VAPID_PRIVATE
+    ? new WebPushNotifier(subStore, { publicKey: VAPID_PUBLIC, privateKey: VAPID_PRIVATE, subject: process.env.VAPID_SUBJECT ?? "mailto:ops@awale.app" })
+    : new LogNotifier();
+const asyncMatches = new AsyncMatchService(new InMemoryMatchStore(), notifier);
+
+function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (e) {
+        reject(e);
+      }
+    });
+  });
+}
+
 const httpServer = createServer((req, res) => {
+  const url = new URL(req.url ?? "/", "http://localhost");
+  const json = (code: number, payload: unknown) => {
+    res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*" });
+    res.end(JSON.stringify(payload));
+  };
+
+  // --- async / correspondence play ---
+  if (req.method === "GET" && url.pathname === "/async/matches") {
+    const address = url.searchParams.get("address") as Address | null;
+    if (!address) return json(400, { error: "address required" });
+    asyncMatches.listForPlayer(address).then((m) => json(200, { matches: m })).catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/async/match") {
+    const id = url.searchParams.get("id");
+    if (!id) return json(400, { error: "id required" });
+    asyncMatches.getState(id).then((s) => (s ? json(200, s) : json(404, { error: "not found" }))).catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/async/move") {
+    readJson(req)
+      .then((b) => {
+        const { matchId, player, house, signature } = b as { matchId: string; player: 0 | 1; house: number; signature: `0x${string}` };
+        return asyncMatches.move(matchId, player, house, signature);
+      })
+      .then((state) => json(200, { state }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/push/subscribe") {
+    readJson(req)
+      .then((b) => {
+        const { address, subscription } = b as { address: Address; subscription: WebPushSubscription };
+        if (!address || !subscription?.endpoint) throw new Error("address + subscription required");
+        return subStore.add(address, subscription);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+
   if (req.method === "POST" && req.url === "/self/verify") {
     let body = "";
     req.on("data", (chunk) => (body += chunk));
