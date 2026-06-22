@@ -11,6 +11,7 @@ type Tab = { href: string; label: string; icon: IconName; advanced?: boolean };
 const TABS: Tab[] = [
   { href: "/", label: "Play", icon: "play" },
   { href: "/matches", label: "Matches", icon: "target" },
+  { href: "/tournaments", label: "Cups", icon: "medal", advanced: true },
   { href: "/league", label: "League", icon: "trophy", advanced: true },
   { href: "/shop", label: "Skins", icon: "palette", advanced: true },
   { href: "/stats", label: "Stats", icon: "chart" },

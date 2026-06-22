@@ -29,6 +29,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   const [step, setStep] = useState<Step>("idle");
   const [balance, setBalance] = useState<bigint | null>(null);
   const [rakeBps, setRakeBps] = useState<number>(0);
+  const [minStake, setMinStake] = useState<bigint>(0n);
   const [copied, setCopied] = useState(false);
   const [sel, setSel] = useState(0); // index into TOKENS
 
@@ -49,13 +50,15 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         TOKENS.map((t) => readContract(client, { address: t.address, abi: erc20Abi, functionName: "balanceOf", args: [account] })),
       ),
       readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "rakeBps" }),
+      readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "minStake" }).catch(() => 0n),
     ])
-      .then(([bals, rake]) => {
+      .then(([bals, rake, floor]) => {
         const balances = bals as bigint[];
         const pref = preferredIndex(TOKENS, balances);
         setSel(pref);
         setBalance(balances[pref]);
         setRakeBps(Number(rake));
+        setMinStake(floor as bigint);
       })
       .catch(() => {
         /* preview is best-effort */
@@ -119,6 +122,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     try {
       const amount = parseStake(stake, dec);
       if (amount <= 0n) return setError("Enter a stake greater than zero.");
+      if (minStake > 0n && amount < minStake) return setError(`Minimum stake is ${fmt(minStake, dec)} ${sym}.`);
       if (balance !== null && amount > balance) return setError(`Not enough ${sym} for this stake.`);
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
       const matchId = (await readContract(client, {

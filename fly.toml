@@ -7,12 +7,13 @@ primary_region = "cdg"
 [http_service]
   internal_port = 8080
   force_https = true
-  # Cost: suspend the single machine when idle (no traffic) and resume on the
-  # next request — preserves in-memory state (matchmaking queue, keeper tracked)
-  # so we don't pay for a 24/7 machine. Durable async state lives in Redis.
+  # Keep exactly one machine always running: the tsx cold start (~24s) + resume
+  # made the tournament lobby flaky on the first request after idle, which hurts
+  # first-impression UX. min=max=1 = one always-warm machine (no cold start),
+  # still single-process so in-memory matchmaking/keeper stay correct.
   auto_stop_machines = "suspend"
   auto_start_machines = true
-  min_machines_running = 0
+  min_machines_running = 1
   # keep one machine max — matchmaking is in-memory per process (see memory note)
   max_machines_running = 1
 

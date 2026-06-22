@@ -7,7 +7,7 @@
 
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import { createPublicClient, http, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, http, type Address, type Hex } from "viem";
 import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { GameHub } from "./hub.js";
@@ -22,7 +22,8 @@ import { RedisMatchStore } from "./persistence/redis-store.js";
 import IORedis from "ioredis";
 import { InMemorySubscriptionStore, LogNotifier, WebPushNotifier, type Notifier, type WebPushSubscription } from "./notifications/notifier.js";
 import { InMemorySocialStore, RedisSocialStore, type SocialStore } from "./social/store.js";
-import { matchEscrowAbi } from "../../protocol/src/abis.js";
+import { TournamentService, type TournamentMeta } from "./tournament/service.js";
+import { matchEscrowAbi, tournamentEscrowAbi } from "../../protocol/src/abis.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
 import { InMemoryPersonhoodRegistry } from "./personhood/registry.js";
 import { verifyAndRegister } from "./personhood/gate.js";
@@ -54,7 +55,12 @@ function chainFor(id: number) {
   return celo;
 }
 
-const publicClient = createPublicClient({ chain: chainFor(CHAIN_ID), transport: http(RPC_URL) });
+// 30s timeout (default 10s): the public Celo Sepolia RPC (forno) is often slow
+// from Fly, which was timing out the tournament lobby sync's nextTournamentId read.
+const publicClient = createPublicClient({
+  chain: chainFor(CHAIN_ID),
+  transport: http(RPC_URL, { timeout: 30_000, retryCount: 2 }),
+});
 const hub = new GameHub();
 
 /** Read an on-chain match into the hub's ChainMatch shape. */
@@ -119,6 +125,34 @@ if (process.env.REDIS_URL) {
   console.log("async store: in-memory (set REDIS_URL for durability + scaling)");
 }
 const asyncMatches = new AsyncMatchService(matchStore, notifier);
+
+// Tournaments: in-memory lobby + bracket orchestration (same single-machine
+// model as matchmaking). When a bracket completes, the finalize hook reports the
+// ordered standings to TournamentEscrow — but only if a funded operator signer and
+// the contract address are configured; otherwise it logs (dev/scaffold).
+const TOURNAMENT = (process.env.TOURNAMENT_ADDRESS || undefined) as Address | undefined;
+const tournamentFinalize =
+  SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66 && TOURNAMENT
+    ? async (id: string, winners: Address[]) => {
+        const wallet = createWalletClient({
+          chain: chainFor(CHAIN_ID),
+          transport: http(RPC_URL),
+          account: privateKeyToAccount(SIGNER as Hex),
+        });
+        const hash = await wallet.writeContract({
+          address: TOURNAMENT,
+          abi: tournamentEscrowAbi,
+          functionName: "finalize",
+          args: [BigInt(id), winners],
+          ...(FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {}),
+        } as Parameters<typeof wallet.writeContract>[0]);
+        console.log(`[tournament] finalized ${id} → ${winners.join(", ")} (${hash})`);
+      }
+    : async (id: string, winners: Address[]) => {
+        console.log(`[tournament] (no signer) would finalize ${id} → ${winners.join(", ")}`);
+      };
+const tournaments = new TournamentService(tournamentFinalize);
+console.log(TOURNAMENT ? `tournaments: on-chain @ ${TOURNAMENT}` : "tournaments: off-chain (set TOURNAMENT_ADDRESS)");
 
 function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -241,6 +275,91 @@ const httpServer = createServer((req, res) => {
       .catch((e) => json(400, { error: (e as Error).message }));
     return;
   }
+  // --- tournaments: Sit-and-Go lobby + bracket ---
+  if (req.method === "POST" && url.pathname === "/tournaments/register") {
+    // operator registers a tournament it just created on-chain
+    readJson(req)
+      .then((b) => {
+        const meta = b as TournamentMeta;
+        if (!meta?.id || !meta.token || !meta.maxPlayers) throw new Error("id + token + maxPlayers required");
+        tournaments.register(meta);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/tournaments") {
+    const open = url.searchParams.get("open") === "1";
+    // kick a debounced on-chain refresh in the background (never block the
+    // response — a cold-start RPC can hang), and answer immediately with what we
+    // have; the next poll sees the freshly-synced lobby.
+    void maybeSyncTournaments();
+    json(200, { tournaments: open ? tournaments.openLobbies() : tournaments.list() });
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/tournaments/state") {
+    const id = url.searchParams.get("id");
+    if (!id) return json(400, { error: "id required" });
+    try {
+      json(200, tournaments.state(id));
+    } catch (e) {
+      json(404, { error: (e as Error).message });
+    }
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/tournaments/join") {
+    // mirror an on-chain join so the server can seat the bracket
+    readJson(req)
+      .then((b) => {
+        const { id, address } = b as { id: string; address: Address };
+        if (!id || !address) throw new Error("id + address required");
+        tournaments.join(id, address);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/tournaments/my-game") {
+    // a player's current bracket obligation (which game to play, and as host/guest)
+    const id = url.searchParams.get("id");
+    const address = url.searchParams.get("address") as Address | null;
+    if (!id || !address) return json(400, { error: "id + address required" });
+    try {
+      json(200, { assignment: tournaments.assignment(id, address) });
+    } catch (e) {
+      json(404, { error: (e as Error).message });
+    }
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/tournaments/game-created") {
+    // the host reports the async match id it created so the guest can join
+    readJson(req)
+      .then((b) => {
+        const { id, round, index, asyncMatchId } = b as {
+          id: string;
+          round: number;
+          index: number;
+          asyncMatchId: string;
+        };
+        if (!id || asyncMatchId == null) throw new Error("id + round + index + asyncMatchId required");
+        tournaments.attachGame(id, round, index, asyncMatchId);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/tournaments/result") {
+    // a bracket game's winner (reported by the match coordinator)
+    readJson(req)
+      .then((b) => {
+        const { id, round, index, winner } = b as { id: string; round: number; index: number; winner: Address };
+        if (!id || winner == null) throw new Error("id + round + index + winner required");
+        return tournaments.reportResult(id, round, index, winner);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
 
   if (req.method === "POST" && url.pathname === "/push/subscribe") {
     readJson(req)
@@ -357,6 +476,70 @@ async function keeperTick(): Promise<void> {
 if (settlement) {
   const t = setInterval(() => void keeperTick(), KEEPER_INTERVAL_MS);
   if ("unref" in t) t.unref();
+}
+
+// Auto-register on-chain tournaments into the lobby: read every Open tournament
+// from TournamentEscrow and register it (idempotent). Runs at startup (backfills
+// the seed + anything created while we were down) and on an interval to pick up
+// new ones, so no manual POST /tournaments/register is needed.
+async function syncTournaments() {
+  if (!TOURNAMENT) return;
+  try {
+    const next = (await publicClient.readContract({
+      address: TOURNAMENT,
+      abi: tournamentEscrowAbi,
+      functionName: "nextTournamentId",
+    })) as bigint;
+    for (let i = 1n; i < next; i++) {
+      const t = (await publicClient.readContract({
+        address: TOURNAMENT,
+        abi: tournamentEscrowAbi,
+        functionName: "getTournament",
+        args: [i],
+      })) as {
+        token: Address;
+        entryFee: bigint;
+        maxPlayers: number;
+        cutBps: number;
+        status: number;
+        joinDeadline: bigint;
+        payoutBps: readonly number[];
+      };
+      if (Number(t.status) !== 1) continue; // 1 = Open
+      tournaments.register({
+        id: i.toString(),
+        token: t.token,
+        entryFee: t.entryFee.toString(),
+        maxPlayers: Number(t.maxPlayers),
+        cutBps: Number(t.cutBps),
+        payoutBps: (t.payoutBps as readonly (number | bigint)[]).map(Number),
+        joinDeadline: Number(t.joinDeadline) * 1000,
+      });
+    }
+  } catch (e) {
+    console.warn(`[tournament] sync failed: ${(e as Error).message}`);
+  }
+}
+let lastTournamentSync = 0;
+/** Debounced sync — safe to call on every lobby request without hammering the RPC. */
+async function maybeSyncTournaments() {
+  if (!TOURNAMENT) return;
+  const now = Date.now();
+  if (now - lastTournamentSync < 15_000) return;
+  lastTournamentSync = now;
+  await syncTournaments();
+}
+if (TOURNAMENT) {
+  // best-effort startup sync with a couple of retries (cold-start RPC can time out)
+  void (async () => {
+    for (let i = 0; i < 3; i++) {
+      await syncTournaments();
+      if (tournaments.list().length > 0) break;
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+  })();
+  const ts = setInterval(() => void syncTournaments(), 60_000);
+  if ("unref" in ts) ts.unref();
 }
 watchStartFinalized(
   publicClient as unknown as EventWatcher,
