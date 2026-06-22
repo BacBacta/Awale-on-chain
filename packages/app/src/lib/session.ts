@@ -46,17 +46,31 @@ export function signResult(
   return privateKeyToAccount(session.privateKey).sign({ hash: resultDigest(matchId, winner, ctx) });
 }
 
-// --- per-match persistence (sessionStorage; cleared when the tab closes) --- //
+// --- per-match persistence --- //
+//
+// localStorage (not sessionStorage): a session key must survive the tab closing
+// so a player can resume an in-flight match — otherwise a cash match could
+// strand because the key to sign the result was lost. The key is still scoped to
+// a single match, so its worst-case compromise is bounded by that one stake.
 
 const key = (matchId: bigint) => `awale.session.${matchId.toString()}`;
 
 export function persistSession(matchId: bigint, session: SessionKey): void {
-  if (typeof sessionStorage === "undefined") return;
-  sessionStorage.setItem(key(matchId), JSON.stringify(session));
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(key(matchId), JSON.stringify(session));
+  } catch {
+    /* quota — ignore */
+  }
 }
 
 export function loadSession(matchId: bigint): SessionKey | null {
-  if (typeof sessionStorage === "undefined") return null;
-  const raw = sessionStorage.getItem(key(matchId));
-  return raw ? (JSON.parse(raw) as SessionKey) : null;
+  if (typeof localStorage === "undefined") return null;
+  try {
+    // migrate any key written by the old sessionStorage build
+    const raw = localStorage.getItem(key(matchId)) ?? sessionStorage?.getItem(key(matchId));
+    return raw ? (JSON.parse(raw) as SessionKey) : null;
+  } catch {
+    return null;
+  }
 }

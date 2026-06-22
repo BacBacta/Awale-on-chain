@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { initialState, applyMove, legalMovesMask, type GameState } from "../../../engine/src/awale.js";
+import { chooseMove, type Difficulty } from "../../../engine/src/ai.js";
 import { Board, moveDurationMs } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
@@ -25,12 +26,15 @@ function legalHouses(s: GameState): number[] {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Self-contained game vs a trivial bot — no server or chain needed. */
+const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
+
+/** Self-contained game vs a real Awalé AI — no server or chain needed. */
 export function LocalDemo() {
   const [state, setState] = useState<GameState>(() => initialState());
   const [ply, setPly] = useState(0);
   const [busy, setBusy] = useState(false);
   const [thinking, setThinking] = useState(false);
+  const [difficulty, setDifficulty] = useState<Difficulty>("medium");
   const [showOverlay, setShowOverlay] = useState(false);
   const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
 
@@ -44,6 +48,14 @@ export function LocalDemo() {
       return () => clearTimeout(t);
     }
   }, [state.over]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("awale_played", "1"); // unlocks League/Skins in the nav
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const playable = state.turn === 0 && !state.over && !busy ? legalHouses(state) : [];
   const result: 0 | 1 | 2 | null = state.over ? (state.winner as 0 | 1 | 2) : null;
@@ -70,7 +82,7 @@ export function LocalDemo() {
       while (!next.over && next.turn === 1) {
         setThinking(true);
         await sleep(1200 + Math.random() * 600);
-        const botHouse = legalHouses(next)[0];
+        const botHouse = chooseMove(next, difficulty);
         const botDur = moveDurationMs(seedsOf(next, 6 + botHouse));
         setThinking(false);
         await signMove(sessions[1], DEMO_MATCH_ID, BigInt(p), botHouse, DEMO_CTX);
@@ -99,13 +111,28 @@ export function LocalDemo() {
           <Icon name="back" size={16} /> Back
         </Link>
         <span className="row" style={{ gap: 8 }}>
-          <span className="chip">demo · move {ply}</span>
+          <span className="chip">move {ply}</span>
           <SoundToggle />
         </span>
       </div>
 
+      {ply === 0 && !busy && (
+        <div className="segmented" style={{ margin: "0 6px" }}>
+          {DIFFICULTIES.map((d) => (
+            <button key={d} data-on={difficulty === d} onClick={() => setDifficulty(d)}>
+              {d[0].toUpperCase() + d.slice(1)}
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="stack" style={{ gap: 14, marginTop: 4 }}>
-        <PlayerPanel name="Bot" score={state.store1} active={state.turn === 1 && !state.over} thinking={thinking} />
+        <PlayerPanel
+          name={`AI · ${difficulty[0].toUpperCase() + difficulty.slice(1)}`}
+          score={state.store1}
+          active={state.turn === 1 && !state.over}
+          thinking={thinking}
+        />
         <Board state={state} onPlay={play} playable={playable} skin={skin} />
         <PlayerPanel name="You" you score={state.store0} active={state.turn === 0 && !state.over} />
       </div>

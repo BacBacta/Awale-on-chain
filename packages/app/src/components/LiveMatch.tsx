@@ -54,7 +54,14 @@ export function LiveMatch({
   const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
   const [oppAddr, setOppAddr] = useState<Address | null>(opponentAddress ?? null);
 
-  useEffect(() => setSkin(getEquipped()), []);
+  useEffect(() => {
+    setSkin(getEquipped());
+    try {
+      localStorage.setItem("awale_played", "1"); // unlocks League/Skins in the nav
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const session = useRef<SessionKey | null>(null);
   const socket = useRef<Socket | null>(null);
