@@ -22,6 +22,10 @@ export interface ClubStore {
   joinByCode(code: string, member: Address): Promise<Club>;
   get(id: string): Promise<Club | null>;
   listForMember(member: Address): Promise<Club[]>;
+  // club ⇄ on-chain tournament tagging (a tournament's clubId lives off-chain)
+  tagTournament(clubId: string, tournamentId: string): Promise<void>;
+  tournamentsOf(clubId: string): Promise<string[]>;
+  clubOf(tournamentId: string): Promise<string | null>;
 }
 
 const lc = (a: Address) => a.toLowerCase() as Address;
@@ -81,6 +85,21 @@ export class InMemoryClubStore implements ClubStore {
   async listForMember(member: Address): Promise<Club[]> {
     const ids = this.byMember.get(lc(member)) ?? new Set();
     return [...ids].map((id) => this.byId.get(id)).filter((c): c is Club => !!c);
+  }
+
+  private clubTids = new Map<string, Set<string>>(); // clubId → tournament ids
+  private tidClub = new Map<string, string>(); // tournament id → clubId
+  async tagTournament(clubId: string, tournamentId: string) {
+    const s = this.clubTids.get(clubId) ?? new Set();
+    s.add(tournamentId);
+    this.clubTids.set(clubId, s);
+    this.tidClub.set(tournamentId, clubId);
+  }
+  async tournamentsOf(clubId: string) {
+    return [...(this.clubTids.get(clubId) ?? [])];
+  }
+  async clubOf(tournamentId: string) {
+    return this.tidClub.get(tournamentId) ?? null;
   }
 
   private index(addr: string, id: string) {
@@ -144,5 +163,16 @@ export class RedisClubStore implements ClubStore {
     const ids = await this.redis.smembers(memberKey(lc(member)));
     const clubs = await Promise.all(ids.map((id) => this.get(id)));
     return clubs.filter((c): c is Club => !!c);
+  }
+
+  async tagTournament(clubId: string, tournamentId: string) {
+    await this.redis.sadd(`awale:clubtids:${clubId}`, tournamentId);
+    await this.redis.set(`awale:tidclub:${tournamentId}`, clubId);
+  }
+  async tournamentsOf(clubId: string) {
+    return this.redis.smembers(`awale:clubtids:${clubId}`);
+  }
+  async clubOf(tournamentId: string) {
+    return this.redis.get(`awale:tidclub:${tournamentId}`);
   }
 }

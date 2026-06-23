@@ -8,10 +8,29 @@ import { getInjectedProvider, connect } from "../../src/lib/minipay.js";
 import { escrowConfig } from "../../src/lib/escrow.js";
 import { friendlyName } from "../../src/lib/names.js";
 import { shortAddress } from "../../src/lib/identity.js";
-import { clubsEnabled, createClub, joinClub, myClubs, shareClub, type Club } from "../../src/lib/clubs.js";
+import {
+  clubsEnabled,
+  createClub,
+  joinClub,
+  myClubs,
+  shareClub,
+  startClubTournament,
+  listClubTournaments,
+  type Club,
+} from "../../src/lib/clubs.js";
+import { joinTournament, topPrize, type Tournament } from "../../src/lib/tournaments.js";
+import { fmt } from "../../src/lib/money.js";
+import type { WriteClient } from "../../src/lib/escrow.js";
+
+const STAKE_TOKEN = (process.env.NEXT_PUBLIC_STAKE_TOKEN ?? "") as Address;
+const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
+const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
+const FEE_CURRENCY = (process.env.NEXT_PUBLIC_FEE_CURRENCY || undefined) as Address | undefined;
+const ONE_TOKEN = (10n ** BigInt(STAKE_DECIMALS)).toString(); // default club buy-in: 1 token
 
 export default function Clubs() {
   const [account, setAccount] = useState<Address | null>(null);
+  const [wallet, setWallet] = useState<WriteClient | null>(null);
   const [clubs, setClubs] = useState<Club[] | null>(null);
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
@@ -26,7 +45,8 @@ export default function Clubs() {
       return;
     }
     connect(p, cfg?.chainId)
-      .then(async ({ address }) => {
+      .then(async ({ wallet, address }) => {
+        setWallet(wallet as unknown as WriteClient);
         setAccount(address);
         setClubs(await myClubs(address));
       })
@@ -118,6 +138,7 @@ export default function Clubs() {
                       </span>
                     ))}
                   </div>
+                  <ClubGames club={c} account={account} wallet={wallet} />
                 </div>
               ))}
             </>
@@ -169,5 +190,75 @@ export default function Clubs() {
         Back to Play
       </Link>
     </main>
+  );
+}
+
+function ClubGames({ club, account, wallet }: { club: Club; account: Address | null; wallet: WriteClient | null }) {
+  const [games, setGames] = useState<Tournament[] | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const load = () => listClubTournaments(club.id).then(setGames).catch(() => setGames([]));
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [club.id]);
+
+  async function start() {
+    if (!account || busy || !STAKE_TOKEN) return;
+    setBusy("start");
+    try {
+      await startClubTournament(club.id, STAKE_TOKEN, ONE_TOKEN, 8);
+      await load();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function join(t: Tournament) {
+    const cfg = escrowConfig();
+    if (!cfg || !wallet || !account || busy) return;
+    setBusy(t.id);
+    try {
+      await joinTournament({ wallet, account, t, chainId: cfg.chainId, rpcUrl: cfg.rpcUrl, feeCurrency: FEE_CURRENCY });
+      window.location.href = `/play?tournament=${t.id}`;
+    } catch (e) {
+      alert((e as Error).message);
+      setBusy(null);
+    }
+  }
+
+  const open = (games ?? []).filter((t) => t.phase === "lobby");
+
+  return (
+    <div className="stack" style={{ gap: 8, marginTop: 4 }}>
+      <div className="row">
+        <span className="section-label">Club games</span>
+        <button className="btn secondary" style={{ padding: "6px 12px", fontSize: 13 }} onClick={start} disabled={!account || busy === "start"}>
+          {busy === "start" ? "Starting…" : `Start a ${fmt(BigInt(ONE_TOKEN), STAKE_DECIMALS)} ${STAKE_SYMBOL} game`}
+        </button>
+      </div>
+      {open.length === 0 ? (
+        <span className="faint">No open club games — start one and invite the crew.</span>
+      ) : (
+        open.map((t) => (
+          <div className="list-row" key={t.id} style={{ cursor: "default" }}>
+            <span className="lead gold">
+              <Icon name="trophy" size={17} />
+            </span>
+            <span className="col" style={{ flex: 1, gap: 1 }}>
+              <span style={{ fontWeight: 700, fontSize: 13.5 }}>
+                {fmt(BigInt(t.entryFee), STAKE_DECIMALS)} {STAKE_SYMBOL} · {t.entrants.length}/{t.maxPlayers}
+              </span>
+              <span className="faint">win up to {fmt(topPrize(t), STAKE_DECIMALS)} {STAKE_SYMBOL}</span>
+            </span>
+            <button className="btn" style={{ padding: "7px 12px" }} onClick={() => join(t)} disabled={!wallet || busy !== null}>
+              {busy === t.id ? "Joining…" : "Join"}
+            </button>
+          </div>
+        ))
+      )}
+    </div>
   );
 }

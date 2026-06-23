@@ -3,6 +3,7 @@
 // flow, ranking reuses the leaderboard.
 
 import type { Address } from "viem";
+import type { Tournament } from "./tournaments.js";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
 
@@ -50,6 +51,30 @@ export async function getClub(id: string): Promise<Club | null> {
   if (!SERVER_URL) return null;
   const res = await fetch(`${SERVER_URL}/clubs/get?id=${id}`);
   return res.ok ? ((await res.json()) as Club) : null;
+}
+
+/** Start a private club tournament (the server operator creates it on-chain). */
+export async function startClubTournament(
+  clubId: string,
+  token: Address,
+  entryFee: string,
+  maxPlayers = 8,
+): Promise<string> {
+  const res = await fetch(`${SERVER_URL}/clubs/tournament`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ clubId, token, entryFee, maxPlayers }),
+  });
+  if (!res.ok) throw new Error(((await res.json()) as { error?: string }).error ?? "Could not start the club game");
+  return ((await res.json()) as { id: string }).id;
+}
+
+/** A club's tournaments (any phase). */
+export async function listClubTournaments(clubId: string): Promise<Tournament[]> {
+  if (!SERVER_URL) return [];
+  const res = await fetch(`${SERVER_URL}/clubs/tournaments?clubId=${clubId}`);
+  if (!res.ok) return [];
+  return ((await res.json()) as { tournaments: Tournament[] }).tournaments;
 }
 
 /** Share a club's join code (WhatsApp / native share). */

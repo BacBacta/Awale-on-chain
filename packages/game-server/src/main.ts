@@ -157,6 +157,44 @@ const tournamentFinalize =
 const tournaments = new TournamentService(tournamentFinalize);
 console.log(TOURNAMENT ? `tournaments: on-chain @ ${TOURNAMENT}` : "tournaments: off-chain (set TOURNAMENT_ADDRESS)");
 
+const CLUB_PAYOUT = [6500, 3500];
+const CLUB_CUT_BPS = 800;
+const CLUB_JOIN_WINDOW = 86400n; // 1 day
+const CLUB_REFUND_WINDOW = 172800n; // 2 days
+
+/** Operator-creates a private club tournament on-chain, tags it, and registers it. */
+async function createClubTournament(clubId: string, token: Address, entryFee: bigint, maxPlayers: number): Promise<string> {
+  if (!(SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66 && TOURNAMENT)) {
+    throw new Error("tournaments not configured (need SERVER_SIGNER_KEY + TOURNAMENT_ADDRESS)");
+  }
+  const wallet = createWalletClient({ chain: chainFor(CHAIN_ID), transport: http(RPC_URL), account: privateKeyToAccount(SIGNER as Hex) });
+  const hash = await wallet.writeContract({
+    address: TOURNAMENT,
+    abi: tournamentEscrowAbi,
+    functionName: "createTournament",
+    args: [token, entryFee, maxPlayers, CLUB_CUT_BPS, CLUB_JOIN_WINDOW, CLUB_REFUND_WINDOW, CLUB_PAYOUT],
+    ...(FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {}),
+  } as Parameters<typeof wallet.writeContract>[0]);
+  const receipt = await publicClient.waitForTransactionReceipt({ hash });
+  // the created id is the first indexed topic of TournamentCreated (emitted by TOURNAMENT)
+  const log = receipt.logs.find((l) => l.address.toLowerCase() === TOURNAMENT.toLowerCase());
+  if (!log?.topics[1]) throw new Error("could not read created tournament id");
+  const id = BigInt(log.topics[1]).toString();
+  await clubStore.tagTournament(clubId, id);
+  tournaments.register({
+    id,
+    token,
+    entryFee: entryFee.toString(),
+    maxPlayers,
+    cutBps: CLUB_CUT_BPS,
+    payoutBps: CLUB_PAYOUT,
+    joinDeadline: Date.now() + Number(CLUB_JOIN_WINDOW) * 1000,
+    clubId,
+  });
+  console.log(`[club] tournament ${id} created for club ${clubId} (${hash})`);
+  return id;
+}
+
 function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let body = "";
@@ -312,6 +350,33 @@ const httpServer = createServer((req, res) => {
     const id = url.searchParams.get("id");
     if (!id) return json(400, { error: "id required" });
     clubStore.get(id).then((c) => (c ? json(200, c) : json(404, { error: "not found" }))).catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/clubs/tournament") {
+    // a club member starts a club game; the operator creates it on-chain (tagged
+    // private to the club) and registers it in the lobby.
+    readJson(req)
+      .then(async (b) => {
+        const { clubId, token, entryFee, maxPlayers } = b as {
+          clubId: string;
+          token: Address;
+          entryFee: string;
+          maxPlayers?: number;
+        };
+        if (!clubId || !token || !entryFee) throw new Error("clubId + token + entryFee required");
+        const club = await clubStore.get(clubId);
+        if (!club) throw new Error("unknown club");
+        const id = await createClubTournament(clubId, token, BigInt(entryFee), maxPlayers ?? 8);
+        return { id };
+      })
+      .then((r) => json(200, r))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/clubs/tournaments") {
+    const clubId = url.searchParams.get("clubId");
+    if (!clubId) return json(400, { error: "clubId required" });
+    json(200, { tournaments: tournaments.clubLobbies(clubId) });
     return;
   }
   // --- tournaments: Sit-and-Go lobby + bracket ---
@@ -545,15 +610,19 @@ async function syncTournaments() {
         payoutBps: readonly number[];
       };
       if (Number(t.status) !== 1) continue; // 1 = Open
+      const tid = i.toString();
+      const clubId = (await clubStore.clubOf(tid)) ?? undefined;
       tournaments.register({
-        id: i.toString(),
+        id: tid,
         token: t.token,
         entryFee: t.entryFee.toString(),
         maxPlayers: Number(t.maxPlayers),
         cutBps: Number(t.cutBps),
         payoutBps: (t.payoutBps as readonly (number | bigint)[]).map(Number),
         joinDeadline: Number(t.joinDeadline) * 1000,
+        clubId,
       });
+      if (clubId) tournaments.setClub(tid, clubId); // ensure it stays out of the public lobby
     }
   } catch (e) {
     console.warn(`[tournament] sync failed: ${(e as Error).message}`);

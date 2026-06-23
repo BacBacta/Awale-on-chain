@@ -23,6 +23,7 @@ export interface TournamentMeta {
   cutBps: number;
   payoutBps: number[];
   joinDeadline: number; // epoch ms
+  clubId?: string; // set ⇒ private club tournament (hidden from the public lobby)
 }
 
 export interface TournamentState extends TournamentMeta {
@@ -144,9 +145,23 @@ export class TournamentService {
     }));
   }
 
-  /** Open tournaments still accepting entrants (the lobby surface). */
+  /** Open PUBLIC tournaments still accepting entrants (the main lobby). Club
+   *  tournaments are private — they only show in clubLobbies(). */
   openLobbies(): TournamentState[] {
-    return this.list().filter((t) => t.phase === "lobby" && t.entrants.length < t.maxPlayers);
+    return this.list().filter((t) => t.phase === "lobby" && t.entrants.length < t.maxPlayers && !t.clubId);
+  }
+
+  /** A club's tournaments (any phase), newest first. */
+  clubLobbies(clubId: string): TournamentState[] {
+    return this.list()
+      .filter((t) => t.clubId === clubId)
+      .sort((a, b) => Number(b.id) - Number(a.id));
+  }
+
+  /** Tag an already-registered tournament with its club (used when re-syncing). */
+  setClub(id: string, clubId: string): void {
+    const e = this.byId.get(id);
+    if (e) e.meta.clubId = clubId;
   }
 
   private must(id: string): Entry {

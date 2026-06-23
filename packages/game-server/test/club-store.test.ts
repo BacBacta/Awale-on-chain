@@ -72,6 +72,16 @@ function suite(name: string, make: () => ClubStore) {
       const s = make();
       await expect(s.create("   ", A)).rejects.toThrow(/name required/);
     });
+
+    it("tags on-chain tournaments to a club, both directions", async () => {
+      const s = make();
+      const club = await s.create("Crew", A);
+      await s.tagTournament(club.id, "7");
+      await s.tagTournament(club.id, "9");
+      expect((await s.tournamentsOf(club.id)).sort()).toEqual(["7", "9"]);
+      expect(await s.clubOf("7")).toBe(club.id);
+      expect(await s.clubOf("404")).toBeNull();
+    });
   });
 }
 

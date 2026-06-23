@@ -152,6 +152,21 @@ export const matchEscrowAbi = [
 export const tournamentEscrowAbi = [
   {
     type: "function",
+    name: "createTournament",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "entryFee", type: "uint128" },
+      { name: "maxPlayers", type: "uint32" },
+      { name: "cutBps", type: "uint16" },
+      { name: "joinWindow", type: "uint64" },
+      { name: "refundWindow", type: "uint64" },
+      { name: "payoutBps", type: "uint16[]" },
+    ],
+    outputs: [{ name: "id", type: "uint256" }],
+  },
+  {
+    type: "function",
     name: "join",
     stateMutability: "nonpayable",
     inputs: [{ name: "id", type: "uint256" }],
