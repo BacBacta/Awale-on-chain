@@ -22,6 +22,7 @@ import { RedisMatchStore } from "./persistence/redis-store.js";
 import IORedis from "ioredis";
 import { InMemorySubscriptionStore, LogNotifier, WebPushNotifier, type Notifier, type WebPushSubscription } from "./notifications/notifier.js";
 import { InMemorySocialStore, RedisSocialStore, type SocialStore } from "./social/store.js";
+import { InMemoryClubStore, RedisClubStore, type ClubStore } from "./clubs/store.js";
 import { TournamentService, type TournamentMeta } from "./tournament/service.js";
 import { matchEscrowAbi, tournamentEscrowAbi } from "../../protocol/src/abis.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
@@ -113,6 +114,7 @@ const notifier: Notifier =
 // is required for Fly's internal IPv6 network.
 let matchStore: MatchStore = new InMemoryMatchStore();
 let socialStore: SocialStore = new InMemorySocialStore();
+let clubStore: ClubStore = new InMemoryClubStore();
 if (process.env.REDIS_URL) {
   const redis = new IORedis(process.env.REDIS_URL, { family: 6, maxRetriesPerRequest: 5, lazyConnect: true });
   redis.on("error", (e) => console.warn(`[redis] ${e.message}`));
@@ -120,7 +122,8 @@ if (process.env.REDIS_URL) {
   redis.connect().catch((e) => console.warn(`[redis] initial connect failed: ${(e as Error).message}`));
   matchStore = new RedisMatchStore(redis);
   socialStore = new RedisSocialStore(redis);
-  console.log("async store: redis · social store: redis");
+  clubStore = new RedisClubStore(redis);
+  console.log("async store: redis · social store: redis · clubs: redis");
 } else {
   console.log("async store: in-memory (set REDIS_URL for durability + scaling)");
 }
@@ -249,10 +252,11 @@ const httpServer = createServer((req, res) => {
   }
   if (req.method === "POST" && url.pathname === "/social/challenge") {
     readJson(req)
-      .then((b) => {
+      .then(async (b) => {
         const { from, to, matchId } = b as { from: Address; to: Address; matchId: string };
         if (!from || !to || !matchId) throw new Error("from + to + matchId required");
-        return socialStore.addChallenge(to, { id: `${matchId}-${Date.now()}`, from, matchId, createdAt: Date.now() });
+        await socialStore.addChallenge(to, { id: `${matchId}-${Date.now()}`, from, matchId, createdAt: Date.now() });
+        await notifier.notifyChallenge(to, from, matchId).catch(() => {});
       })
       .then(() => json(200, { ok: true }))
       .catch((e) => json(400, { error: (e as Error).message }));
@@ -273,6 +277,41 @@ const httpServer = createServer((req, res) => {
       })
       .then(() => json(200, { ok: true }))
       .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  // --- clubs: named groups with a shareable join code ---
+  if (req.method === "POST" && url.pathname === "/clubs/create") {
+    readJson(req)
+      .then((b) => {
+        const { name, owner } = b as { name: string; owner: Address };
+        if (!name || !owner) throw new Error("name + owner required");
+        return clubStore.create(name, owner);
+      })
+      .then((club) => json(200, club))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/clubs/join") {
+    readJson(req)
+      .then((b) => {
+        const { code, member } = b as { code: string; member: Address };
+        if (!code || !member) throw new Error("code + member required");
+        return clubStore.joinByCode(code, member);
+      })
+      .then((club) => json(200, club))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/clubs/mine") {
+    const address = url.searchParams.get("address") as Address | null;
+    if (!address) return json(400, { error: "address required" });
+    clubStore.listForMember(address).then((clubs) => json(200, { clubs })).catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/clubs/get") {
+    const id = url.searchParams.get("id");
+    if (!id) return json(400, { error: "id required" });
+    clubStore.get(id).then((c) => (c ? json(200, c) : json(404, { error: "not found" }))).catch((e) => json(500, { error: (e as Error).message }));
     return;
   }
   // --- tournaments: Sit-and-Go lobby + bracket ---

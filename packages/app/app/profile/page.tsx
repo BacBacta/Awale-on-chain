@@ -133,6 +133,16 @@ export default function Profile() {
           </span>
           <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
         </Link>
+        <Link className="list-row" href="/clubs">
+          <span className="lead gold">
+            <Icon name="versus" size={19} />
+          </span>
+          <span className="col" style={{ flex: 1, gap: 1 }}>
+            <span style={{ fontWeight: 700, fontSize: 14.5 }}>Clubs</span>
+            <span className="faint">Your crew — invite, play, compete</span>
+          </span>
+          <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
+        </Link>
       </div>
 
       {/* rivals — opponents you've faced */}

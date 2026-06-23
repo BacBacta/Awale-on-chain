@@ -34,12 +34,17 @@ export class InMemorySubscriptionStore implements SubscriptionStore {
 export interface Notifier {
   /** Tell `address` it's their turn in `matchId`. */
   notifyTurn(address: Address, matchId: string): Promise<void>;
+  /** Tell `address` that `from` challenged them to `matchId`. */
+  notifyChallenge(address: Address, from: string, matchId: string): Promise<void>;
 }
 
 /** Default no-op-ish notifier — logs the intent. */
 export class LogNotifier implements Notifier {
   async notifyTurn(address: Address, matchId: string): Promise<void> {
     console.log(`[notify] your-turn -> ${address} (match ${matchId})`);
+  }
+  async notifyChallenge(address: Address, from: string, matchId: string): Promise<void> {
+    console.log(`[notify] challenge from ${from} -> ${address} (match ${matchId})`);
   }
 }
 
@@ -58,11 +63,17 @@ export class WebPushNotifier implements Notifier {
   ) {}
 
   async notifyTurn(address: Address, matchId: string): Promise<void> {
+    await this.send(address, `would notify your-turn ${address} (match ${matchId})`);
+  }
+  async notifyChallenge(address: Address, from: string, matchId: string): Promise<void> {
+    await this.send(address, `would notify challenge from ${from} -> ${address} (match ${matchId})`);
+  }
+
+  private async send(address: Address, intent: string): Promise<void> {
     const subscriptions = await this.subs.listFor(address);
     if (subscriptions.length === 0) return;
-    // const payload = JSON.stringify({ title: "Your turn — Awalé", body: "Your opponent moved.", url: `/play?match=${matchId}&async=1` });
     // for (const sub of subscriptions) { try { await webpush.sendNotification(sub, payload, { vapidDetails: ... }); } catch (e) { if (410/404) await prune(sub); } }
     void this.vapid;
-    console.warn(`[webpush] not wired: would notify ${address} for match ${matchId} (${subscriptions.length} subs)`);
+    console.warn(`[webpush] not wired: ${intent} (${subscriptions.length} subs)`);
   }
 }

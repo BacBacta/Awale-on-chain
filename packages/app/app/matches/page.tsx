@@ -16,6 +16,15 @@ import { loadSession } from "../../src/lib/session.js";
 import { displayName, friendlyName } from "../../src/lib/names.js";
 import { listOpenMatches, joinOpenMatch, type OpenMatch } from "../../src/lib/lobby.js";
 import type { WriteClient } from "../../src/lib/escrow.js";
+import {
+  socialEnabled,
+  startChallengeMatch,
+  shareInvite,
+  listChallenges,
+  dismissChallenge,
+  type Challenge,
+} from "../../src/lib/socialClient.js";
+import { pushSupported, registerPush } from "../../src/lib/push.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
@@ -155,13 +164,88 @@ export default function Matches() {
     }
   }
 
+  // --- challenge a friend (A) + inbox + push (B) ---
+  const [challenges, setChallenges] = useState<Challenge[]>([]);
+  const [inviting, setInviting] = useState(false);
+  const [pushOn, setPushOn] = useState(false);
+
+  useEffect(() => {
+    if (!account || !socialEnabled()) return;
+    listChallenges(account).then(setChallenges).catch(() => {});
+  }, [account]);
+
+  async function challengeFriend() {
+    if (inviting || !socialEnabled()) return;
+    setInviting(true);
+    try {
+      const id = await startChallengeMatch();
+      await shareInvite(id, account ? friendlyName(account) : "A friend");
+      window.location.href = `/play?async=${id}`;
+    } catch {
+      setInviting(false);
+    }
+  }
+
+  async function dismiss(c: Challenge) {
+    if (!account) return;
+    setChallenges((cs) => cs.filter((x) => x.id !== c.id));
+    await dismissChallenge(account, c.id);
+  }
+
+  async function enablePush() {
+    if (!account) return;
+    const ok = await registerPush(account);
+    setPushOn(ok);
+  }
+
   return (
     <main className="pad stack" style={{ flex: 1, gap: 12 }}>
       <span className="title">Your matches</span>
 
+      {/* incoming challenges (A) */}
+      {challenges.length > 0 && (
+        <>
+          <span className="section-label">
+            Challenges
+            <span className="chip positive" style={{ marginLeft: 8 }}>
+              {challenges.length} waiting
+            </span>
+          </span>
+          {challenges.map((c) => (
+            <div className="list-row" key={c.id} style={{ cursor: "default" }}>
+              <span className="lead gold">
+                <Icon name="versus" size={18} />
+              </span>
+              <span className="col" style={{ flex: 1, gap: 1 }}>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>{friendlyName(c.from)} challenged you</span>
+                <span className="faint">Tap accept to play</span>
+              </span>
+              <button className="btn" style={{ padding: "8px 12px" }} onClick={() => (window.location.href = `/play?async=${c.matchId}`)}>
+                Accept
+              </button>
+              <button className="btn ghost" style={{ padding: "8px 8px" }} onClick={() => dismiss(c)} aria-label="Dismiss">
+                ✕
+              </button>
+            </div>
+          ))}
+        </>
+      )}
+
+      {/* challenge a friend (A) — the liquidity + virality loop */}
+      {socialEnabled() && (
+        <button className="btn block" onClick={challengeFriend} disabled={inviting}>
+          <Icon name="share" size={17} /> {inviting ? "Creating…" : "Challenge a friend"}
+        </button>
+      )}
       {asyncEnabled() && (
-        <button className="btn block" onClick={newCorrespondence} disabled={creating}>
+        <button className="btn secondary block" onClick={newCorrespondence} disabled={creating}>
           <Icon name="versus" size={17} /> {creating ? "Creating…" : "New correspondence game"}
+        </button>
+      )}
+      {/* enable push (B) */}
+      {pushSupported() && !pushOn && (
+        <button className="btn ghost block" onClick={enablePush} style={{ gap: 8 }}>
+          <Icon name="bolt" size={15} /> Get notified when it&apos;s your turn
         </button>
       )}
 

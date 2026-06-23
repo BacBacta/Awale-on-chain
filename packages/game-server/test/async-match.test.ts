@@ -19,6 +19,7 @@ function spyNotifier() {
     async notifyTurn(address, matchId) {
       calls.push({ address, matchId });
     },
+    async notifyChallenge() {},
   };
   return { notifier, calls };
 }
