@@ -63,6 +63,37 @@ contract HarvestVaultTest is Test {
         return a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
     }
 
+    // ------------------------------ pause ------------------------------- //
+
+    function test_pause_blocksDepositsAndSeasons() public {
+        uint256 id = _createSeason();
+
+        vm.prank(owner);
+        vault.setPaused(true);
+        assertTrue(vault.paused());
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("HarvestVault: paused"));
+        vault.deposit(id, DEP);
+
+        vm.prank(owner);
+        vm.expectRevert(bytes("HarvestVault: paused"));
+        vault.createSeason(address(usdc), address(pool), depositDeadline, seasonEnd);
+
+        // unpausing restores deposits
+        vm.prank(owner);
+        vault.setPaused(false);
+        vm.prank(alice);
+        vault.deposit(id, DEP);
+        assertEq(vault.principalOf(id, alice), DEP);
+    }
+
+    function test_setPaused_onlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.setPaused(true);
+    }
+
     // ----------------------------- seasons ------------------------------ //
 
     function test_createSeason() public {

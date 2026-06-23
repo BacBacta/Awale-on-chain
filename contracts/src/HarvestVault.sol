@@ -53,6 +53,10 @@ contract HarvestVault is Ownable, ReentrancyGuard {
     /// @dev token => the single un-finalized season for it (0 if none)
     mapping(address => uint256) public activeSeasonForToken;
 
+    /// @notice Emergency switch: when paused, no new deposits or season creation
+    ///         are accepted (claims/finalize stay open so funds are never trapped).
+    bool public paused;
+
     event SeasonCreated(
         uint256 indexed seasonId, address indexed token, address pool, uint64 depositDeadline, uint64 seasonEnd
     );
@@ -60,8 +64,15 @@ contract HarvestVault is Ownable, ReentrancyGuard {
     event Finalized(uint256 indexed seasonId, uint256 redeemed, uint256 yieldPot, bytes32 prizeMerkleRoot);
     event PrincipalClaimed(uint256 indexed seasonId, address indexed player, uint256 amount);
     event PrizeClaimed(uint256 indexed seasonId, address indexed player, uint256 amount);
+    event PausedSet(bool paused);
 
     constructor(address owner_) Ownable(owner_) {}
+
+    /// @notice Pause/unpause new deposits + season creation (owner only).
+    function setPaused(bool paused_) external onlyOwner {
+        paused = paused_;
+        emit PausedSet(paused_);
+    }
 
     // ----------------------------- seasons ------------------------------ //
 
@@ -72,6 +83,7 @@ contract HarvestVault is Ownable, ReentrancyGuard {
         nonReentrant
         returns (uint256 seasonId)
     {
+        require(!paused, "HarvestVault: paused");
         require(token != address(0) && pool != address(0), "HarvestVault: zero addr");
         require(depositDeadline < seasonEnd, "HarvestVault: bad schedule");
         require(seasonEnd > block.timestamp, "HarvestVault: end in past");
@@ -93,6 +105,7 @@ contract HarvestVault is Ownable, ReentrancyGuard {
 
     /// @notice Deposit `amount` into a season; supplied straight to the market.
     function deposit(uint256 seasonId, uint256 amount) external nonReentrant {
+        require(!paused, "HarvestVault: paused");
         Season storage s = seasons[seasonId];
         require(s.status == Status.Open, "HarvestVault: not open");
         require(block.timestamp <= s.depositDeadline, "HarvestVault: deposits closed");
