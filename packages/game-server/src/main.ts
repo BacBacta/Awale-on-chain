@@ -139,7 +139,7 @@ const tournamentFinalize =
     ? async (id: string, winners: Address[]) => {
         const wallet = createWalletClient({
           chain: chainFor(CHAIN_ID),
-          transport: http(RPC_URL),
+          transport: http(RPC_URL, { timeout: 60_000, retryCount: 2 }),
           account: privateKeyToAccount(SIGNER as Hex),
         });
         const hash = await wallet.writeContract({
@@ -167,7 +167,11 @@ async function createClubTournament(clubId: string, token: Address, entryFee: bi
   if (!(SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66 && TOURNAMENT)) {
     throw new Error("tournaments not configured (need SERVER_SIGNER_KEY + TOURNAMENT_ADDRESS)");
   }
-  const wallet = createWalletClient({ chain: chainFor(CHAIN_ID), transport: http(RPC_URL), account: privateKeyToAccount(SIGNER as Hex) });
+  const wallet = createWalletClient({
+    chain: chainFor(CHAIN_ID),
+    transport: http(RPC_URL, { timeout: 60_000, retryCount: 2 }),
+    account: privateKeyToAccount(SIGNER as Hex),
+  });
   const hash = await wallet.writeContract({
     address: TOURNAMENT,
     abi: tournamentEscrowAbi,
