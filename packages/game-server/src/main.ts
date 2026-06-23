@@ -25,6 +25,8 @@ import { InMemorySocialStore, RedisSocialStore, type SocialStore } from "./socia
 import { InMemoryClubStore, RedisClubStore, type ClubStore } from "./clubs/store.js";
 import { TournamentService, type TournamentMeta } from "./tournament/service.js";
 import { matchEscrowAbi, tournamentEscrowAbi } from "../../protocol/src/abis.js";
+import { createOdisResolver } from "./identity/odis.js";
+import { isValidE164, normalizePhone } from "./identity/phone.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
 import { InMemoryPersonhoodRegistry } from "./personhood/registry.js";
 import { verifyAndRegister } from "./personhood/gate.js";
@@ -156,6 +158,12 @@ const tournamentFinalize =
       };
 const tournaments = new TournamentService(tournamentFinalize);
 console.log(TOURNAMENT ? `tournaments: on-chain @ ${TOURNAMENT}` : "tournaments: off-chain (set TOURNAMENT_ADDRESS)");
+
+// ODIS phone→address resolution. `obfuscate` (the @celo/identity + funded-quota
+// step) is not wired here, so this returns null and the client falls back to a
+// shareable invite link. Wire it (mainnet) to resolve contacts directly.
+const odisResolver = createOdisResolver({ rpcUrl: process.env.ODIS_RPC_URL });
+console.log("identity: phone resolution off (share-link fallback) — wire ODIS to enable");
 
 const CLUB_PAYOUT = [6500, 3500];
 const CLUB_CUT_BPS = 800;
@@ -319,6 +327,16 @@ const httpServer = createServer((req, res) => {
       })
       .then(() => json(200, { ok: true }))
       .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  // --- identity: resolve a phone number → wallet (ODIS/SocialConnect) ---
+  if (req.method === "GET" && url.pathname === "/identity/resolve") {
+    const phone = url.searchParams.get("phone") ?? "";
+    if (!isValidE164(phone)) return json(400, { error: "valid E.164 phone required" });
+    odisResolver
+      .resolveByPhone(normalizePhone(phone))
+      .then((address) => json(200, { address }))
+      .catch(() => json(200, { address: null }));
     return;
   }
   // --- clubs: named groups with a shareable join code ---

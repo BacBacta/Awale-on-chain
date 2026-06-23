@@ -20,6 +20,7 @@ import {
   socialEnabled,
   startChallengeMatch,
   shareInvite,
+  challengeByPhone,
   listChallenges,
   dismissChallenge,
   type Challenge,
@@ -186,6 +187,18 @@ export default function Matches() {
     }
   }
 
+  const [phone, setPhone] = useState("");
+  async function challengePhone() {
+    if (inviting || !account || !phone.trim()) return;
+    setInviting(true);
+    try {
+      const { matchId } = await challengeByPhone(account, phone.trim(), friendlyName(account));
+      window.location.href = `/play?async=${matchId}`;
+    } catch {
+      setInviting(false);
+    }
+  }
+
   async function dismiss(c: Challenge) {
     if (!account) return;
     setChallenges((cs) => cs.filter((x) => x.id !== c.id));
@@ -233,9 +246,26 @@ export default function Matches() {
 
       {/* challenge a friend (A) — the liquidity + virality loop */}
       {socialEnabled() && (
-        <button className="btn block" onClick={challengeFriend} disabled={inviting}>
-          <Icon name="share" size={17} /> {inviting ? "Creating…" : "Challenge a friend"}
-        </button>
+        <>
+          <button className="btn block" onClick={challengeFriend} disabled={inviting}>
+            <Icon name="share" size={17} /> {inviting ? "Creating…" : "Challenge a friend"}
+          </button>
+          {account && (
+            <div className="row" style={{ gap: 8 }}>
+              <input
+                className="input"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                inputMode="tel"
+                placeholder="+233…  challenge by number"
+                aria-label="Friend's phone number"
+              />
+              <button className="btn secondary" style={{ padding: "12px 14px" }} onClick={challengePhone} disabled={inviting || !phone.trim()}>
+                Go
+              </button>
+            </div>
+          )}
+        </>
       )}
       {asyncEnabled() && (
         <button className="btn secondary block" onClick={newCorrespondence} disabled={creating}>

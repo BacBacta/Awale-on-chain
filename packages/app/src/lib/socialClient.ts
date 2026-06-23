@@ -63,6 +63,31 @@ export async function challengeRival(me: Address, rival: Address): Promise<strin
   return matchId;
 }
 
+/** Resolve a phone number → wallet via ODIS, or null (caller falls back to share). */
+export async function resolvePhone(phone: string): Promise<Address | null> {
+  if (!SERVER_URL) return null;
+  const res = await fetch(`${SERVER_URL}/identity/resolve?phone=${encodeURIComponent(phone)}`);
+  if (!res.ok) return null;
+  return ((await res.json()) as { address: Address | null }).address;
+}
+
+/** Challenge a contact by phone: resolve → challenge directly if they're on Awalé,
+ *  otherwise create the game and share an invite link (which onboards them). */
+export async function challengeByPhone(
+  me: Address,
+  phone: string,
+  myName: string,
+): Promise<{ matchId: string; resolved: boolean }> {
+  const addr = await resolvePhone(phone).catch(() => null);
+  if (addr) {
+    const matchId = await challengeRival(me, addr);
+    return { matchId, resolved: true };
+  }
+  const matchId = await startChallengeMatch();
+  await shareInvite(matchId, myName);
+  return { matchId, resolved: false };
+}
+
 export async function listChallenges(address: Address): Promise<Challenge[]> {
   if (!SERVER_URL) return [];
   const res = await fetch(`${SERVER_URL}/social/challenges?address=${address}`);
