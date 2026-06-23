@@ -8,6 +8,13 @@ import type { Address } from "viem";
 
 export const LEAGUE_SEASON = BigInt(process.env.NEXT_PUBLIC_LEAGUE_SEASON ?? "1");
 
+// Feature freeze: the League ships later. OFF by default — re-enable by setting
+// NEXT_PUBLIC_LEAGUE_ENABLED=1 (and a fresh HarvestVault deploy) when ready.
+// While frozen, the League tab, page and the in-game "grow winnings" CTA hide.
+export function leagueEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_LEAGUE_ENABLED === "1";
+}
+
 export function harvestAddress(): Address | null {
   const a = process.env.NEXT_PUBLIC_HARVEST_ADDRESS;
   return a ? (a as Address) : null;

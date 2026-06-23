@@ -11,6 +11,7 @@ import {
   harvestVaultAbi,
   faucetAbi,
   harvestAddress,
+  leagueEnabled,
   LEAGUE_SEASON,
   SEASON_STATUS,
   countdown,
@@ -175,7 +176,7 @@ export default function League() {
     setPrize(null);
   }
 
-  if (!vault) {
+  if (!leagueEnabled() || !vault) {
     return (
       <main className="pad stack" style={{ flex: 1, gap: 14 }}>
         <span className="title">No-loss League</span>

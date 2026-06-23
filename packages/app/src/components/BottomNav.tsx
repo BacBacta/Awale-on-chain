@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon, type IconName } from "./Icon.js";
+import { leagueEnabled } from "../lib/league.js";
 
 // Persistent bottom navigation. Four clear destinations — everything else
 // (Tournaments, Skins, Stats, Daily, Learn) lives inside one of these so a
@@ -12,7 +13,8 @@ type Tab = { href: string; label: string; icon: IconName };
 const TABS: Tab[] = [
   { href: "/", label: "Play", icon: "play" },
   { href: "/matches", label: "Matches", icon: "target" },
-  { href: "/league", label: "League", icon: "trophy" },
+  // League is frozen until its feature ships — see leagueEnabled().
+  ...(leagueEnabled() ? [{ href: "/league", label: "League", icon: "trophy" as IconName }] : []),
   { href: "/profile", label: "Profile", icon: "user" },
 ];
 
