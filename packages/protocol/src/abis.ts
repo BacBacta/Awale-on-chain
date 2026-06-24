@@ -101,6 +101,7 @@ export const matchEscrowAbi = [
           { name: "player1", type: "address" },
           { name: "session0", type: "address" },
           { name: "session1", type: "address" },
+          { name: "proposer", type: "address" },
           { name: "status", type: "uint8" },
           { name: "startTurn", type: "uint8" },
           { name: "proposedWinner", type: "uint8" },
