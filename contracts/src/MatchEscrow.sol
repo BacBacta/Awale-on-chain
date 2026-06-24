@@ -45,6 +45,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         address player1; // joiner (North / AwaleRules player 1)
         address session0; // player 0's per-match session key (ephemeral address)
         address session1; // player 1's per-match session key
+        address proposer; // who called proposeResult (cannot self-void their own proposal)
         Status status;
         uint8 startTurn; // first mover (0 or 1); START_UNSET until the reveal block is mined
         uint8 proposedWinner; // 0, 1, or DRAW — valid while Proposed
@@ -250,6 +251,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
 
         m.proposedWinner = winner;
         m.transcriptCommitment = commitment;
+        m.proposer = msg.sender;
         m.status = Status.Proposed;
         m.challengeDeadline = uint64(block.timestamp) + m.challengeWindow;
         emit ResultProposed(matchId, winner, m.challengeDeadline);
@@ -281,9 +283,12 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
             emit ResultChallenged(matchId, state.winner);
             _payout(matchId, m, state.winner);
         } else {
-            // non-terminal: only void if the transcript matches the proposer's commitment.
-            // Requiring the hash prevents a losing challenger from submitting a short
-            // prefix of the real game to manufacture a false "game-still-live" proof.
+            // non-terminal: the proposal was premature. Only the OPPONENT may use
+            // this path — otherwise a losing proposer could commit to a non-terminal
+            // prefix of the real game and self-challenge to force a refund, escaping
+            // a loss. The hash check still stops a challenger from forging a short
+            // prefix to manufacture a false "game-still-live" proof.
+            require(msg.sender != m.proposer, "MatchEscrow: proposer cannot self-void");
             require(
                 verifier.transcriptHash(t.matchId, t.startTurn, t.moves) == m.transcriptCommitment,
                 "MatchEscrow: transcript mismatch"
@@ -304,12 +309,14 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     /// @notice Reclaim stakes from a match that was joined but never settled.
     ///         Callable by either player once the match TTL has elapsed; refunds
     ///         both so funds can never be locked forever by a silent opponent.
-    /// @dev    Also accepts Proposed status: if the challenge window overlaps the
-    ///         TTL expiry, the match may be Proposed-but-expired. Allowing voidExpired
-    ///         here ensures neither player is permanently locked out of a refund.
+    /// @dev    Only an *Active* match may be voided. A Proposed match always
+    ///         resolves through {finalize} (permissionless, after the challenge
+    ///         window) or {challenge}, so it is never lockable — and accepting it
+    ///         here previously let the losing player refund a legitimately proposed
+    ///         result by racing {voidExpired} against {finalize}.
     function voidExpired(uint256 matchId) external nonReentrant {
         Match storage m = matches[matchId];
-        require(m.status == Status.Active || m.status == Status.Proposed, "MatchEscrow: not active or proposed");
+        require(m.status == Status.Active, "MatchEscrow: not active");
         require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
         require(block.timestamp > m.activeDeadline, "MatchEscrow: not expired");
 

@@ -453,25 +453,54 @@ contract MatchEscrowTest is Test {
         escrow.setChallengeWindow(minWindow - 1);
     }
 
-    // [fix3] voidExpired also works when the match is Proposed but the TTL has elapsed
-    function test_voidExpired_worksOnProposedExpiredMatch() public {
+    // [audit-1] A Proposed match can NEVER be voided — the loser must not be able to
+    //           race voidExpired against a legitimately proposed result. It resolves
+    //           only via finalize (which pays the proposed winner).
+    function test_voidExpired_revertsOnProposed_finalizePaysWinner() public {
         uint256 id = _createAndJoin();
 
-        // propose before TTL expires
+        // alice proposes herself as winner before the TTL
         vm.prank(alice);
         escrow.proposeResult(id, 0, bytes32(uint256(1)));
-        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Proposed));
 
-        // TTL elapses (activeDeadline passes) while match is still Proposed
+        // even after the TTL elapses, the loser (bob) cannot void the proposed result
         vm.warp(block.timestamp + TTL + 1);
-
-        uint256 aBefore = usdc.balanceOf(alice);
-        uint256 bBefore = usdc.balanceOf(bob);
         vm.prank(bob);
+        vm.expectRevert(bytes("MatchEscrow: not active"));
         escrow.voidExpired(id);
 
-        assertEq(usdc.balanceOf(alice), aBefore + STAKE, "alice refunded");
-        assertEq(usdc.balanceOf(bob), bBefore + STAKE, "bob refunded");
+        // the legitimate path: finalize pays the proposed winner (alice) the pot minus rake
+        uint256 aBefore = usdc.balanceOf(alice);
+        escrow.finalize(id);
+        uint256 pot = uint256(STAKE) * 2;
+        uint256 prize = pot - (pot * RAKE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(alice), aBefore + prize, "winner paid, not refunded");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Resolved));
+    }
+
+    // [audit-2] The proposer cannot self-void: committing to a non-terminal prefix and
+    //           self-challenging must not let a loser escape into a refund.
+    function test_challenge_proposerCannotSelfVoid() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+
+        ReplayVerifier.Transcript memory t = _buildPartialTranscript(id, startTurn, 6);
+        bytes32 commitment = verifier.transcriptHash(id, startTurn, t.moves);
+
+        // alice (the loser) proposes herself winner, committing to a non-terminal prefix
+        vm.prank(alice);
+        escrow.proposeResult(id, 0, commitment);
+
+        // alice tries to self-challenge that same prefix to force a void → blocked
+        vm.prank(alice);
+        vm.expectRevert(bytes("MatchEscrow: proposer cannot self-void"));
+        escrow.challenge(id, t);
+
+        // the opponent (bob) can still use the non-terminal path to void a premature proposal
+        uint256 bBefore = usdc.balanceOf(bob);
+        vm.prank(bob);
+        escrow.challenge(id, t);
+        assertEq(usdc.balanceOf(bob), bBefore + STAKE, "opponent void still works");
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Voided));
     }
 
