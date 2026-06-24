@@ -16,6 +16,8 @@ import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
 import { streakCount, solvedToday } from "../src/lib/daily.js";
 import { tournamentsEnabled } from "../src/lib/tournaments.js";
+import { cashEligible } from "../src/lib/compliance.js";
+import { EligibilityGate } from "../src/components/EligibilityGate.js";
 
 const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
@@ -65,6 +67,7 @@ export default function Lobby() {
   const [showLearnHint, setShowLearnHint] = useState(false);
   const [streak, setStreak] = useState(0);
   const [didDaily, setDidDaily] = useState(true);
+  const [eligible, setEligible] = useState(true); // assume true on SSR; refined on mount
   const cfg: EscrowConfig | null = escrowConfig();
 
   useEffect(() => {
@@ -75,6 +78,7 @@ export default function Lobby() {
     }
     setStreak(streakCount());
     setDidDaily(solvedToday());
+    setEligible(cashEligible());
   }, []);
 
   useEffect(() => {
@@ -169,15 +173,21 @@ export default function Lobby() {
           <span className="section-label" style={{ marginTop: 4 }}>
             Play for stablecoin
           </span>
-          {tournamentsEnabled() && (
-            <NavRow href="/tournaments" icon="medal" tone="gold" title="Tournaments" sub="One buy-in, win a multiplied prize" />
+          {!eligible ? (
+            <EligibilityGate onAccept={() => setEligible(true)} />
+          ) : (
+            <>
+              {tournamentsEnabled() && (
+                <NavRow href="/tournaments" icon="medal" tone="gold" title="Tournaments" sub="One buy-in, win a multiplied prize" />
+              )}
+              {staking &&
+                (verified ? (
+                  <MatchActions wallet={wallet} account={address} cfg={cfg} />
+                ) : (
+                  <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
+                ))}
+            </>
           )}
-          {staking &&
-            (verified ? (
-              <MatchActions wallet={wallet} account={address} cfg={cfg} />
-            ) : (
-              <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
-            ))}
         </>
       )}
 

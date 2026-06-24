@@ -143,6 +143,16 @@ export default function Profile() {
           </span>
           <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
         </Link>
+        <Link className="list-row" href="/legal">
+          <span className="lead neutral">
+            <Icon name="info" size={19} />
+          </span>
+          <span className="col" style={{ flex: 1, gap: 1 }}>
+            <span style={{ fontWeight: 700, fontSize: 14.5 }}>Legal &amp; support</span>
+            <span className="faint">Terms, privacy, responsible play, contact</span>
+          </span>
+          <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
+        </Link>
       </div>
 
       {/* rivals — opponents you've faced */}
