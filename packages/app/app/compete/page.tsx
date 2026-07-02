@@ -63,17 +63,17 @@ export default function Compete() {
         )}
       </div>
 
-      {/* my rank — the reason to come back after a loss */}
-      {profile && rank && (
+      {/* my rank — only once it's real. Showing "Sower · 1200" to someone who
+          has never played is fake progression next to an empty ladder. */}
+      {profile && rank && profile.gamesPlayed > 0 && (
         <div className="card row animate-in">
           <div className="col" style={{ gap: 4 }}>
             <span className="chip gold" style={{ alignSelf: "flex-start" }}>
               {rank.icon} {rank.name}
             </span>
             <span className="faint">
-              {profile.gamesPlayed > 0
-                ? `${profile.gamesWon} wins · ${profile.gamesPlayed} games${(profile.perfectDays ?? 0) > 0 ? ` · ✨ ${profile.perfectDays} perfect day${profile.perfectDays > 1 ? "s" : ""}` : ""}`
-                : "Play a Quick Match to place on the ladder"}
+              {profile.gamesWon} wins · {profile.gamesPlayed} games
+              {(profile.perfectDays ?? 0) > 0 ? ` · ✨ ${profile.perfectDays} perfect day${profile.perfectDays > 1 ? "s" : ""}` : ""}
             </span>
           </div>
           <span className="title score" style={{ color: "var(--gold)" }}>

@@ -124,14 +124,14 @@ export default function Lobby() {
         </span>
       </div>
 
-      {/* hero — a calm, living board behind the headline */}
-      <div className="card animate-in" style={{ position: "relative", overflow: "hidden", padding: 18, minHeight: 168 }}>
+      {/* hero — tight: the headline earns ~2 lines, not a quarter of the screen */}
+      <div className="card animate-in" style={{ position: "relative", overflow: "hidden", padding: "16px 18px" }}>
         <div
           aria-hidden
           style={{
             position: "absolute",
             inset: 0,
-            opacity: 0.28,
+            opacity: 0.22,
             display: "grid",
             placeItems: "center",
             filter: "blur(5px)",
@@ -139,7 +139,7 @@ export default function Lobby() {
             maskImage: "radial-gradient(130% 75% at 50% 28%, #000 30%, transparent 70%)",
           }}
         >
-          <div style={{ width: "168%", transform: "translateY(-22%)" }}>
+          <div style={{ width: "168%", transform: "translateY(-30%)" }}>
             <HeroBoard />
           </div>
         </div>
@@ -147,50 +147,53 @@ export default function Lobby() {
           aria-hidden
           style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(11,10,8,0.3), rgba(11,10,8,0.86))" }}
         />
-        <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 8 }}>
-          <span className="display" style={{ fontSize: 32, textShadow: "0 2px 16px rgba(0,0,0,0.6)" }}>
+        <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
+          <span className="display" style={{ fontSize: 24, textShadow: "0 2px 16px rgba(0,0,0,0.6)" }}>
             Play Awalé, win real money
           </span>
-          <span className="muted">Sow, capture, win the pot. Play free, or put a few dollars on a match.</span>
+          <span className="muted" style={{ fontSize: 13 }}>
+            Play free, or put a few dollars on a match.
+          </span>
         </div>
       </div>
 
-      {/* THE funnel: one question at a time. "Play now" is the golden path;
-          everything else is an explicit, labelled choice — the money form no
-          longer sits raw on the home screen. */}
-      <QuickMatch account={address ?? undefined} />
-
-      <div className="stack" style={{ gap: 8 }}>
-        <NavRow href="/matches" icon="versus" title="Play with a friend" sub="Send an invite — they play whenever" />
-        <button className="list-row" style={{ font: "inherit" }} onClick={() => setShowMoney((v) => !v)} aria-expanded={showMoney}>
-          <span className="lead gold">
-            <Icon name="wallet" size={19} />
-          </span>
-          <span className="col" style={{ flex: 1, gap: 1 }}>
-            <span style={{ fontWeight: 700, fontSize: 14.5 }}>Play for money</span>
-            <span className="faint">Equal stakes, winner takes the pot</span>
-          </span>
-          <Icon
-            name="arrowRight"
-            size={16}
-            style={{ color: "var(--faint)", transform: showMoney ? "rotate(90deg)" : "none", transition: "transform 200ms var(--ease-out)" }}
-          />
-        </button>
+      {/* THE decision, sized by importance: one dominant button, two smaller
+          siblings. Everything below this block is habit or help — visibly
+          lighter, so the screen reads as a game, not a menu. */}
+      <div className="stack" style={{ gap: 10 }}>
+        <QuickMatch account={address ?? undefined} />
+        <div className="row" style={{ gap: 8 }}>
+          <Link className="btn secondary" href="/matches" style={{ flex: 1, justifyContent: "center", gap: 6 }}>
+            <Icon name="versus" size={15} /> With a friend
+          </Link>
+          <button
+            className="btn secondary"
+            style={{ flex: 1, justifyContent: "center", gap: 6 }}
+            onClick={() => setShowMoney((v) => !v)}
+            aria-expanded={showMoney}
+          >
+            <Icon name="wallet" size={15} /> For money
+          </button>
+        </div>
       </div>
 
-      {/* stake-a-match — revealed only when asked for */}
-      {showMoney &&
-        (staking ? (
-          verified ? (
-            <MatchActions wallet={wallet} account={address} cfg={cfg} />
+      {/* stake-a-match — revealed only when asked for, with its help alongside */}
+      {showMoney && (
+        <div className="stack animate-in" style={{ gap: 10 }}>
+          {staking ? (
+            verified ? (
+              <MatchActions wallet={wallet} account={address} cfg={cfg} />
+            ) : (
+              <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
+            )
           ) : (
-            <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
-          )
-        ) : (
-          <div className="card muted animate-in">Open in MiniPay to play for money.</div>
-        ))}
+            <div className="card muted">Open in MiniPay to play for money.</div>
+          )}
+          <HowItWorks />
+        </div>
+      )}
 
-      {/* the school: free, always available */}
+      {/* daily habits — two slim rows, not a wall */}
       <div className="stack" style={{ gap: 8 }}>
         <NavRow
           href="/daily"
@@ -199,18 +202,31 @@ export default function Lobby() {
           title="Daily puzzle"
           sub={didDaily ? `Solved · ${streak}-day streak 🔥` : streak > 0 ? `Keep your ${streak}-day streak 🔥` : "Solve one capture a day"}
         />
-        <NavRow href="/play" icon="play" title="Practice vs AI" sub="Pick your level — always free" />
-        <NavRow
-          href="/learn"
-          icon="info"
-          tone={showLearnHint ? "gold" : "neutral"}
-          title="How to play"
-          sub={showLearnHint ? "New here? Learn in 30 seconds" : "Sowing, capturing, winning"}
-        />
-        <HowItWorks />
+        {showLearnHint ? (
+          <NavRow href="/learn" icon="info" tone="gold" title="How to play" sub="New here? Learn in 30 seconds" />
+        ) : (
+          <NavRow href="/play" icon="play" title="Practice vs AI" sub="Pick your level — always free" />
+        )}
       </div>
 
       <div className="spacer" />
+
+      {/* help, demoted to footer links — reference, not destinations.
+          Whichever of learn/practice already has a row above isn't repeated. */}
+      <div className="row" style={{ justifyContent: "center", gap: 14, paddingBottom: 4 }}>
+        {showLearnHint ? (
+          <Link href="/play" className="faint" style={{ fontSize: 12.5 }}>
+            Practice vs AI
+          </Link>
+        ) : (
+          <Link href="/learn" className="faint" style={{ fontSize: 12.5 }}>
+            How to play
+          </Link>
+        )}
+        <button className="faint" style={{ fontSize: 12.5, background: "none", border: "none", cursor: "pointer" }} onClick={() => setShowMoney(true)}>
+          How money works
+        </button>
+      </div>
     </main>
   );
 }

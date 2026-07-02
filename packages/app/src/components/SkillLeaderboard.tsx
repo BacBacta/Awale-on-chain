@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import type { Address } from "viem";
 import { getInjectedProvider, connect } from "../lib/minipay.js";
 import { escrowConfig } from "../lib/escrow.js";
@@ -31,7 +32,14 @@ export function SkillLeaderboard() {
     );
   }
   if (rows.length === 0) {
-    return <div className="card muted">No ranked games yet — play a Quick Match to get a rank.</div>;
+    return (
+      <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
+        <span className="muted">Nobody holds a rank yet — the first win takes the top spot.</span>
+        <Link className="btn block" href="/">
+          Play a Quick Match
+        </Link>
+      </div>
+    );
   }
 
   return (
