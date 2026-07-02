@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { initialState, applyMove, legalMovesMask, type GameState } from "../../../engine/src/awale.js";
+import { initialState, applyMove, legalMovesMask, DRAW, type GameState } from "../../../engine/src/awale.js";
 import { chooseMove, type Difficulty } from "../../../engine/src/ai.js";
 import { Board, moveDurationMs } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
@@ -104,6 +104,16 @@ export function LocalDemo() {
     setPly(0);
   }
 
+  // Stuck games (an endless cyclic position, or just not fun anymore) shouldn't
+  // trap the player — concede or call it even, no penalty since practice has
+  // no stakes.
+  function concede(winner: 0 | 1 | typeof DRAW) {
+    if (state.over) return;
+    setThinking(false);
+    setBusy(false);
+    setState((s) => ({ ...s, over: true, winner }));
+  }
+
   return (
     <main className="stack" style={{ flex: 1, gap: 12, position: "relative", padding: "12px 8px" }}>
       <div className="row" style={{ padding: "0 6px" }}>
@@ -111,6 +121,16 @@ export function LocalDemo() {
           <Icon name="back" size={16} /> Back
         </Link>
         <span className="row" style={{ gap: 8 }}>
+          {!state.over && ply > 0 && (
+            <>
+              <button className="btn ghost" style={{ padding: "6px 10px", fontSize: 12.5 }} onClick={() => concede(DRAW)}>
+                Call it a draw
+              </button>
+              <button className="btn ghost" style={{ padding: "6px 10px", fontSize: 12.5 }} onClick={() => concede(1)}>
+                Resign
+              </button>
+            </>
+          )}
           <span className="chip">move {ply}</span>
           <SoundToggle />
         </span>

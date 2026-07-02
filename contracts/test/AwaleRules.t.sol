@@ -36,6 +36,15 @@ contract AwaleRulesTest is Test {
         s.turn = turn;
     }
 
+    function _board(uint8[12] memory pits, uint8 store0, uint8 store1, uint8 turn, uint8 noCaptureCount)
+        internal
+        pure
+        returns (AwaleRules.GameState memory s)
+    {
+        s = _board(pits, store0, store1, turn);
+        s.noCaptureCount = noCaptureCount;
+    }
+
     function _total(AwaleRules.GameState memory s) internal pure returns (uint256 t) {
         for (uint8 i = 0; i < 12; i++) {
             t += s.pits[i];
@@ -201,6 +210,47 @@ contract AwaleRulesTest is Test {
         AwaleRules.GameState memory r = h.apply_(_board(pits, 24, 22, 0), 5);
         assertTrue(r.over);
         assertEq(r.winner, AwaleRules.DRAW, "24-24 is a draw");
+        assertEq(r.store0, 24);
+        assertEq(r.store1, 24);
+        assertEq(_total(r), 48);
+    }
+
+    function test_noCaptureStreak_resetsOnCapture() public view {
+        uint8[12] memory pits;
+        pits[0] = 4;
+        pits[5] = 2;
+        pits[6] = 1;
+        pits[7] = 1;
+        pits[8] = 4;
+        AwaleRules.GameState memory r = h.apply_(_board(pits, 0, 0, 0, 12), 5);
+        assertEq(r.store0, 4, "captures the 2/2 in houses 6,7");
+        assertEq(r.noCaptureCount, 0, "capture resets the streak");
+    }
+
+    function test_noCaptureStreak_incrementsOnQuietMove() public view {
+        uint8[12] memory pits;
+        for (uint8 i = 0; i < 12; i++) {
+            pits[i] = 4;
+        }
+        AwaleRules.GameState memory r = h.apply_(_board(pits, 0, 0, 0, 5), 2);
+        assertEq(r.noCaptureCount, 6, "a quiet move counts against the streak");
+    }
+
+    function test_endlessCycle_splitsBoardAsDrawAtLimit() public view {
+        // two lone seeds shuffling with no capture available from this position
+        uint8[12] memory pits;
+        pits[2] = 1;
+        pits[9] = 1;
+
+        // one ply short of the limit: still live
+        AwaleRules.GameState memory almost = h.apply_(_board(pits, 23, 23, 0, AwaleRules.NO_CAPTURE_LIMIT - 2), 2);
+        assertFalse(almost.over, "not yet at the limit");
+        assertEq(almost.noCaptureCount, AwaleRules.NO_CAPTURE_LIMIT - 1);
+
+        // crossing the limit: split whatever remains on the board, draw
+        AwaleRules.GameState memory r = h.apply_(_board(pits, 23, 23, 0, AwaleRules.NO_CAPTURE_LIMIT - 1), 2);
+        assertTrue(r.over, "endless cyclic position must terminate");
+        assertEq(r.winner, AwaleRules.DRAW);
         assertEq(r.store0, 24);
         assertEq(r.store1, 24);
         assertEq(_total(r), 48);

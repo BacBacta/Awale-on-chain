@@ -88,7 +88,7 @@ contract GenVectors is Script {
         for (uint8 i = 0; i < 12; i++) {
             pitBytes = bytes.concat(pitBytes, bytes1(s.pits[i]));
         }
-        bytes memory scalars = abi.encodePacked(s.store0, s.store1, s.turn, s.over, s.winner);
+        bytes memory scalars = abi.encodePacked(s.store0, s.store1, s.turn, s.over, s.winner, s.noCaptureCount);
         return keccak256(bytes.concat(acc, pitBytes, scalars));
     }
 

@@ -10,7 +10,7 @@ import { Board } from "./Board.js";
 // animates the result.
 
 function makeState(pits: number[], turn: 0 | 1 = 0, store0 = 0, store1 = 0): GameState {
-  return { pits: pits.slice(), store0, store1, turn, over: false, winner: 0 };
+  return { pits: pits.slice(), store0, store1, turn, over: false, winner: 0, noCaptureCount: 0 };
 }
 
 interface Step {

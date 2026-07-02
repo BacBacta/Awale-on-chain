@@ -3,6 +3,8 @@
 export {
   moveDigest,
   resultDigest,
+  resignDigest,
+  drawOfferDigest,
   recoverMoveSigner,
   type MoveContext,
   type ResultContext,

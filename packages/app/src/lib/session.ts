@@ -13,6 +13,8 @@ import type { Address, Hex } from "viem";
 import {
   moveDigest,
   resultDigest,
+  resignDigest,
+  drawOfferDigest,
   type MoveContext,
   type ResultContext,
 } from "../../../protocol/src/eip712.js";
@@ -44,6 +46,14 @@ export function signResult(
   ctx: ResultContext,
 ): Promise<Hex> {
   return privateKeyToAccount(session.privateKey).sign({ hash: resultDigest(matchId, winner, ctx) });
+}
+
+export function signResign(session: SessionKey, matchId: bigint, ply: bigint, ctx: MoveContext): Promise<Hex> {
+  return privateKeyToAccount(session.privateKey).sign({ hash: resignDigest(matchId, ply, ctx) });
+}
+
+export function signDrawOffer(session: SessionKey, matchId: bigint, ply: bigint, ctx: MoveContext): Promise<Hex> {
+  return privateKeyToAccount(session.privateKey).sign({ hash: drawOfferDigest(matchId, ply, ctx) });
 }
 
 // --- per-match persistence --- //

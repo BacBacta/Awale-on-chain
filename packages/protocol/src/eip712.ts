@@ -22,6 +22,14 @@ const DOMAIN_TYPEHASH = keccak256(
 );
 const MOVE_TYPEHASH = keccak256(toBytes("Move(uint256 matchId,uint256 ply,uint8 house)"));
 const RESULT_TYPEHASH = keccak256(toBytes("Result(uint256 matchId,uint8 winner)"));
+// Off-chain only: authenticates a resign request to the game server (never
+// submitted on-chain). Reuses the verifier domain like Move, distinct
+// typehash so a resign signature can't be confused with a move signature.
+const RESIGN_TYPEHASH = keccak256(toBytes("Resign(uint256 matchId,uint256 ply)"));
+// Off-chain only: authenticates a mutual draw offer/accept. Distinct from
+// Resign so a signature meaning "I concede" can never be replayed to mean
+// "I agree to a draw" (or vice versa).
+const DRAW_OFFER_TYPEHASH = keccak256(toBytes("DrawOffer(uint256 matchId,uint256 ply)"));
 
 const VERIFIER_DOMAIN_NAME = "AwaleReplayVerifier";
 const ESCROW_DOMAIN_NAME = "AwaleMatchEscrow";
@@ -69,6 +77,25 @@ export function resultDigest(matchId: bigint, winner: number, ctx: ResultContext
     ),
   );
   return typedDataHash(domainSeparator(ESCROW_DOMAIN_NAME, ctx.chainId, ctx.escrow), structHash);
+}
+
+/** Digest a session key signs to authorise resigning (server-side auth only). */
+export function resignDigest(matchId: bigint, ply: bigint, ctx: MoveContext): Hex {
+  const structHash = keccak256(
+    encodeAbiParameters([{ type: "bytes32" }, { type: "uint256" }, { type: "uint256" }], [RESIGN_TYPEHASH, matchId, ply]),
+  );
+  return typedDataHash(domainSeparator(VERIFIER_DOMAIN_NAME, ctx.chainId, ctx.verifier), structHash);
+}
+
+/** Digest a session key signs to offer or accept a mutual draw (server-side auth only). */
+export function drawOfferDigest(matchId: bigint, ply: bigint, ctx: MoveContext): Hex {
+  const structHash = keccak256(
+    encodeAbiParameters(
+      [{ type: "bytes32" }, { type: "uint256" }, { type: "uint256" }],
+      [DRAW_OFFER_TYPEHASH, matchId, ply],
+    ),
+  );
+  return typedDataHash(domainSeparator(VERIFIER_DOMAIN_NAME, ctx.chainId, ctx.verifier), structHash);
 }
 
 /** Recover the address that signed a move digest. */

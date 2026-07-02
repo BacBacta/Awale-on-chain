@@ -10,8 +10,8 @@
 // would replay on-chain in a dispute, so what the server accepts is exactly what
 // the contract would accept.
 
-import { initialState, applyMove, legalMovesMask, type GameState } from "../../engine/src/awale.js";
-import { moveDigest, type MoveContext } from "./eip712.js";
+import { initialState, applyMove, legalMovesMask, DRAW, type GameState } from "../../engine/src/awale.js";
+import { moveDigest, resignDigest, drawOfferDigest, type MoveContext } from "./eip712.js";
 import { recoverAddress, type Address, type Hex } from "viem";
 
 export interface MatchConfig {
@@ -48,6 +48,7 @@ export class Match {
   state: GameState;
   private readonly _moves: number[] = [];
   private readonly _sigs: Hex[] = [];
+  private _drawOffer?: 0 | 1;
 
   constructor(cfg: MatchConfig) {
     this.cfg = cfg;
@@ -100,6 +101,50 @@ export class Match {
     this._moves.push(house);
     this._sigs.push(signature);
     return next;
+  }
+
+  /**
+   * A player unilaterally concedes; the opponent wins. Only the resigning
+   * player's own signature is required — a player can only give away their
+   * own win, never anyone else's, so this needs no extra trust beyond a
+   * normal move signature.
+   */
+  async resign(player: 0 | 1, signature: Hex): Promise<GameState> {
+    if (this.state.over) throw new Error("match over");
+    const digest = resignDigest(this.cfg.matchId, BigInt(this.ply), this.ctx());
+    const signer = await recoverAddress({ hash: digest, signature });
+    if (signer.toLowerCase() !== this.cfg.sessions[player].toLowerCase()) {
+      throw new Error("bad resign signature");
+    }
+    this.state = { ...this.state, over: true, winner: (1 - player) as 0 | 1 };
+    return this.state;
+  }
+
+  /** Offer a mutual draw; held until the opponent accepts (or the match ends). */
+  async offerDraw(player: 0 | 1, signature: Hex): Promise<void> {
+    if (this.state.over) throw new Error("match over");
+    const digest = drawOfferDigest(this.cfg.matchId, BigInt(this.ply), this.ctx());
+    const signer = await recoverAddress({ hash: digest, signature });
+    if (signer.toLowerCase() !== this.cfg.sessions[player].toLowerCase()) {
+      throw new Error("bad draw-offer signature");
+    }
+    this._drawOffer = player;
+  }
+
+  /** Accept the opponent's pending draw offer; the match ends in a draw. */
+  async acceptDraw(player: 0 | 1, signature: Hex): Promise<GameState> {
+    if (this.state.over) throw new Error("match over");
+    if (this._drawOffer === undefined || this._drawOffer === player) {
+      throw new Error("no pending draw offer from the opponent");
+    }
+    const digest = drawOfferDigest(this.cfg.matchId, BigInt(this.ply), this.ctx());
+    const signer = await recoverAddress({ hash: digest, signature });
+    if (signer.toLowerCase() !== this.cfg.sessions[player].toLowerCase()) {
+      throw new Error("bad draw-offer signature");
+    }
+    this._drawOffer = undefined;
+    this.state = { ...this.state, over: true, winner: DRAW };
+    return this.state;
   }
 
   /** The dispute transcript, ready to pass to ReplayVerifier.verify. */

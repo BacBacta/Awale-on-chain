@@ -26,7 +26,7 @@ const vectors: Vector[] = JSON.parse(readFileSync(vectorsPath, "utf8"));
 const SEED = keccak256(toBytes("AWALE_VECTORS_V1"));
 
 function mix(acc: Hex, s: GameState): Hex {
-  const buf = new Uint8Array(49);
+  const buf = new Uint8Array(50);
   buf.set(hexToBytes(acc), 0);
   for (let i = 0; i < 12; i++) buf[32 + i] = s.pits[i];
   buf[44] = s.store0;
@@ -34,6 +34,7 @@ function mix(acc: Hex, s: GameState): Hex {
   buf[46] = s.turn;
   buf[47] = s.over ? 1 : 0;
   buf[48] = s.winner;
+  buf[49] = s.noCaptureCount;
   return keccak256(buf);
 }
 

@@ -21,6 +21,10 @@ export const SEEDS = 48;
 /** Winner sentinel for a draw (0 and 1 are the two players). */
 export const DRAW = 2;
 
+/** Consecutive non-capturing plies after which the game is split as a draw —
+ *  the guard against endless cyclic positions (see `resolve`). */
+export const NO_CAPTURE_LIMIT = 40;
+
 export interface GameState {
   /** 0..5 = player 0 (South), 6..11 = player 1 (North). */
   pits: number[];
@@ -31,11 +35,13 @@ export interface GameState {
   over: boolean;
   /** Valid only when `over`: 0, 1, or DRAW. */
   winner: number;
+  /** Plies since the last capture; reset to 0 on any capture. */
+  noCaptureCount: number;
 }
 
 /** The standard opening position: 4 seeds in every house, player 0 to move. */
 export function initialState(): GameState {
-  return { pits: Array(PITS).fill(4), store0: 0, store1: 0, turn: 0, over: false, winner: 0 };
+  return { pits: Array(PITS).fill(4), store0: 0, store1: 0, turn: 0, over: false, winner: 0, noCaptureCount: 0 };
 }
 
 function rowSum(pits: number[], player: number): number {
@@ -141,6 +147,16 @@ function resolve(s: GameState): void {
     if (s.turn === 0) s.store0 += ownSum;
     else s.store1 += ownSum;
     zeroBoard(s);
+    return finish(s);
+  }
+
+  // Endless cyclic position guard: neither side has captured in a long time,
+  // so no legal sequence is going anywhere — split the board and end in a draw
+  // (or a lead-preserving win) rather than let the game run forever.
+  if (s.noCaptureCount >= NO_CAPTURE_LIMIT) {
+    s.store0 += rowSum(s.pits, 0);
+    s.store1 += rowSum(s.pits, 1);
+    zeroBoard(s);
     finish(s);
   }
 }
@@ -173,6 +189,7 @@ export function applyMove(s: GameState, house: number): GameState {
     turn: 1 - s.turn,
     over: false,
     winner: 0,
+    noCaptureCount: captured > 0 ? 0 : s.noCaptureCount + 1,
   };
   if (s.turn === 0) r.store0 += captured;
   else r.store1 += captured;

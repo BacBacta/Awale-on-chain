@@ -6,7 +6,7 @@ import { io, type Socket } from "socket.io-client";
 import { readContract } from "viem/actions";
 import type { Address, Hex } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
-import { loadSession, signMove, signResult, type SessionKey } from "../lib/session.js";
+import { loadSession, signMove, signResult, signResign, signDrawOffer, type SessionKey } from "../lib/session.js";
 import { escrowConfig } from "../lib/escrow.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 import { legalMovesMask, type GameState } from "../../../engine/src/awale.js";
@@ -54,6 +54,8 @@ export function LiveMatch({
   const [settled, setSettled] = useState(false);
   const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
   const [oppAddr, setOppAddr] = useState<Address | null>(opponentAddress ?? null);
+  const [drawOffered, setDrawOffered] = useState(false); // opponent offered a draw, awaiting our reply
+  const [conceding, setConceding] = useState(false);
 
   useEffect(() => {
     setSkin(getEquipped());
@@ -147,6 +149,9 @@ export function LiveMatch({
         setSettled(true);
         setStatus((s) => `${s} · winnings paid out ✅`);
       });
+      sock.on("draw-offer", (msg: { from: 0 | 1 }) => {
+        if (msg.from !== myRole) setDrawOffered(true);
+      });
       sock.on("error", (e: { message: string }) => setStatus(e.message));
     })().catch((e) => setStatus((e as Error).message));
 
@@ -162,6 +167,38 @@ export function LiveMatch({
     socket.current?.emit("move", { matchId: matchId.toString(), player: role, house, signature: sig as Hex });
   }
 
+  // A stuck or hopeless game shouldn't trap the money: either player can
+  // concede outright (opponent wins), or both can agree to split it as a draw.
+  async function resign() {
+    if (!state || state.over || role === null || !session.current || !ctx.current || conceding) return;
+    setConceding(true);
+    try {
+      const sig = await signResign(session.current, matchId, BigInt(ply), ctx.current);
+      socket.current?.emit("resign", { matchId: matchId.toString(), player: role, signature: sig as Hex });
+    } finally {
+      setConceding(false);
+    }
+  }
+
+  async function offerDraw() {
+    if (!state || state.over || role === null || !session.current || !ctx.current || conceding) return;
+    setConceding(true);
+    try {
+      const sig = await signDrawOffer(session.current, matchId, BigInt(ply), ctx.current);
+      socket.current?.emit("draw-offer", { matchId: matchId.toString(), player: role, signature: sig as Hex });
+      setStatus((s) => `${s} · draw offered, waiting on opponent`);
+    } finally {
+      setConceding(false);
+    }
+  }
+
+  async function replyToDraw(accept: boolean) {
+    setDrawOffered(false);
+    if (!accept || !state || state.over || role === null || !session.current || !ctx.current) return;
+    const sig = await signDrawOffer(session.current, matchId, BigInt(ply), ctx.current);
+    socket.current?.emit("draw-accept", { matchId: matchId.toString(), player: role, signature: sig as Hex });
+  }
+
   const myTurn = state !== null && role !== null && !state.over && state.turn === role;
   const playable = myTurn ? legalHouses(state) : [];
 
@@ -175,6 +212,16 @@ export function LiveMatch({
           <Icon name="back" size={16} /> Back
         </Link>
         <span className="row" style={{ gap: 8 }}>
+          {state && !state.over && (
+            <>
+              <button className="btn ghost" style={{ padding: "6px 10px", fontSize: 12.5 }} onClick={offerDraw} disabled={conceding}>
+                Offer draw
+              </button>
+              <button className="btn ghost" style={{ padding: "6px 10px", fontSize: 12.5 }} onClick={resign} disabled={conceding}>
+                Resign
+              </button>
+            </>
+          )}
           {settled && (
             <span className="chip positive">
               <span className="dot" />
@@ -185,6 +232,20 @@ export function LiveMatch({
           <SoundToggle />
         </span>
       </div>
+
+      {drawOffered && (
+        <div className="card row animate-in" style={{ gap: 10, alignItems: "center", justifyContent: "space-between" }}>
+          <span className="muted">Your opponent offers a draw</span>
+          <span className="row" style={{ gap: 6 }}>
+            <button className="btn secondary" style={{ padding: "6px 12px" }} onClick={() => replyToDraw(false)}>
+              Decline
+            </button>
+            <button className="btn" style={{ padding: "6px 12px" }} onClick={() => replyToDraw(true)}>
+              Accept
+            </button>
+          </span>
+        </div>
+      )}
 
       {state ? (
         <div className="stack" style={{ gap: 14, marginTop: 4 }}>

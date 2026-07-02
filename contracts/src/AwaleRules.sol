@@ -34,10 +34,10 @@ pragma solidity ^0.8.24;
 ///          a move that delivers seeds to the opponent. If none can, the mover
 ///          collects all remaining seeds and the game ends.
 ///        - Win at 25 captured seeds (> 24). 24–24 is a draw.
-///
-///      Known limitation (v1): endless cyclic positions (no captures ever again)
-///      are adjudicated off-chain by splitting the board; the on-chain engine
-///      only resolves the explicit termination conditions above.
+///        - Endless cyclic positions: after NO_CAPTURE_LIMIT consecutive plies
+///          with no capture, the board is split (each side's row goes to its
+///          own store) and the game ends — guards against a position that can
+///          never terminate under the rules above.
 library AwaleRules {
     uint8 internal constant PITS = 12;
     uint8 internal constant HOUSES_PER_SIDE = 6;
@@ -46,6 +46,9 @@ library AwaleRules {
     /// @dev winner sentinel for a draw (0 and 1 are the two players)
     uint8 internal constant DRAW = 2;
 
+    /// @dev consecutive non-capturing plies after which the game is split as a draw
+    uint8 internal constant NO_CAPTURE_LIMIT = 40;
+
     struct GameState {
         uint8[12] pits; // 0..5 = player 0 (South), 6..11 = player 1 (North)
         uint8 store0; // seeds captured by player 0
@@ -53,6 +56,7 @@ library AwaleRules {
         uint8 turn; // 0 or 1 — player to move
         bool over; // true once the game has terminated
         uint8 winner; // valid only when `over`: 0, 1, or DRAW
+        uint8 noCaptureCount; // plies since the last capture; resets to 0 on any capture
     }
 
     /// @notice The standard opening position: 4 seeds in every house, player 0 to move.
@@ -60,7 +64,7 @@ library AwaleRules {
         for (uint8 i = 0; i < PITS; i++) {
             s.pits[i] = 4;
         }
-        // store0 = store1 = turn = 0, over = false, winner = 0 by default
+        // store0 = store1 = turn = 0, over = false, winner = 0, noCaptureCount = 0 by default
     }
 
     /// @notice Replay an entire game from the opening position.
@@ -126,6 +130,7 @@ library AwaleRules {
             r.store1 += captured;
         }
         r.turn = 1 - s.turn;
+        r.noCaptureCount = captured > 0 ? 0 : s.noCaptureCount + 1;
 
         _resolve(r);
     }
@@ -231,7 +236,17 @@ library AwaleRules {
                 }
                 _zeroBoard(s);
                 _finish(s);
+                return;
             }
+        }
+
+        // Endless cyclic position guard: neither side has captured in a long
+        // time, so split the board and end rather than let the game run forever.
+        if (s.noCaptureCount >= NO_CAPTURE_LIMIT) {
+            s.store0 += _rowSum(s.pits, 0);
+            s.store1 += _rowSum(s.pits, 1);
+            _zeroBoard(s);
+            _finish(s);
         }
     }
 

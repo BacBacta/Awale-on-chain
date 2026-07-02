@@ -40,6 +40,27 @@ export class GameHub {
     return m.submitMove(player, house, signature);
   }
 
+  /** A player concedes; the opponent wins. */
+  async resign(matchId: bigint, player: 0 | 1, signature: `0x${string}`): Promise<GameState> {
+    const m = this.matches.get(matchId.toString());
+    if (!m) throw new Error("no such match");
+    return m.resign(player, signature);
+  }
+
+  /** Offer a mutual draw to the opponent. */
+  async offerDraw(matchId: bigint, player: 0 | 1, signature: `0x${string}`): Promise<void> {
+    const m = this.matches.get(matchId.toString());
+    if (!m) throw new Error("no such match");
+    return m.offerDraw(player, signature);
+  }
+
+  /** Accept the opponent's pending draw offer. */
+  async acceptDraw(matchId: bigint, player: 0 | 1, signature: `0x${string}`): Promise<GameState> {
+    const m = this.matches.get(matchId.toString());
+    if (!m) throw new Error("no such match");
+    return m.acceptDraw(player, signature);
+  }
+
   /** The transcript for a match (for dispute) and whether it has ended. */
   transcript(matchId: bigint): Transcript | undefined {
     return this.matches.get(matchId.toString())?.transcript();

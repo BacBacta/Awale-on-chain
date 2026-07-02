@@ -10,12 +10,16 @@
 //   "watch"      { matchId }                               subscribe to a match room
 //   "move"       { matchId, player, house, signature }     a session-key-signed move
 //   "result-sig" { matchId, signature }                    a session-key-signed result
+//   "resign"      { matchId, player, signature }           concede; opponent wins
+//   "draw-offer"  { matchId, player, signature }            offer a mutual draw
+//   "draw-accept" { matchId, player, signature }            accept the pending draw offer
 // Server -> client:
-//   "matched"  { opponent }
-//   "state"    { matchId, state, ply }
-//   "gameover" { matchId, winner }
-//   "settled"  { matchId }
-//   "error"    { message }
+//   "matched"    { opponent }
+//   "state"      { matchId, state, ply }
+//   "gameover"   { matchId, winner }
+//   "settled"    { matchId }
+//   "draw-offer" { matchId, from }                          relayed to the opponent
+//   "error"      { message }
 
 import type { Server, Socket } from "socket.io";
 import type { Address, Hex } from "viem";
@@ -23,6 +27,7 @@ import { GameHub } from "./hub.js";
 import type { SettlementCoordinator } from "./settlement-coordinator.js";
 import { assertPersonhood } from "./personhood/gate.js";
 import type { PersonhoodRegistry, PlayMode } from "./personhood/types.js";
+import type { GameState } from "../../engine/src/awale.js";
 
 export interface ServerDeps {
   hub: GameHub;
@@ -98,20 +103,26 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
       if (m) socket.emit("state", { matchId: msg.matchId, state: m.state, ply: m.ply });
     });
 
+    // Broadcast a just-finished match's state/gameover and arm the settlement
+    // fallback. Shared by the natural (move-driven) ending and the early-exit
+    // paths (resign, mutual draw) below — they all end up here.
+    function announceGameOver(matchId: bigint, roomId: string, state: GameState): void {
+      io.to(roomId).emit("state", { matchId: roomId, state, ply: hub.get(matchId)?.ply ?? 0 });
+      io.to(roomId).emit("gameover", { matchId: roomId, winner: state.winner });
+      deps.coordinator?.armProposalFallback(hub, matchId, state.winner);
+      deps.onGameOver?.(matchId, state.winner);
+    }
+
     socket.on(
       "move",
       async (msg: { matchId: string; player: 0 | 1; house: number; signature: Hex }) => {
         try {
           const matchId = BigInt(msg.matchId);
           const state = await hub.move(matchId, msg.player, msg.house, msg.signature);
-          const ply = hub.get(matchId)?.ply ?? 0;
-          io.to(msg.matchId).emit("state", { matchId: msg.matchId, state, ply });
           if (state.over) {
-            io.to(msg.matchId).emit("gameover", { matchId: msg.matchId, winner: state.winner });
-            // Arm the abandonment fallback: if a player never signs the result,
-            // the server proposes it on-chain so the winner can still be paid.
-            deps.coordinator?.armProposalFallback(hub, matchId, state.winner);
-            deps.onGameOver?.(matchId, state.winner);
+            announceGameOver(matchId, msg.matchId, state);
+          } else {
+            io.to(msg.matchId).emit("state", { matchId: msg.matchId, state, ply: hub.get(matchId)?.ply ?? 0 });
           }
         } catch (err) {
           socket.emit("error", { message: (err as Error).message });
@@ -126,6 +137,40 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
         const matchId = BigInt(msg.matchId);
         const outcome = await deps.coordinator.submit(hub, matchId, msg.signature);
         if (outcome === "settled") io.to(msg.matchId).emit("settled", { matchId: msg.matchId });
+      } catch (err) {
+        socket.emit("error", { message: (err as Error).message });
+      }
+    });
+
+    // concede: opponent wins, no negotiation needed — only the resigner's own
+    // signature is required.
+    socket.on("resign", async (msg: { matchId: string; player: 0 | 1; signature: Hex }) => {
+      try {
+        const matchId = BigInt(msg.matchId);
+        const state = await hub.resign(matchId, msg.player, msg.signature);
+        announceGameOver(matchId, msg.matchId, state);
+      } catch (err) {
+        socket.emit("error", { message: (err as Error).message });
+      }
+    });
+
+    // offer a mutual draw — relayed to the opponent, who accepts or ignores it
+    socket.on("draw-offer", async (msg: { matchId: string; player: 0 | 1; signature: Hex }) => {
+      try {
+        const matchId = BigInt(msg.matchId);
+        await hub.offerDraw(matchId, msg.player, msg.signature);
+        socket.to(msg.matchId).emit("draw-offer", { matchId: msg.matchId, from: msg.player });
+      } catch (err) {
+        socket.emit("error", { message: (err as Error).message });
+      }
+    });
+
+    // accept the opponent's pending draw offer — ends the match in a draw
+    socket.on("draw-accept", async (msg: { matchId: string; player: 0 | 1; signature: Hex }) => {
+      try {
+        const matchId = BigInt(msg.matchId);
+        const state = await hub.acceptDraw(matchId, msg.player, msg.signature);
+        announceGameOver(matchId, msg.matchId, state);
       } catch (err) {
         socket.emit("error", { message: (err as Error).message });
       }
