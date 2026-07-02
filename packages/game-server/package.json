@@ -14,13 +14,15 @@
     "@selfxyz/core": "^1.2.0-beta.1",
     "ioredis": "^5.11.1",
     "socket.io": "^4.8.0",
-    "viem": "^2.21.0"
+    "viem": "^2.21.0",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
     "socket.io-client": "^4.8.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "vitest": "^2.1.0"
+    "vitest": "^2.1.0",
+    "@types/web-push": "^3.6.4"
   }
 }

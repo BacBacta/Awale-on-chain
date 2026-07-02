@@ -16,6 +16,7 @@ import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
 import { HowItWorks } from "../src/components/HowItWorks.js";
 import { streakCount, solvedToday } from "../src/lib/daily.js";
+import { getProfile } from "../src/lib/profile.js";
 
 const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
@@ -82,9 +83,12 @@ export default function Lobby() {
     setInMiniPay(isMiniPay(provider));
     if (!provider) return;
     connect(provider, cfg?.chainId)
-      .then(({ wallet, address }) => {
+      .then(async ({ wallet, address }) => {
         setWallet(wallet as unknown as WriteClient);
         setAddress(address);
+        // the server-side profile may hold a longer streak than this device
+        const p = await getProfile(address);
+        if (p && p.streak > 0) setStreak((s) => Math.max(s, p.streak));
       })
       .catch(() => {});
   }, []);

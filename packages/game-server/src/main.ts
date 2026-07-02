@@ -20,8 +20,26 @@ import { AsyncMatchService } from "./async-match.js";
 import { InMemoryMatchStore, type MatchStore } from "./persistence/store.js";
 import { RedisMatchStore } from "./persistence/redis-store.js";
 import IORedis from "ioredis";
-import { InMemorySubscriptionStore, LogNotifier, WebPushNotifier, type Notifier, type WebPushSubscription } from "./notifications/notifier.js";
+import {
+  InMemorySubscriptionStore,
+  RedisSubscriptionStore,
+  LogNotifier,
+  WebPushNotifier,
+  type Notifier,
+  type SubscriptionStore,
+  type WebPushSubscription,
+} from "./notifications/notifier.js";
 import { InMemorySocialStore, RedisSocialStore, type SocialStore } from "./social/store.js";
+import {
+  InMemoryProfileStore,
+  RedisProfileStore,
+  freshProfile,
+  liveStreak,
+  applyDailySolve,
+  migrateLocalStreak,
+  type ProfileStore,
+} from "./profile/store.js";
+import { retentionSweep } from "./retention.js";
 import { TournamentService, type TournamentMeta } from "./tournament/service.js";
 import { matchEscrowAbi, tournamentEscrowAbi } from "../../protocol/src/abis.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
@@ -103,22 +121,15 @@ const selfVerifier = SELF_SCOPE && SELF_ENDPOINT
     })
   : undefined;
 
-// Async / correspondence play + push (scaffold; in-memory store + log notifier
-// by default — swap for Redis/Postgres + web-push, see docs/async-push-milestone.md).
-const subStore = new InMemorySubscriptionStore();
-const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY;
-const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
-const notifier: Notifier =
-  VAPID_PUBLIC && VAPID_PRIVATE
-    ? new WebPushNotifier(subStore, { publicKey: VAPID_PUBLIC, privateKey: VAPID_PRIVATE, subject: process.env.VAPID_SUBJECT ?? "mailto:ops@awale.app" })
-    : new LogNotifier();
-// Durable async store when REDIS_URL is set (survives restarts, shared across
+// Durable stores when REDIS_URL is set (survive restarts/deploys, shared across
 // machines); in-memory otherwise. The client connects in the background and an
 // `error` handler keeps a transient Redis hiccup from crashing the server (an
 // unhandled ioredis 'error' event would otherwise exit the process). `family: 6`
 // is required for Fly's internal IPv6 network.
 let matchStore: MatchStore = new InMemoryMatchStore();
 let socialStore: SocialStore = new InMemorySocialStore();
+let subStore: SubscriptionStore = new InMemorySubscriptionStore();
+let profiles: ProfileStore = new InMemoryProfileStore();
 if (process.env.REDIS_URL) {
   const redis = new IORedis(process.env.REDIS_URL, { family: 6, maxRetriesPerRequest: 5, lazyConnect: true });
   redis.on("error", (e) => console.warn(`[redis] ${e.message}`));
@@ -126,10 +137,20 @@ if (process.env.REDIS_URL) {
   redis.connect().catch((e) => console.warn(`[redis] initial connect failed: ${(e as Error).message}`));
   matchStore = new RedisMatchStore(redis);
   socialStore = new RedisSocialStore(redis);
-  console.log("async store: redis · social store: redis");
+  subStore = new RedisSubscriptionStore(redis);
+  profiles = new RedisProfileStore(redis);
+  console.log("stores: redis (async, social, push subscriptions, profiles)");
 } else {
-  console.log("async store: in-memory (set REDIS_URL for durability + scaling)");
+  console.log("stores: in-memory (set REDIS_URL for durability + scaling)");
 }
+
+const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY;
+const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
+const notifier: Notifier =
+  VAPID_PUBLIC && VAPID_PRIVATE
+    ? new WebPushNotifier(subStore, { publicKey: VAPID_PUBLIC, privateKey: VAPID_PRIVATE, subject: process.env.VAPID_SUBJECT ?? "mailto:ops@awale.app" })
+    : new LogNotifier();
+console.log(`push: ${VAPID_PUBLIC && VAPID_PRIVATE ? "web-push enabled" : "log-only (set VAPID keys)"}`);
 const asyncMatches = new AsyncMatchService(matchStore, notifier);
 
 // Tournaments: in-memory lobby + bracket orchestration (same single-machine
@@ -243,6 +264,32 @@ const httpServer = createServer((req, res) => {
         return asyncMatches.claimTimeout(matchId, claimant, ASYNC_TURN_CLOCK_MS);
       })
       .then((state) => json(200, { state }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  // --- player profile: the durable cross-device identity (streak, stats) ---
+  if (req.method === "GET" && url.pathname === "/profile") {
+    const address = url.searchParams.get("address") as Address | null;
+    if (!address) return json(400, { error: "address required" });
+    (async () => {
+      const p = (await profiles.get(address)) ?? freshProfile(address);
+      await profiles.save({ ...p, lastSeenAt: Date.now() });
+      json(200, { profile: { ...p, streak: liveStreak(p) } });
+    })().catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/profile/daily-solved") {
+    readJson(req)
+      .then(async (b) => {
+        const { address, local } = b as { address: Address; local?: { count: number; lastDone: string } };
+        if (!address) throw new Error("address required");
+        let p = (await profiles.get(address)) ?? freshProfile(address);
+        if (local) p = migrateLocalStreak(p, local); // one-time device-streak adoption
+        p = applyDailySolve({ ...p, lastSeenAt: Date.now() });
+        await profiles.save(p);
+        return { streak: liveStreak(p) };
+      })
+      .then((out) => json(200, out))
       .catch((e) => json(400, { error: (e as Error).message }));
     return;
   }
@@ -575,6 +622,22 @@ watchStartFinalized(
   { escrow: ESCROW, ctx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER }, readMatch },
   hub,
 );
+
+// Retention sweep: streak-expiry and stale-turn nudges, at most one of each
+// per player per UTC day (deduped inside the sweep via the profile record).
+const RETENTION_INTERVAL_MS = Number(process.env.RETENTION_INTERVAL_MS ?? "900000"); // 15 min
+{
+  const rt = setInterval(
+    () =>
+      void retentionSweep({
+        profiles,
+        listMatchesFor: (a) => asyncMatches.listForPlayer(a),
+        notify: (a, n) => notifier.notify(a, n),
+      }).catch((e) => console.warn(`[retention] sweep error: ${(e as Error).message}`)),
+    RETENTION_INTERVAL_MS,
+  );
+  if ("unref" in rt) rt.unref();
+}
 
 httpServer.listen(PORT, () => {
   console.log(`Awalé game server on :${PORT} — chain ${CHAIN_ID}, escrow ${ESCROW}`);

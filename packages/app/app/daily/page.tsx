@@ -1,11 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import type { Address } from "viem";
 import { legalMovesMask, applyMove, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "../../src/components/Board.js";
 import { Icon } from "../../src/components/Icon.js";
 import { dailyPuzzle, captureGain, recordSolved, streakCount, solvedToday, todayKey } from "../../src/lib/daily.js";
+import { getProfile, reportDailySolve } from "../../src/lib/profile.js";
+import { pushSupported, registerPush } from "../../src/lib/push.js";
+import { getInjectedProvider, connect } from "../../src/lib/minipay.js";
+import { escrowConfig } from "../../src/lib/escrow.js";
 import { sfx } from "../../src/lib/sound.js";
 
 function legalHouses(s: GameState): number[] {
@@ -21,6 +26,8 @@ export default function Daily() {
   const [done, setDone] = useState(false);
   const [streak, setStreak] = useState(0);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [remind, setRemind] = useState<"off" | "offered" | "on">("off");
+  const account = useRef<Address | null>(null);
 
   useEffect(() => {
     setStreak(streakCount());
@@ -28,6 +35,19 @@ export default function Daily() {
       setDone(true);
       setFeedback("You've already solved today's puzzle.");
     }
+    // Best-effort wallet identity: with it the streak lives server-side and
+    // survives reinstalls/device changes; without it, localStorage still works.
+    const provider = getInjectedProvider();
+    if (!provider) return;
+    connect(provider, escrowConfig()?.chainId)
+      .then(async ({ address }) => {
+        account.current = address;
+        const p = await getProfile(address);
+        // the server may know a longer (or the only surviving) streak
+        if (p && p.streak > 0) setStreak((s) => Math.max(s, p.streak));
+        if (pushSupported()) setRemind("offered");
+      })
+      .catch(() => {});
   }, []);
 
   function onPlay(h: number) {
@@ -37,13 +57,27 @@ export default function Daily() {
       setBoard(applyMove(puzzle.state, h)); // animate the capture
       setDone(true);
       sfx("win");
-      setStreak(recordSolved());
+      const local = recordSolved();
+      setStreak(local);
       setFeedback(null);
+      // server is the source of truth; the local count rides along once so a
+      // pre-profile streak isn't lost the day this ships
+      if (account.current) {
+        void reportDailySolve(account.current, { count: local, lastDone: todayKey() }).then((s) => {
+          if (s !== null) setStreak(s);
+        });
+      }
     } else {
       const g = puzzle.bestGain > 0 ? captureGain(puzzle.state, h) : 0;
       sfx("lose");
       setFeedback(puzzle.bestGain > 0 ? `That captures ${g}. You can do better — try again.` : "Not the strongest move — try again.");
     }
+  }
+
+  async function enableReminders() {
+    if (!account.current) return;
+    const ok = await registerPush(account.current);
+    setRemind(ok ? "on" : "offered");
   }
 
   const playable = done ? [] : legalHouses(board);
@@ -77,6 +111,16 @@ export default function Daily() {
               {streak} 🔥
             </span>
           </div>
+          {remind === "offered" && (
+            <button className="btn secondary block" onClick={enableReminders}>
+              🔔 Remind me before my streak breaks
+            </button>
+          )}
+          {remind === "on" && (
+            <div className="chip positive" style={{ alignSelf: "center" }}>
+              Reminders on — we&apos;ll nudge you if a day is about to slip
+            </div>
+          )}
           <Link className="btn block" href="/">
             <Icon name="play" size={17} /> Play a game
           </Link>

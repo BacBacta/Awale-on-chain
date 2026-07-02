@@ -16,6 +16,7 @@ const B: Address = "0x000000000000000000000000000000000000000b";
 function spyNotifier() {
   const calls: { address: Address; matchId: string }[] = [];
   const notifier: Notifier = {
+    async notify() {},
     async notifyTurn(address, matchId) {
       calls.push({ address, matchId });
     },
