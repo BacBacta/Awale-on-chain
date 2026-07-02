@@ -17,7 +17,18 @@ primary_region = "cdg"
   # keep one machine max — matchmaking is in-memory per process (see memory note)
   max_machines_running = 1
 
+  # Detect a wedged process (e.g. cold-start OOM/thrashing on the old 256mb
+  # tier left the machine "started" but never listening for hours with nobody
+  # noticing). grace_period is generous because tsx's on-the-fly transpile
+  # cold start can take minutes under memory pressure.
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "10s"
+    grace_period = "5m"
+    method = "GET"
+    path = "/"
+
 [[vm]]
-  memory = "256mb"
+  memory = "512mb"
   cpu_kind = "shared"
   cpus = 1
