@@ -46,6 +46,18 @@ function evaluate(s: GameState, player: number): number {
   return score;
 }
 
+// A draw is only fair if the position roughly warrants it — the bot declines
+// when its own evaluation says it's clearly ahead, so a losing player can't
+// just call the game even to dodge a loss. Small enough that a genuinely
+// balanced or cyclic-stuck position (the reason this exists) still gets through.
+const DRAW_ACCEPT_THRESHOLD = 15;
+
+/** Whether the bot, playing `botPlayer`, would accept a draw offer in state `s`. */
+export function wouldAcceptDraw(s: GameState, botPlayer: number): boolean {
+  if (s.over) return false;
+  return evaluate(s, botPlayer) <= DRAW_ACCEPT_THRESHOLD;
+}
+
 /** Negamax: value for the side to move in `s`. */
 function negamax(s: GameState, depth: number, alpha: number, beta: number): number {
   if (s.over || depth === 0) return evaluate(s, s.turn);

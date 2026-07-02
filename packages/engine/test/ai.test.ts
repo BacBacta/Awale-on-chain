@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { initialState, applyMove, legalMovesMask, type GameState } from "../src/awale.js";
-import { chooseMove } from "../src/ai.js";
+import { chooseMove, wouldAcceptDraw } from "../src/ai.js";
+
+function board(pits: number[], store0 = 0, store1 = 0, turn = 0): GameState {
+  return { pits: pits.slice(), store0, store1, turn, over: false, winner: 0, noCaptureCount: 0 };
+}
 
 function legalHouses(s: GameState): number[] {
   const m = legalMovesMask(s);
@@ -43,5 +47,28 @@ describe("Awalé AI", () => {
     const h = chooseMove(s, "hard", seeded(3));
     expect(legalHouses(s)).toContain(h);
     expect(Date.now() - t0).toBeLessThan(2000);
+  });
+
+  describe("wouldAcceptDraw", () => {
+    it("accepts a draw offer in a roughly even position", () => {
+      const s = board([4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4], 10, 10, 0);
+      expect(wouldAcceptDraw(s, 1)).toBe(true);
+    });
+
+    it("declines when the bot is clearly ahead on material", () => {
+      // bot (player 1) is up by a large margin — it should keep playing for the win
+      const s = board([4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4], 10, 20, 0);
+      expect(wouldAcceptDraw(s, 1)).toBe(false);
+    });
+
+    it("accepts when the bot is behind", () => {
+      const s = board([4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4], 20, 10, 0);
+      expect(wouldAcceptDraw(s, 1)).toBe(true);
+    });
+
+    it("never accepts once the game is already over", () => {
+      const s = { ...board([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 24, 24, 0), over: true, winner: 2 };
+      expect(wouldAcceptDraw(s, 1)).toBe(false);
+    });
   });
 });

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { initialState, applyMove, legalMovesMask, DRAW, type GameState } from "../../../engine/src/awale.js";
-import { chooseMove, type Difficulty } from "../../../engine/src/ai.js";
+import { chooseMove, wouldAcceptDraw, type Difficulty } from "../../../engine/src/ai.js";
 import { Board, moveDurationMs } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
@@ -37,6 +37,7 @@ export function LocalDemo() {
   const [difficulty, setDifficulty] = useState<Difficulty>("medium");
   const [showOverlay, setShowOverlay] = useState(false);
   const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
+  const [drawDeclined, setDrawDeclined] = useState(false);
 
   useEffect(() => setSkin(getEquipped()), []);
 
@@ -104,14 +105,25 @@ export function LocalDemo() {
     setPly(0);
   }
 
-  // Stuck games (an endless cyclic position, or just not fun anymore) shouldn't
-  // trap the player — concede or call it even, no penalty since practice has
-  // no stakes.
+  // A stuck game (an endless cyclic position, or just not fun anymore)
+  // shouldn't trap the player — resigning is always available. A draw isn't:
+  // the bot only agrees if its own evaluation says the position is roughly
+  // even, so a losing player can't just call the game even to dodge a loss.
   function concede(winner: 0 | 1 | typeof DRAW) {
     if (state.over) return;
     setThinking(false);
     setBusy(false);
     setState((s) => ({ ...s, over: true, winner }));
+  }
+
+  function offerDraw() {
+    if (state.over) return;
+    if (wouldAcceptDraw(state, 1)) {
+      concede(DRAW);
+    } else {
+      setDrawDeclined(true);
+      setTimeout(() => setDrawDeclined(false), 2500);
+    }
   }
 
   return (
@@ -123,7 +135,7 @@ export function LocalDemo() {
         <span className="row" style={{ gap: 8 }}>
           {!state.over && ply > 0 && (
             <>
-              <button className="btn ghost" style={{ padding: "6px 10px", fontSize: 12.5 }} onClick={() => concede(DRAW)}>
+              <button className="btn ghost" style={{ padding: "6px 10px", fontSize: 12.5 }} onClick={offerDraw}>
                 Call it a draw
               </button>
               <button className="btn ghost" style={{ padding: "6px 10px", fontSize: 12.5 }} onClick={() => concede(1)}>
@@ -135,6 +147,12 @@ export function LocalDemo() {
           <SoundToggle />
         </span>
       </div>
+
+      {drawDeclined && (
+        <div className="chip animate-in" style={{ alignSelf: "center" }}>
+          The AI declines — it thinks it&apos;s ahead
+        </div>
+      )}
 
       {ply === 0 && !busy && (
         <div className="segmented" style={{ margin: "0 6px" }}>
