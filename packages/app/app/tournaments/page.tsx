@@ -106,11 +106,11 @@ export default function Tournaments() {
               </span>
               <span className="col" style={{ flex: 1, gap: 1 }}>
                 <span style={{ fontWeight: 700, fontSize: 14 }}>
-                  {free ? "Free-roll" : `${fmt(BigInt(t.entryFee), STAKE_DECIMALS)} ${STAKE_SYMBOL}`} ·{" "}
-                  {t.maxPlayers}-player SNG
+                  Tournament #{t.id} · {t.maxPlayers} players
                 </span>
                 <span className="faint">
-                  {seats} seated · win up to {fmt(topPrize(t), STAKE_DECIMALS)} {STAKE_SYMBOL}
+                  {free ? "Free entry" : `${fmt(BigInt(t.entryFee), STAKE_DECIMALS)} ${STAKE_SYMBOL} entry`} · {seats}{" "}
+                  seated · win up to {fmt(topPrize(t), STAKE_DECIMALS)} {STAKE_SYMBOL}
                 </span>
               </span>
               <button

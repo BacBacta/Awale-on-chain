@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { Address } from "viem";
 import { getInjectedProvider, isMiniPay, connect } from "../src/lib/minipay.js";
-import { addCashDeeplink } from "../src/lib/deeplinks.js";
 import { shortAddress } from "../src/lib/identity.js";
 import { friendlyName } from "../src/lib/names.js";
 import { escrowConfig, type WriteClient, type EscrowConfig } from "../src/lib/escrow.js";
@@ -15,9 +14,8 @@ import { Icon, type IconName } from "../src/components/Icon.js";
 import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
 import { HowItWorks } from "../src/components/HowItWorks.js";
-import { DailyQuests } from "../src/components/DailyQuests.js";
 import { streakCount, solvedToday } from "../src/lib/daily.js";
-import { getProfile, type PlayerProfile } from "../src/lib/profile.js";
+import { getProfile } from "../src/lib/profile.js";
 
 const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
@@ -67,7 +65,7 @@ export default function Lobby() {
   const [showLearnHint, setShowLearnHint] = useState(false);
   const [streak, setStreak] = useState(0);
   const [didDaily, setDidDaily] = useState(true);
-  const [profile, setProfile] = useState<PlayerProfile | null>(null);
+  const [showMoney, setShowMoney] = useState(false);
   const cfg: EscrowConfig | null = escrowConfig();
 
   useEffect(() => {
@@ -91,7 +89,6 @@ export default function Lobby() {
         // the server-side profile may hold a longer streak than this device
         const p = await getProfile(address);
         if (p && p.streak > 0) setStreak((s) => Math.max(s, p.streak));
-        setProfile(p);
       })
       .catch(() => {});
   }, []);
@@ -158,21 +155,42 @@ export default function Lobby() {
         </div>
       </div>
 
-      {/* primary action */}
+      {/* THE funnel: one question at a time. "Play now" is the golden path;
+          everything else is an explicit, labelled choice — the money form no
+          longer sits raw on the home screen. */}
       <QuickMatch account={address ?? undefined} />
 
-      {/* today's quests — the daily reason to play a couple of games */}
-      {profile && <DailyQuests quests={profile.quests ?? []} perfectDays={profile.perfectDays ?? 0} />}
+      <div className="stack" style={{ gap: 8 }}>
+        <NavRow href="/matches" icon="versus" title="Play with a friend" sub="Send an invite — they play whenever" />
+        <button className="list-row" style={{ font: "inherit" }} onClick={() => setShowMoney((v) => !v)} aria-expanded={showMoney}>
+          <span className="lead gold">
+            <Icon name="wallet" size={19} />
+          </span>
+          <span className="col" style={{ flex: 1, gap: 1 }}>
+            <span style={{ fontWeight: 700, fontSize: 14.5 }}>Play for money</span>
+            <span className="faint">Equal stakes, winner takes the pot</span>
+          </span>
+          <Icon
+            name="arrowRight"
+            size={16}
+            style={{ color: "var(--faint)", transform: showMoney ? "rotate(90deg)" : "none", transition: "transform 200ms var(--ease-out)" }}
+          />
+        </button>
+      </div>
 
-      {/* stake-a-match (when connected) */}
-      {staking &&
-        (verified ? (
-          <MatchActions wallet={wallet} account={address} cfg={cfg} />
+      {/* stake-a-match — revealed only when asked for */}
+      {showMoney &&
+        (staking ? (
+          verified ? (
+            <MatchActions wallet={wallet} account={address} cfg={cfg} />
+          ) : (
+            <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
+          )
         ) : (
-          <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
+          <div className="card muted animate-in">Open in MiniPay to play for money.</div>
         ))}
 
-      {/* secondary — only what isn't already in the bottom nav */}
+      {/* the school: free, always available */}
       <div className="stack" style={{ gap: 8 }}>
         <NavRow
           href="/daily"
@@ -193,9 +211,6 @@ export default function Lobby() {
       </div>
 
       <div className="spacer" />
-      <a className="btn ghost block" href={addCashDeeplink()} style={{ gap: 8 }}>
-        <Icon name="wallet" size={16} /> Add money
-      </a>
     </main>
   );
 }

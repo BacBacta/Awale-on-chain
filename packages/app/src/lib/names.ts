@@ -25,7 +25,9 @@ function hash(s: string): number {
 export function friendlyName(address?: string | null): string {
   if (!address) return "Player";
   const h = hash(address.toLowerCase());
-  return `${ADJECTIVES[h % ADJECTIVES.length]} ${ANIMALS[(h >> 8) % ANIMALS.length]}`;
+  // unsigned shift: `>>` re-signs the hash and a negative index reads
+  // undefined — half of all addresses rendered as e.g. "Royal undefined"
+  return `${ADJECTIVES[h % ADJECTIVES.length]} ${ANIMALS[(h >>> 8) % ANIMALS.length]}`;
 }
 
 /** Primary display label: a resolved (ODIS) name if present, else the handle. */

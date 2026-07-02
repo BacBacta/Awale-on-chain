@@ -68,35 +68,42 @@ export function PlayerStats() {
 
       const s: Stats = { played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n };
       for (const id of ids) {
-        const m = (await readContract(client, {
-          address: cfg.escrow,
-          abi: matchEscrowAbi,
-          functionName: "getMatch",
-          args: [id],
-        })) as { status: number; stake: bigint; player0: Address; player1: Address };
-        const status = Number(m.status);
-        s.staked += m.stake;
-        if (status === STATUS.Open || status === STATUS.Active || status === STATUS.Proposed) {
-          s.inProgress += 1;
-          continue;
-        }
-        if (status !== STATUS.Resolved) continue; // cancelled/voided: not a played result
-        s.played += 1;
-        const settled = winnerOf.get(id.toString());
-        if (!settled || !address) continue;
-        const role = address.toLowerCase() === m.player0.toLowerCase() ? 0 : 1;
-        if (settled.winner === 2) {
-          s.drawn += 1;
-        } else if (settled.winner === role) {
-          s.won += 1;
-          s.net += settled.prize - m.stake; // profit = prize received minus own stake
-        } else {
-          s.lost += 1;
-          s.net -= m.stake;
+        try {
+          const m = (await readContract(client, {
+            address: cfg.escrow,
+            abi: matchEscrowAbi,
+            functionName: "getMatch",
+            args: [id],
+          })) as { status: number; stake: bigint; player0: Address; player1: Address };
+          const status = Number(m.status);
+          s.staked += m.stake;
+          if (status === STATUS.Open || status === STATUS.Active || status === STATUS.Proposed) {
+            s.inProgress += 1;
+            continue;
+          }
+          if (status !== STATUS.Resolved) continue; // cancelled/voided: not a played result
+          s.played += 1;
+          const settled = winnerOf.get(id.toString());
+          if (!settled || !address) continue;
+          const role = address.toLowerCase() === m.player0.toLowerCase() ? 0 : 1;
+          if (settled.winner === 2) {
+            s.drawn += 1;
+          } else if (settled.winner === role) {
+            s.won += 1;
+            s.net += settled.prize - m.stake; // profit = prize received minus own stake
+          } else {
+            s.lost += 1;
+            s.net -= m.stake;
+          }
+        } catch {
+          /* one unreadable match (stale id, RPC blip) shouldn't hide the rest */
         }
       }
       setStats(s);
-    })();
+    })().catch(() =>
+      // total failure: zeros beat an infinite "Loading…" spinner
+      setStats({ played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n }),
+    );
   }, []);
 
   if (!stats) {

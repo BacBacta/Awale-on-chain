@@ -241,13 +241,22 @@ export default function Matches() {
             Loading…
           </span>
         </div>
+      ) : rows.length === 0 && error ? (
+        // a failed read is not "no matches" — say what happened, offer a retry
+        <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
+          <span className="h2">Couldn&apos;t check your matches</span>
+          <span className="muted">{error}</span>
+          <button className="btn block" style={{ marginTop: 4 }} onClick={() => window.location.reload()}>
+            Try again
+          </button>
+        </div>
       ) : rows.length === 0 ? (
         <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
           <span className="lead" style={{ width: 52, height: 52, borderRadius: 16 }}>
             <Icon name="target" size={26} />
           </span>
           <span className="h2">No matches yet</span>
-          <span className="muted">{error ?? "Create or join a match from the home screen and it will show up here."}</span>
+          <span className="muted">Create or join a match from the home screen and it will show up here.</span>
           <Link className="btn block" href="/" style={{ marginTop: 4 }}>
             Go to lobby
           </Link>

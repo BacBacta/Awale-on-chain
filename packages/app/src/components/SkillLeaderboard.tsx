@@ -31,7 +31,7 @@ export function SkillLeaderboard() {
     );
   }
   if (rows.length === 0) {
-    return <div className="card muted">No rated games yet — play a Quick Match to get a rank.</div>;
+    return <div className="card muted">No ranked games yet — play a Quick Match to get a rank.</div>;
   }
 
   return (

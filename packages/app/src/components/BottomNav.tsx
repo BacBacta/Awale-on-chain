@@ -1,38 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon, type IconName } from "./Icon.js";
 
-// Persistent bottom navigation. Hidden on the immersive game and tutorial
-// screens, which have their own back affordance.
-type Tab = { href: string; label: string; icon: IconName; advanced?: boolean };
+// Persistent bottom navigation — three tabs, one per player question:
+//   Play    → "I want to play"        (all game modes funnel from here)
+//   Compete → "how am I doing?"       (rank, quests, ladder, tournaments, season)
+//   Me      → "my stuff"              (profile, money, style, history)
+// Deep routes that fell out of the nav (/matches, /tournaments, /league,
+// /shop, /stats) still exist; they highlight their owning tab.
+type Tab = { href: string; label: string; icon: IconName; owns: string[] };
 const TABS: Tab[] = [
-  { href: "/", label: "Play", icon: "play" },
-  { href: "/matches", label: "Matches", icon: "target" },
-  { href: "/tournaments", label: "Cups", icon: "medal", advanced: true },
-  { href: "/league", label: "League", icon: "trophy" },
-  { href: "/shop", label: "Style", icon: "palette", advanced: true },
-  { href: "/stats", label: "Stats", icon: "chart" },
+  { href: "/", label: "Play", icon: "play", owns: ["/matches"] },
+  { href: "/compete", label: "Compete", icon: "trophy", owns: ["/tournaments", "/league"] },
+  { href: "/profile", label: "Me", icon: "seed", owns: ["/shop", "/stats"] },
 ];
 
 const HIDDEN = ["/play", "/learn"];
 
 export function BottomNav() {
   const pathname = usePathname() ?? "/";
-  // Progressive disclosure: hide Cups/Style until the player has played once.
-  const [played, setPlayed] = useState(false);
-  useEffect(() => {
-    try {
-      setPlayed(localStorage.getItem("awale_played") === "1");
-    } catch {
-      setPlayed(true);
-    }
-  }, []);
   if (HIDDEN.some((p) => pathname.startsWith(p))) return null;
-  // always show a tab the user is currently on, even if "advanced"
-  const tabs = TABS.filter((t) => !t.advanced || played || pathname.startsWith(t.href));
 
   return (
     <nav
@@ -45,8 +34,11 @@ export function BottomNav() {
         WebkitBackdropFilter: "blur(16px)",
       }}
     >
-      {tabs.map((t) => {
-        const active = t.href === "/" ? pathname === "/" : pathname.startsWith(t.href);
+      {TABS.map((t) => {
+        const active =
+          t.href === "/"
+            ? pathname === "/" || t.owns.some((p) => pathname.startsWith(p))
+            : pathname.startsWith(t.href) || t.owns.some((p) => pathname.startsWith(p));
         return (
           <Link
             key={t.href}

@@ -37,7 +37,7 @@ export function Leaderboard() {
     );
   }
   if (rows.length === 0) {
-    return <div className="card muted">No ranked games yet — win a cash match to claim the top spot.</div>;
+    return <div className="card muted">No settled cash matches yet — win one to claim the top spot.</div>;
   }
 
   return (

@@ -66,7 +66,9 @@ export default function Shop() {
   }, [cos, cfg]);
 
   useEffect(() => {
-    refresh().catch((e) => setError(humanizeError(e)));
+    // background refresh: fail silent — a red banner the user never caused
+    // reads as "the app is broken". Errors only surface for their own actions.
+    refresh().catch(() => {});
   }, [refresh]);
 
   async function run(label: string, fn: () => Promise<`0x${string}`>) {

@@ -14,6 +14,7 @@ import { listOpponents } from "../../src/lib/social.js";
 import { asyncEnabled, createAsync, recordAsyncMatch } from "../../src/lib/asyncClient.js";
 import { createSessionKey, persistSession } from "../../src/lib/session.js";
 import { getProfile, rankFor, type PlayerProfile } from "../../src/lib/profile.js";
+import { addCashDeeplink } from "../../src/lib/deeplinks.js";
 
 function avatarGradient(seed: string): string {
   let h = 0;
@@ -136,6 +137,21 @@ export default function Profile() {
         <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
       </Link>
 
+      {/* money — deposits live here now, not on the play screen */}
+      <span className="section-label">Money</span>
+      <div className="stack" style={{ gap: 8 }}>
+        <a className="list-row" href={addCashDeeplink()}>
+          <span className="lead gold">
+            <Icon name="wallet" size={19} />
+          </span>
+          <span className="col" style={{ flex: 1, gap: 1 }}>
+            <span style={{ fontWeight: 700, fontSize: 14.5 }}>Add money</span>
+            <span className="faint">Top up your MiniPay balance</span>
+          </span>
+          <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
+        </a>
+      </div>
+
       {/* quick links */}
       <span className="section-label">Activity</span>
       <div className="stack" style={{ gap: 8 }}>
@@ -146,6 +162,16 @@ export default function Profile() {
           <span className="col" style={{ flex: 1, gap: 1 }}>
             <span style={{ fontWeight: 700, fontSize: 14.5 }}>Your matches</span>
             <span className="faint">Active & finished games</span>
+          </span>
+          <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
+        </Link>
+        <Link className="list-row" href="/stats">
+          <span className="lead neutral">
+            <Icon name="chart" size={19} />
+          </span>
+          <span className="col" style={{ flex: 1, gap: 1 }}>
+            <span style={{ fontWeight: 700, fontSize: 14.5 }}>Stats</span>
+            <span className="faint">Your record & the global numbers</span>
           </span>
           <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
         </Link>

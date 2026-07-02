@@ -28,7 +28,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   const [openId, setOpenId] = useState<bigint | null>(null);
   const [step, setStep] = useState<Step>("idle");
   const [balance, setBalance] = useState<bigint | null>(null);
-  const [rakeBps, setRakeBps] = useState<number>(0);
+  const [rakeBps, setRakeBps] = useState<number | null>(null); // null until confirmed — never show a made-up fee
   const [minStake, setMinStake] = useState<bigint>(0n);
   const [copied, setCopied] = useState(false);
   const [sel, setSel] = useState(0); // index into TOKENS
@@ -41,27 +41,29 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   const feeCurrency = tok?.feeCurrency;
 
   // Read balances across all stake tokens + the live rake; default to the
-  // user's highest-balance token (preferred stablecoin).
+  // user's highest-balance token (preferred stablecoin). The reads are kept
+  // independent: a failed balance read must never zero out the displayed fee
+  // (a wrong number on a money screen is worse than a placeholder).
   useEffect(() => {
     if (TOKENS.length === 0) return;
     const client = publicClient(cfg.rpcUrl, cfg.chainId);
-    Promise.all([
-      Promise.all(
-        TOKENS.map((t) => readContract(client, { address: t.address, abi: erc20Abi, functionName: "balanceOf", args: [account] })),
-      ),
-      readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "rakeBps" }),
-      readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "minStake" }).catch(() => 0n),
-    ])
-      .then(([bals, rake, floor]) => {
+    readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "rakeBps" })
+      .then((rake) => setRakeBps(Number(rake)))
+      .catch(() => setRakeBps(null));
+    readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "minStake" })
+      .then((floor) => setMinStake(floor as bigint))
+      .catch(() => {});
+    Promise.all(
+      TOKENS.map((t) => readContract(client, { address: t.address, abi: erc20Abi, functionName: "balanceOf", args: [account] })),
+    )
+      .then((bals) => {
         const balances = bals as bigint[];
         const pref = preferredIndex(TOKENS, balances);
         setSel(pref);
         setBalance(balances[pref]);
-        setRakeBps(Number(rake));
-        setMinStake(floor as bigint);
       })
       .catch(() => {
-        /* preview is best-effort */
+        /* balance preview is best-effort */
       });
   }, [account, cfg]);
 
@@ -207,7 +209,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       return 0n;
     }
   })();
-  const { pot, rake, prize } = computePayout(stakeRaw, rakeBps);
+  const { pot, rake, prize } = computePayout(stakeRaw, rakeBps ?? 0);
 
   // --- waiting room after a successful create/join ---
   if (step === "done" && openId !== null) {
@@ -295,7 +297,8 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
           ))}
         </div>
 
-        {/* payout preview — mirrors MatchEscrow._payout */}
+        {/* payout preview — mirrors MatchEscrow._payout. Until the live rake
+            is confirmed on-chain, show a placeholder rather than a wrong 0%. */}
         <div className="card flat row" style={{ padding: "10px 12px" }}>
           <span className="muted">
             Pot <b style={{ color: "var(--text)" }}>{fmt(pot, dec)}</b>
@@ -303,12 +306,10 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
           <span className="muted">
             You win{" "}
             <b style={{ color: "var(--accent)" }}>
-              {fmt(prize, dec)} {sym}
+              {rakeBps === null ? "…" : `${fmt(prize, dec)} ${sym}`}
             </b>
           </span>
-          <span className="faint">
-            fee {fmt(rake, dec)} ({rakePct(rakeBps)})
-          </span>
+          <span className="faint">{rakeBps === null ? "fee …" : `fee ${fmt(rake, dec)} (${rakePct(rakeBps)})`}</span>
         </div>
 
         <button className="btn block" onClick={onCreate} disabled={busy || !token}>

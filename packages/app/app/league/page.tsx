@@ -215,8 +215,8 @@ export default function League() {
           )}
         </div>
         <span className="muted">
-          Deposit {SYMBOL}, climb the ranked leaderboard, and share the season’s yield. Your principal is always returned in
-          full — you can only win.
+          Deposit {SYMBOL} for the season, climb the ranked ladder, and share the season’s prize pool. Your deposit is
+          always returned in full — you can only win.
         </span>
         {season && (
           <div className="card flat row" style={{ padding: "10px 12px" }}>
@@ -261,6 +261,19 @@ export default function League() {
               : "Prizes go to the top of the final standings. Your principal always returns in full."}
           </span>
         </div>
+      ) : !depositsOpen ? (
+        // A disabled form is a dead end — say what's happening and what to do instead.
+        <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
+          <span className="h2">Deposits are closed for this season</span>
+          <span className="muted">
+            {mine > 0n
+              ? "Your deposit is riding the season — play ranked games to climb the ladder before it ends."
+              : "The season is in play. Win ranked games now; deposits reopen next season."}
+          </span>
+          <Link className="btn block" href="/" style={{ marginTop: 4 }}>
+            <Icon name="play" size={17} /> Play a ranked game
+          </Link>
+        </div>
       ) : (
         <div className="card stack" style={{ gap: 12 }}>
           <div className="row">
@@ -281,8 +294,8 @@ export default function League() {
               {SYMBOL}
             </span>
           </div>
-          <button className="btn block" onClick={deposit} disabled={busy || !depositsOpen}>
-            {depositsOpen ? `Deposit ${amount || "0"} ${SYMBOL}` : "Deposits closed"}
+          <button className="btn block" onClick={deposit} disabled={busy}>
+            Deposit {amount || "0"} {SYMBOL}
           </button>
           <button className="btn secondary block" onClick={faucet} disabled={busy}>
             Get test {SYMBOL} (faucet)
