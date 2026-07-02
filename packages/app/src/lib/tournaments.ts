@@ -109,7 +109,12 @@ export interface Assignment {
   role: "host" | "guest";
   opponent: Address;
   asyncMatchId: string | null;
+  pendingSince: number;
 }
+
+// Mirrors the server's TOURNAMENT_WALKOVER_MS default — used only to decide
+// when to *show* the claim button; the server is the actual authority.
+export const TOURNAMENT_WALKOVER_MS = 15 * 60_000;
 
 /** The player's current bracket obligation, or null (waiting / eliminated / done). */
 export async function myGame(id: string, address: Address): Promise<Assignment | null> {
@@ -146,4 +151,17 @@ export async function reportGameResult(
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ id, round, index, winner }),
   }).catch(() => {});
+}
+
+/** Guest claims a walkover: the host never created the bracket game in time. */
+export async function claimWalkover(id: string, round: number, index: number, claimant: Address): Promise<void> {
+  const res = await fetch(`${SERVER_URL}/tournaments/claim-walkover`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id, round, index, claimant }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error ?? "walkover claim failed");
+  }
 }

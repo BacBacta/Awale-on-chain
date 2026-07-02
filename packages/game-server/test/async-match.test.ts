@@ -71,4 +71,44 @@ describe("AsyncMatchService", () => {
     expect(forB[0].yourTurn).toBe(true); // B is up
     expect(forB[0].opponent.toLowerCase()).toBe(A.toLowerCase());
   });
+
+  describe("claimTimeout", () => {
+    it("awards a walkover once the opponent's turn has been stale past the grace period", async () => {
+      const { svc, id } = await newService(); // startTurn: 0 — it's A's turn
+      const state = await svc.claimTimeout(id, 1, 0); // B claims, 0ms grace
+      expect(state.over).toBe(true);
+      expect(state.winner).toBe(1);
+    });
+
+    it("rejects claiming when it's your own turn", async () => {
+      const { svc, id } = await newService();
+      await expect(svc.claimTimeout(id, 0, 0)).rejects.toThrow("it's your turn");
+    });
+
+    it("rejects claiming before the grace period elapses", async () => {
+      const { svc, id } = await newService();
+      await expect(svc.claimTimeout(id, 1, 60_000)).rejects.toThrow("still has time");
+    });
+
+    it("rejects a second claim once the match is already over", async () => {
+      const { svc, id } = await newService();
+      await svc.claimTimeout(id, 1, 0);
+      await expect(svc.claimTimeout(id, 1, 0)).rejects.toThrow("match over");
+    });
+
+    it("rejects a staked (cash) async match — that settles on-chain, not here", async () => {
+      const { notifier } = spyNotifier();
+      const svc = new AsyncMatchService(new InMemoryMatchStore(), notifier);
+      const id = await svc.create({
+        matchId: 43n,
+        chainId: CHAIN_ID,
+        verifier: VERIFIER,
+        sessions: [s0.address, s1.address],
+        players: [A, B],
+        startTurn: 0,
+        mode: "cash",
+      });
+      await expect(svc.claimTimeout(id, 1, 0)).rejects.toThrow("settle on-chain");
+    });
+  });
 });

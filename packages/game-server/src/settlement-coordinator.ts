@@ -6,12 +6,12 @@
 // registered session keys, and once both are in, calls settleSigned through the
 // funded server signer.
 //
-// Abandonment / refusal fallback: a finished game whose loser never signs would
-// otherwise strand the winner's stake. On game-over we arm a timer; if both
-// signatures haven't arrived in time, the server calls proposeResult with the
-// real transcript's commitment. After the challenge window a keeper finalizes,
-// paying the rightful winner; a challenge that replays the same transcript only
-// confirms that winner (a mismatching/partial transcript is rejected).
+// If only one side signs (the other abandoned, or simply hasn't caught up
+// yet), settlement doesn't happen here: server.ts's "claim-eligible" watchdog
+// tells the room to fall back to a *player*-initiated MatchEscrow.proposeResult
+// instead. This coordinator only ever calls settleSigned — the fast path that
+// requires both session keys' consent — and never submits anything on a
+// player's behalf without their signature.
 
 import { recoverAddress, type Address, type Hex } from "viem";
 import { resultDigest } from "./eip712.js";
@@ -22,18 +22,12 @@ export interface SettlementCoordinatorOptions {
   escrow: Address;
   chainId: bigint;
   settlement?: SettlementClient; // omitted in read-only mode
-  /** How long to wait for both signatures before proposing on-chain. */
-  proposeAfterMs?: number;
 }
 
 export type SubmitOutcome = "ignored" | "collected" | "settled";
 
-const DEFAULT_PROPOSE_AFTER_MS = 45_000;
-
 export class SettlementCoordinator {
   private readonly pending = new Map<string, { winner: number; sig0?: Hex; sig1?: Hex }>();
-  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
-  private readonly proposed = new Set<string>();
 
   constructor(private readonly opts: SettlementCoordinatorOptions) {}
 
@@ -57,7 +51,6 @@ export class SettlementCoordinator {
     else entry.sig1 = signature;
 
     if (entry.sig0 && entry.sig1) {
-      this.cancelFallback(key);
       if (this.opts.settlement) {
         await this.opts.settlement.settleSigned(matchId, winner, entry.sig0, entry.sig1);
       }
@@ -66,46 +59,5 @@ export class SettlementCoordinator {
       return "settled";
     }
     return "collected";
-  }
-
-  /**
-   * Arm the abandonment fallback for a freshly-finished match. If both result
-   * signatures aren't collected within `proposeAfterMs`, propose the terminal
-   * result on-chain (committing to the real transcript) so the winner can be paid.
-   */
-  armProposalFallback(hub: GameHub, matchId: bigint, winner: number): void {
-    if (!this.opts.settlement) return; // read-only server can't propose
-    const key = matchId.toString();
-    if (this.timers.has(key) || this.proposed.has(key)) return;
-
-    const timer = setTimeout(() => {
-      this.timers.delete(key);
-      void this.propose(hub, matchId, winner);
-    }, this.opts.proposeAfterMs ?? DEFAULT_PROPOSE_AFTER_MS);
-    if (typeof timer === "object" && "unref" in timer) timer.unref?.();
-    this.timers.set(key, timer);
-  }
-
-  private cancelFallback(key: string): void {
-    const t = this.timers.get(key);
-    if (t) {
-      clearTimeout(t);
-      this.timers.delete(key);
-    }
-  }
-
-  private async propose(hub: GameHub, matchId: bigint, winner: number): Promise<void> {
-    const key = matchId.toString();
-    if (this.proposed.has(key) || !this.opts.settlement) return;
-    const match = hub.get(matchId);
-    if (!match || !match.over) return; // already settled & closed, or not actually over
-    this.proposed.add(key);
-    try {
-      await this.opts.settlement.proposeResult(matchId, winner, match.transcript());
-      hub.close(matchId);
-    } catch (err) {
-      this.proposed.delete(key); // allow a retry on the next trigger
-      throw err;
-    }
   }
 }

@@ -61,6 +61,13 @@ export class GameHub {
     return m.acceptDraw(player, signature);
   }
 
+  /** Server-declared forfeit (move-clock expired, casual play only) — unsigned. */
+  forfeit(matchId: bigint, disconnectedPlayer: 0 | 1): GameState {
+    const m = this.matches.get(matchId.toString());
+    if (!m) throw new Error("no such match");
+    return m.forfeit(disconnectedPlayer);
+  }
+
   /** The transcript for a match (for dispute) and whether it has ended. */
   transcript(matchId: bigint): Transcript | undefined {
     return this.matches.get(matchId.toString())?.transcript();

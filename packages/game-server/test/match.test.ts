@@ -158,4 +158,46 @@ describe("Match orchestration", () => {
       await expect(m.offerDraw(0, resignSig)).rejects.toThrow("bad draw-offer signature");
     });
   });
+
+  describe("forfeit", () => {
+    it("ends the match with the other player as winner, no signature needed", () => {
+      const m = new Match(config(0));
+      const state = m.forfeit(0); // player 0 disconnected and never came back
+      expect(state.over).toBe(true);
+      expect(state.winner).toBe(1);
+    });
+
+    it("rejects forfeiting once the match is over", async () => {
+      const m = new Match(config(0));
+      await m.resign(0, await signResign(0, m.cfg.matchId, m.ply));
+      expect(() => m.forfeit(1)).toThrow("match over");
+    });
+
+    it("survives a snapshot/rehydrate round-trip (regression: replaying zero moves must not un-forfeit it)", () => {
+      const m = new Match(config(0));
+      m.forfeit(0);
+      const reloaded = Match.rehydrate(m.snapshot());
+      expect(reloaded.over).toBe(true);
+      expect(reloaded.result().winner).toBe(1);
+    });
+  });
+
+  describe("resign/draw survive a snapshot/rehydrate round-trip", () => {
+    it("resign", async () => {
+      const m = new Match(config(0));
+      await m.resign(0, await signResign(0, m.cfg.matchId, m.ply));
+      const reloaded = Match.rehydrate(m.snapshot());
+      expect(reloaded.over).toBe(true);
+      expect(reloaded.result().winner).toBe(1);
+    });
+
+    it("mutual draw", async () => {
+      const m = new Match(config(0));
+      await m.offerDraw(0, await signDrawOffer(0, m.cfg.matchId, m.ply));
+      await m.acceptDraw(1, await signDrawOffer(1, m.cfg.matchId, m.ply));
+      const reloaded = Match.rehydrate(m.snapshot());
+      expect(reloaded.over).toBe(true);
+      expect(reloaded.result().winner).toBe(DRAW);
+    });
+  });
 });

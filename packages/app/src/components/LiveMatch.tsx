@@ -7,7 +7,8 @@ import { readContract } from "viem/actions";
 import type { Address, Hex } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
 import { loadSession, signMove, signResult, signResign, signDrawOffer, type SessionKey } from "../lib/session.js";
-import { escrowConfig } from "../lib/escrow.js";
+import { escrowConfig, proposeResult, challengeResult, type WriteClient } from "../lib/escrow.js";
+import { stakeTokens } from "../lib/stakeTokens.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 import { legalMovesMask, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "./Board.js";
@@ -34,6 +35,15 @@ function legalHouses(s: GameState): number[] {
   return out;
 }
 
+interface WireTranscript {
+  matchId: string;
+  session0: Address;
+  session1: Address;
+  startTurn: 0 | 1;
+  moves: number[];
+  sigs: Hex[];
+}
+
 /** A real match played over the game server: live board, session-key-signed moves.
  *  `casualRole` (from Quick Match) plays an off-chain casual match — role is known
  *  from matchmaking, so it skips the on-chain match read and the settlement step. */
@@ -56,6 +66,11 @@ export function LiveMatch({
   const [oppAddr, setOppAddr] = useState<Address | null>(opponentAddress ?? null);
   const [drawOffered, setDrawOffered] = useState(false); // opponent offered a draw, awaiting our reply
   const [conceding, setConceding] = useState(false);
+  // A staked match's move-clock ran out (or a natural ending never settled)
+  // and *someone* is eligible to claim on-chain. `theirClaim` is set only
+  // when the opponent is the one claiming, so we can offer to dispute it.
+  const [theirClaim, setTheirClaim] = useState<{ winner: 0 | 1 | 2; transcript: WireTranscript } | null>(null);
+  const [claimStatus, setClaimStatus] = useState<string | null>(null);
 
   useEffect(() => {
     setSkin(getEquipped());
@@ -74,6 +89,10 @@ export function LiveMatch({
   const socket = useRef<Socket | null>(null);
   const ctx = useRef<{ chainId: bigint; verifier: Address } | null>(null);
   const stakeInfo = useRef<{ stake: bigint; rakeBps: number } | null>(null);
+  const wallet = useRef<WriteClient | null>(null);
+  const myAddress = useRef<Address | null>(null);
+  const feeCurrency = useRef<Address | undefined>(undefined);
+  const roleRef = useRef<0 | 1 | null>(null);
 
   useEffect(() => {
     const cfg = escrowConfig();
@@ -85,6 +104,7 @@ export function LiveMatch({
 
     (async () => {
       let myRole: 0 | 1;
+      let needsClaimCatchUp = false; // a result was proposed while we were away
       if (casualRole != null) {
         myRole = casualRole; // role known from matchmaking; no on-chain match exists
       } else {
@@ -93,15 +113,18 @@ export function LiveMatch({
           setStatus("Open in MiniPay to play");
           return;
         }
-        const { address } = await connect(provider, cfg.chainId);
+        const { wallet: w, address } = await connect(provider, cfg.chainId);
+        wallet.current = w as unknown as WriteClient;
+        myAddress.current = address;
         const client = publicClient(cfg.rpcUrl, cfg.chainId);
         const m = (await readContract(client, {
           address: cfg.escrow,
           abi: matchEscrowAbi,
           functionName: "getMatch",
           args: [matchId],
-        })) as { player0: Address; player1: Address; stake: bigint; rakeBps: number };
+        })) as { token: Address; player0: Address; player1: Address; stake: bigint; rakeBps: number; status: number; proposedWinner: number };
         stakeInfo.current = { stake: m.stake, rakeBps: Number(m.rakeBps) };
+        feeCurrency.current = stakeTokens().find((t) => t.address.toLowerCase() === m.token.toLowerCase())?.feeCurrency;
         const r =
           address.toLowerCase() === m.player0.toLowerCase()
             ? 0
@@ -114,6 +137,11 @@ export function LiveMatch({
         }
         myRole = r;
         setOppAddr(r === 0 ? m.player1 : m.player0);
+
+        // A claim may already exist from while we were away (missed the live
+        // "claim-eligible" broadcast entirely). status 3 = Proposed. Only
+        // chase it down if it's *not* our own claim.
+        needsClaimCatchUp = m.status === 3 && m.proposedWinner !== r;
       }
       const sk = loadSession(matchId);
       if (!sk) {
@@ -121,6 +149,7 @@ export function LiveMatch({
         return;
       }
       setRole(myRole);
+      roleRef.current = myRole;
       session.current = sk;
       ctx.current = { chainId: BigInt(cfg.chainId), verifier: cfg.verifier };
 
@@ -128,6 +157,7 @@ export function LiveMatch({
       socket.current = sock;
       sock.on("connect", () => {
         sock!.emit("watch", { matchId: matchId.toString() });
+        if (needsClaimCatchUp) sock!.emit("get-transcript", { matchId: matchId.toString() });
         setStatus("Connected");
       });
       sock.on("state", (msg: { state: GameState; ply: number }) => {
@@ -151,6 +181,21 @@ export function LiveMatch({
       });
       sock.on("draw-offer", (msg: { from: 0 | 1 }) => {
         if (msg.from !== myRole) setDrawOffered(true);
+      });
+      // A staked match's move-clock ran out, or a natural ending never
+      // settled via the two-signature fast path. Whoever the payload names as
+      // `winner` should self-claim; if it's the *other* player, offer to
+      // dispute instead of silently losing to a claim that may be wrong.
+      sock.on("claim-eligible", (msg: { winner: 0 | 1 | 2; transcript: WireTranscript }) => {
+        if (casualRole != null) return; // no on-chain settlement for casual play
+        if (msg.winner === roleRef.current) void selfClaim(msg.winner, msg.transcript);
+        else setTheirClaim({ winner: msg.winner, transcript: msg.transcript });
+      });
+      // Reply to our own catch-up "get-transcript" request (a claim existed
+      // from before we reconnected) — same handling as a live claim-eligible.
+      sock.on("transcript", (msg: { transcript: WireTranscript }) => {
+        if (casualRole != null || roleRef.current === null) return;
+        setTheirClaim({ winner: roleRef.current === 0 ? 1 : 0, transcript: msg.transcript });
       });
       sock.on("error", (e: { message: string }) => setStatus(e.message));
     })().catch((e) => setStatus((e as Error).message));
@@ -189,6 +234,57 @@ export function LiveMatch({
       setStatus((s) => `${s} · draw offered, waiting on opponent`);
     } finally {
       setConceding(false);
+    }
+  }
+
+  // The opponent's move-clock ran out (or a finished game never got both
+  // signatures) and *we* are the declared winner — settle it on-chain
+  // ourselves rather than waiting on a server that was never allowed to do
+  // this on our behalf. No user action needed; it just happens.
+  async function selfClaim(winner: 0 | 1 | 2, transcript: WireTranscript) {
+    const cfg = escrowConfig();
+    if (!cfg || !wallet.current || !myAddress.current) return;
+    setClaimStatus("Opponent ran out of time — settling on-chain…");
+    try {
+      await proposeResult(wallet.current, {
+        account: myAddress.current,
+        escrow: cfg.escrow,
+        matchId,
+        winner,
+        startTurn: transcript.startTurn,
+        moves: transcript.moves,
+        feeCurrency: feeCurrency.current,
+      });
+      setClaimStatus("Claim submitted — payout in ~10 min unless disputed.");
+    } catch (e) {
+      setClaimStatus(`Claim failed: ${(e as Error).message}`);
+    }
+  }
+
+  // The opponent claimed a result we don't believe is right (we're still
+  // here, or we came back to find it). Replay the real signed transcript
+  // on-chain: pays the true winner if the game had actually finished, voids
+  // (refunds both) otherwise — the claim can never just take the pot.
+  async function dispute() {
+    const cfg = escrowConfig();
+    if (!cfg || !wallet.current || !myAddress.current || !theirClaim) return;
+    setClaimStatus("Disputing with the real transcript…");
+    try {
+      await challengeResult(wallet.current, {
+        account: myAddress.current,
+        escrow: cfg.escrow,
+        matchId,
+        session0: theirClaim.transcript.session0,
+        session1: theirClaim.transcript.session1,
+        startTurn: theirClaim.transcript.startTurn,
+        moves: theirClaim.transcript.moves,
+        sigs: theirClaim.transcript.sigs,
+        feeCurrency: feeCurrency.current,
+      });
+      setClaimStatus("Dispute submitted.");
+      setTheirClaim(null);
+    } catch (e) {
+      setClaimStatus(`Dispute failed: ${(e as Error).message}`);
     }
   }
 
@@ -243,6 +339,27 @@ export function LiveMatch({
             <button className="btn" style={{ padding: "6px 12px" }} onClick={() => replyToDraw(true)}>
               Accept
             </button>
+          </span>
+        </div>
+      )}
+
+      {theirClaim && (
+        <div className="card stack animate-in" style={{ gap: 8 }}>
+          <span className="muted">
+            Your opponent claimed {theirClaim.winner === 2 ? "a draw" : theirClaim.winner === role ? "you as the winner" : "victory"} on-chain.
+            If that's not right, dispute it with the real game — it can't take the pot on a false claim.
+          </span>
+          <button className="btn block" onClick={dispute}>
+            Dispute
+          </button>
+        </div>
+      )}
+
+      {claimStatus && (
+        <div className="row" style={{ justifyContent: "center" }}>
+          <span className="chip">
+            <span className="dot pulse" />
+            {claimStatus}
           </span>
         </div>
       )}

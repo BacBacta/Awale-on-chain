@@ -41,6 +41,7 @@ export interface Assignment {
   role: "host" | "guest"; // host creates the async game, guest joins it
   opponent: Address;
   asyncMatchId: string | null; // set once the host has created the game
+  pendingSince: number; // epoch ms — basis for a guest's walkover claim
 }
 
 interface Entry {
@@ -49,6 +50,7 @@ interface Entry {
   phase: Phase;
   bracket: Bracket | null;
   games: Map<string, string>; // "round:index" → asyncMatchId (host-created)
+  pendingSince: Map<string, number>; // "round:index" → when both seats first filled
 }
 
 export class TournamentService {
@@ -58,7 +60,7 @@ export class TournamentService {
   /** Register a tournament the operator just created on-chain. */
   register(meta: TournamentMeta): void {
     if (this.byId.has(meta.id)) return;
-    this.byId.set(meta.id, { meta, entrants: [], phase: "lobby", bracket: null, games: new Map() });
+    this.byId.set(meta.id, { meta, entrants: [], phase: "lobby", bracket: null, games: new Map(), pendingSince: new Map() });
   }
 
   /** Mirror an on-chain join. Starts the bracket once the field is full. */
@@ -79,6 +81,17 @@ export class TournamentService {
     if (e.entrants.length < 2) throw new Error("tournament: under-filled");
     e.bracket = createBracket(e.entrants);
     e.phase = "running";
+    this.stampNewPendings(e);
+  }
+
+  /** Timestamp any pairing that just became playable (both seats filled),
+   *  so a later walkover claim can measure how long it's been waiting. */
+  private stampNewPendings(e: Entry): void {
+    if (!e.bracket) return;
+    for (const m of pendingMatches(e.bracket)) {
+      const key = `${m.round}:${m.index}`;
+      if (!e.pendingSince.has(key)) e.pendingSince.set(key, Date.now());
+    }
   }
 
   /** The games that should be live right now (both seats filled, no winner). */
@@ -92,12 +105,36 @@ export class TournamentService {
     const e = this.must(id);
     if (!e.bracket || e.phase !== "running") throw new Error("tournament: not running");
     reportResult(e.bracket, round, index, winner);
+    this.stampNewPendings(e); // advancing this winner may have just paired the next round
     if (isComplete(e.bracket)) {
       e.phase = "settling";
       const winners = finalStandings(e.bracket);
       if (this.finalizeHook) await this.finalizeHook(id, winners);
       e.phase = "done";
     }
+  }
+
+  /**
+   * Walkover: the host (lower address, per {@link assignment}) never created
+   * the async game for this pairing within `graceMs` of it becoming playable.
+   * Only the guest can claim it — the host has nothing to claim against
+   * themselves. Games that *did* start just stall on the async match's own
+   * per-move clock (AsyncMatchService.claimTimeout), not this.
+   */
+  async claimWalkover(id: string, round: number, index: number, claimant: Address, graceMs: number): Promise<void> {
+    const e = this.must(id);
+    if (!e.bracket) throw new Error("tournament: not running");
+    const key = `${round}:${index}`;
+    const m = pendingMatches(e.bracket).find((p) => p.round === round && p.index === index);
+    if (!m) throw new Error("tournament: no such pending match");
+    const host = BigInt(m.a) < BigInt(m.b) ? m.a : m.b;
+    const c = claimant.toLowerCase();
+    if (c === host.toLowerCase()) throw new Error("tournament: the host can't claim a walkover against themselves");
+    if (c !== m.a.toLowerCase() && c !== m.b.toLowerCase()) throw new Error("tournament: not a player in this match");
+    if (e.games.has(key)) throw new Error("tournament: the game was created — claim inactivity there instead");
+    const since = e.pendingSince.get(key) ?? Date.now();
+    if (Date.now() - since < graceMs) throw new Error("tournament: the host still has time to create the game");
+    await this.reportResult(id, round, index, claimant);
   }
 
   /** A player's current game obligation, or null if they have none right now
@@ -112,12 +149,14 @@ export class TournamentService {
       if (m.a.toLowerCase() !== p && m.b.toLowerCase() !== p) continue;
       const host = BigInt(m.a) < BigInt(m.b) ? m.a : m.b;
       const opponent = (m.a.toLowerCase() === p ? m.b : m.a) as Address;
+      const key = `${m.round}:${m.index}`;
       return {
         round: m.round,
         index: m.index,
         role: host.toLowerCase() === p ? "host" : "guest",
         opponent,
-        asyncMatchId: e.games.get(`${m.round}:${m.index}`) ?? null,
+        asyncMatchId: e.games.get(key) ?? null,
+        pendingSince: e.pendingSince.get(key) ?? Date.now(),
       };
     }
     return null;

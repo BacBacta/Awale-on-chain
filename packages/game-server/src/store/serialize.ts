@@ -13,6 +13,7 @@ export function snapshotToJson(s: MatchSnapshot): string {
     startTurn: s.startTurn,
     moves: s.moves,
     sigs: s.sigs,
+    terminal: s.terminal,
   });
 }
 
@@ -27,5 +28,6 @@ export function snapshotFromJson(json: string): MatchSnapshot {
     startTurn: o.startTurn,
     moves: o.moves,
     sigs: o.sigs,
+    terminal: o.terminal,
   };
 }

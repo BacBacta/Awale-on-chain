@@ -37,6 +37,12 @@ const PORT = Number(process.env.PORT ?? "8080");
 const SIGNER = process.env.SERVER_SIGNER_KEY;
 const FEE_CURRENCY = (process.env.FEE_CURRENCY || undefined) as Address | undefined;
 const KEEPER_INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS ?? "30000");
+// Async play's own move-clock: correspondence games are explicitly "play
+// whenever", so the window is days, not the minutes a live match gets.
+const ASYNC_TURN_CLOCK_MS = Number(process.env.ASYNC_TURN_CLOCK_MS ?? String(3 * 24 * 60 * 60 * 1000));
+// A tournament is a live event — a host who never creates their bracket game
+// gets a much shorter leash than an ordinary correspondence match.
+const TOURNAMENT_WALKOVER_MS = Number(process.env.TOURNAMENT_WALKOVER_MS ?? String(15 * 60_000));
 
 // Match ids the server has seen join, polled by the keeper for time-based
 // actions (finalize proposed results, void expired matches). Terminal matches
@@ -229,6 +235,17 @@ const httpServer = createServer((req, res) => {
       .catch((e) => json(400, { error: (e as Error).message }));
     return;
   }
+  if (req.method === "POST" && url.pathname === "/async/claim-timeout") {
+    readJson(req)
+      .then((b) => {
+        const { matchId, claimant } = b as { matchId: string; claimant: 0 | 1 };
+        if (!matchId || claimant == null) throw new Error("matchId + claimant required");
+        return asyncMatches.claimTimeout(matchId, claimant, ASYNC_TURN_CLOCK_MS);
+      })
+      .then((state) => json(200, { state }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
   // --- social: friends + challenge inbox (durable, wallet-identity) ---
   if (req.method === "POST" && url.pathname === "/social/befriend") {
     readJson(req)
@@ -355,6 +372,18 @@ const httpServer = createServer((req, res) => {
         const { id, round, index, winner } = b as { id: string; round: number; index: number; winner: Address };
         if (!id || winner == null) throw new Error("id + round + index + winner required");
         return tournaments.reportResult(id, round, index, winner);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/tournaments/claim-walkover") {
+    // the guest advances by walkover: the host never created the bracket game
+    readJson(req)
+      .then((b) => {
+        const { id, round, index, claimant } = b as { id: string; round: number; index: number; claimant: Address };
+        if (!id || !claimant) throw new Error("id + round + index + claimant required");
+        return tournaments.claimWalkover(id, round, index, claimant, TOURNAMENT_WALKOVER_MS);
       })
       .then(() => json(200, { ok: true }))
       .catch((e) => json(400, { error: (e as Error).message }));

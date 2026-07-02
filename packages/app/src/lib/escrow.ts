@@ -1,7 +1,7 @@
 // MatchEscrow interactions from the mini-app. Every write sets `feeCurrency` so
 // the network fee is paid in the user's stablecoin (CIP-64) — never CELO.
 
-import { parseUnits, type Address, type Hex } from "viem";
+import { parseUnits, encodeAbiParameters, keccak256, type Address, type Hex } from "viem";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
 
 /** Narrow write surface satisfied by a viem WalletClient (cast at the call site). */
@@ -75,6 +75,78 @@ export function joinMatch(
     abi: matchEscrowAbi,
     functionName: "joinMatch",
     args: [p.matchId, p.session],
+    account: p.account,
+    feeCurrency: p.feeCurrency,
+  });
+}
+
+/** Move-clock forfeit / abandonment: claim a result and open the challenge
+ *  window. Must exactly match ReplayVerifier.transcriptHash so a later
+ *  {@link challenge} with the real transcript is checked against the same
+ *  commitment. `moves` are plain house indices (0..5), not signatures. */
+export function transcriptCommitment(matchId: bigint, startTurn: 0 | 1, moves: number[]): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: "uint256" }, { type: "uint8" }, { type: "uint8[]" }],
+      [matchId, startTurn, moves],
+    ),
+  );
+}
+
+export function proposeResult(
+  wallet: WriteClient,
+  p: { account: Address; escrow: Address; matchId: bigint; winner: 0 | 1 | 2; startTurn: 0 | 1; moves: number[]; feeCurrency?: Address },
+): Promise<Hex> {
+  return wallet.writeContract({
+    address: p.escrow,
+    abi: matchEscrowAbi,
+    functionName: "proposeResult",
+    args: [p.matchId, p.winner, transcriptCommitment(p.matchId, p.startTurn, p.moves)],
+    account: p.account,
+    feeCurrency: p.feeCurrency,
+  });
+}
+
+/** Dispute a proposed result with the real signed transcript. Pays the true
+ *  winner if it replays to a finished game; voids (refunds both) otherwise. */
+export function challengeResult(
+  wallet: WriteClient,
+  p: {
+    account: Address;
+    escrow: Address;
+    matchId: bigint;
+    session0: Address;
+    session1: Address;
+    startTurn: 0 | 1;
+    moves: number[];
+    sigs: Hex[];
+    feeCurrency?: Address;
+  },
+): Promise<Hex> {
+  return wallet.writeContract({
+    address: p.escrow,
+    abi: matchEscrowAbi,
+    functionName: "challenge",
+    args: [
+      p.matchId,
+      { matchId: p.matchId, session0: p.session0, session1: p.session1, startTurn: p.startTurn, moves: p.moves, sigs: p.sigs },
+    ],
+    account: p.account,
+    feeCurrency: p.feeCurrency,
+  });
+}
+
+/** Pay out a proposed result once its challenge window has elapsed. Anyone
+ *  can call this — normally the server's keeper does, but a player can too. */
+export function finalizeResult(
+  wallet: WriteClient,
+  p: { account: Address; escrow: Address; matchId: bigint; feeCurrency?: Address },
+): Promise<Hex> {
+  return wallet.writeContract({
+    address: p.escrow,
+    abi: matchEscrowAbi,
+    functionName: "finalize",
+    args: [p.matchId],
     account: p.account,
     feeCurrency: p.feeCurrency,
   });

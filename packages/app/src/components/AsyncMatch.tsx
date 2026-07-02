@@ -14,7 +14,17 @@ import { escrowConfig } from "../lib/escrow.js";
 import { getEquipped, type EquippedSkin } from "../lib/skins.js";
 import { displayName } from "../lib/names.js";
 import { sfx } from "../lib/sound.js";
-import { getAsync, joinAsync, moveAsync, roleOf, recordAsyncMatch, createAsync, type AsyncState } from "../lib/asyncClient.js";
+import {
+  getAsync,
+  joinAsync,
+  moveAsync,
+  claimTimeoutAsync,
+  roleOf,
+  recordAsyncMatch,
+  createAsync,
+  ASYNC_TURN_CLOCK_MS,
+  type AsyncState,
+} from "../lib/asyncClient.js";
 import { recordOpponent } from "../lib/social.js";
 
 const POLL_MS = 3500;
@@ -106,6 +116,16 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
     }
   }
 
+  async function claimTimeout() {
+    if (!data || role === null) return;
+    try {
+      const state = await claimTimeoutAsync(matchId, role);
+      setData({ ...data, state, over: state.over });
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+  }
+
   function copyInvite() {
     const url = `${window.location.origin}/play?async=${matchId}`;
     if (navigator.share) navigator.share({ title: "Awalé", text: "Join my Awalé game", url }).catch(() => {});
@@ -190,6 +210,15 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
           {statusLabel}
         </span>
       </div>
+
+      {!data.over && !data.open && !myTurn && Date.now() - data.updatedAt >= ASYNC_TURN_CLOCK_MS && (
+        <div className="card stack animate-in" style={{ gap: 8, alignItems: "center", textAlign: "center" }}>
+          <span className="muted">Your opponent hasn't moved in a few days.</span>
+          <button className="btn secondary" onClick={claimTimeout}>
+            Claim the win
+          </button>
+        </div>
+      )}
 
       <div className="spacer" />
 

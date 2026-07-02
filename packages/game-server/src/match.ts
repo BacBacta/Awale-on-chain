@@ -41,6 +41,11 @@ export interface MatchSnapshot {
   startTurn: 0 | 1;
   moves: number[];
   sigs: Hex[];
+  /** Set when the match ended some way that isn't a move — forfeit, resign,
+   *  or a mutual draw accept — so rehydrating (a pure move-replay) doesn't
+   *  silently forget it. Absent for a match still in progress or one that
+   *  ended naturally (replaying the moves already reaches `over`). */
+  terminal?: { winner: number };
 }
 
 export class Match {
@@ -49,12 +54,18 @@ export class Match {
   private readonly _moves: number[] = [];
   private readonly _sigs: Hex[] = [];
   private _drawOffer?: 0 | 1;
+  /** When the player currently on turn became on turn — the move-clock's start. */
+  private _turnStartedAt: number;
 
-  constructor(cfg: MatchConfig) {
+  constructor(cfg: MatchConfig, now: () => number = Date.now) {
     this.cfg = cfg;
     this.state = initialState();
     this.state.turn = cfg.startTurn;
+    this._now = now;
+    this._turnStartedAt = now();
   }
+
+  private readonly _now: () => number;
 
   get over(): boolean {
     return this.state.over;
@@ -66,6 +77,11 @@ export class Match {
 
   get turn(): number {
     return this.state.turn;
+  }
+
+  /** How long the current mover has had the turn — the basis for a move-clock timeout. */
+  msSinceTurnStart(): number {
+    return this._now() - this._turnStartedAt;
   }
 
   /** Houses (0..5) the current player may legally play. */
@@ -100,6 +116,7 @@ export class Match {
     this.state = next;
     this._moves.push(house);
     this._sigs.push(signature);
+    this._turnStartedAt = this._now(); // the clock hands off to whoever moves next
     return next;
   }
 
@@ -117,6 +134,19 @@ export class Match {
       throw new Error("bad resign signature");
     }
     this.state = { ...this.state, over: true, winner: (1 - player) as 0 | 1 };
+    return this.state;
+  }
+
+  /**
+   * Server-declared forfeit: no signature, because the mover's move-clock ran
+   * out — there's no choice being made for them to sign. Callers must only use
+   * this where an unsigned server verdict is safe (no on-chain stake riding on
+   * it); casual/off-chain play only. Staked matches settle a clock timeout
+   * on-chain instead (see server.ts's "claim-eligible" signal).
+   */
+  forfeit(disconnectedPlayer: 0 | 1): GameState {
+    if (this.state.over) throw new Error("match over");
+    this.state = { ...this.state, over: true, winner: (1 - disconnectedPlayer) as 0 | 1 };
     return this.state;
   }
 
@@ -175,6 +205,9 @@ export class Match {
       startTurn: this.cfg.startTurn,
       moves: [...this._moves],
       sigs: [...this._sigs],
+      // redundant (but harmless) for a natural ending — load-bearing for
+      // forfeit/resign/draw, which replaying the move list alone can't reach.
+      terminal: this.state.over ? { winner: this.state.winner } : undefined,
     };
   }
 
@@ -191,6 +224,11 @@ export class Match {
       m.state = applyMove(m.state, snap.moves[i]);
       m._moves.push(snap.moves[i]);
       m._sigs.push(snap.sigs[i]);
+    }
+    // A forfeit/resign/draw-accept ends the match without a move, so replaying
+    // the moves alone can't reach it — apply the recorded outcome directly.
+    if (snap.terminal && !m.state.over) {
+      m.state = { ...m.state, over: true, winner: snap.terminal.winner };
     }
     return m;
   }

@@ -106,4 +106,37 @@ describe("TournamentService", () => {
     s.start("1"); // deadline reached, ≥2 entrants
     expect(s.state("1").phase).toBe("running");
   });
+
+  describe("claimWalkover", () => {
+    function pairedService(): TournamentService {
+      const s = new TournamentService();
+      s.register(meta({ maxPlayers: 2 }));
+      s.join("1", P(2));
+      s.join("1", P(1)); // fills → running; P1 (lower) hosts, P2 guests
+      return s;
+    }
+
+    it("advances the guest once the grace period elapses and the host never created a game", async () => {
+      const s = pairedService();
+      await s.claimWalkover("1", 0, 0, P(2), 0);
+      // the pairing is resolved — no longer among the pending games
+      expect(s.pending("1").some((m) => m.round === 0 && m.index === 0)).toBe(false);
+    });
+
+    it("rejects the host claiming a walkover against themselves", async () => {
+      const s = pairedService();
+      await expect(s.claimWalkover("1", 0, 0, P(1), 0)).rejects.toThrow("host can't claim");
+    });
+
+    it("rejects before the grace period elapses", async () => {
+      const s = pairedService();
+      await expect(s.claimWalkover("1", 0, 0, P(2), 60_000)).rejects.toThrow("still has time");
+    });
+
+    it("rejects once the host has already created the game", async () => {
+      const s = pairedService();
+      s.attachGame("1", 0, 0, "async-xyz");
+      await expect(s.claimWalkover("1", 0, 0, P(2), 0)).rejects.toThrow("claim inactivity there instead");
+    });
+  });
 });

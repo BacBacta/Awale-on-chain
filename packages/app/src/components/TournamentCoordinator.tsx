@@ -15,11 +15,18 @@ import { escrowConfig } from "../lib/escrow.js";
 import { createSessionKey, persistSession } from "../lib/session.js";
 import { createAsync, getAsync, recordAsyncMatch } from "../lib/asyncClient.js";
 import { displayName } from "../lib/names.js";
-import { myGame, reportGameCreated, reportGameResult, type Assignment } from "../lib/tournaments.js";
+import {
+  myGame,
+  reportGameCreated,
+  reportGameResult,
+  claimWalkover,
+  TOURNAMENT_WALKOVER_MS,
+  type Assignment,
+} from "../lib/tournaments.js";
 
 type View =
   | { kind: "connecting" }
-  | { kind: "waiting"; label: string }
+  | { kind: "waiting"; label: string; claimable?: Assignment }
   | { kind: "playing"; matchId: string; assignment: Assignment };
 
 export function TournamentCoordinator({ id }: { id: string }) {
@@ -82,9 +89,15 @@ export function TournamentCoordinator({ id }: { id: string }) {
         setView({ kind: "playing", matchId, assignment: a });
         return;
       }
-      // guest: wait for the host to create, then play it (AsyncMatch joins)
+      // guest: wait for the host to create, then play it (AsyncMatch joins).
+      // Past the walkover window, offer to claim it instead of waiting forever.
       if (a.role === "guest" && !a.asyncMatchId) {
-        setView({ kind: "waiting", label: `Waiting for ${displayName(a.opponent)} to start the game…` });
+        const waited = Date.now() - a.pendingSince;
+        setView({
+          kind: "waiting",
+          label: `Waiting for ${displayName(a.opponent)} to start the game…`,
+          claimable: waited >= TOURNAMENT_WALKOVER_MS ? a : undefined,
+        });
         return;
       }
       if (a.asyncMatchId) {
@@ -99,6 +112,16 @@ export function TournamentCoordinator({ id }: { id: string }) {
       clearInterval(iv);
     };
   }, [account, id]);
+
+  async function claim(a: Assignment) {
+    if (!account) return;
+    try {
+      await claimWalkover(id, a.round, a.index, account);
+      setView({ kind: "waiting", label: "Claimed — advancing to the next round…" });
+    } catch (e) {
+      setView((v) => (v.kind === "waiting" ? { ...v, label: (e as Error).message } : v));
+    }
+  }
 
   if (view.kind === "playing") {
     return (
@@ -124,6 +147,11 @@ export function TournamentCoordinator({ id }: { id: string }) {
       <span className="chip">
         <span className="dot pulse" /> Tournament #{id}
       </span>
+      {view.kind === "waiting" && view.claimable && (
+        <button className="btn secondary" onClick={() => claim(view.claimable!)}>
+          Claim the win — opponent never started
+        </button>
+      )}
     </main>
   );
 }

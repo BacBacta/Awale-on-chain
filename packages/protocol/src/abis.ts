@@ -120,6 +120,54 @@ export const matchEscrowAbi = [
     outputs: [],
   },
   {
+    type: "function",
+    name: "proposeResult",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "winner", type: "uint8" },
+      { name: "commitment", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "challenge",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      {
+        name: "t",
+        type: "tuple",
+        components: [
+          { name: "matchId", type: "uint256" },
+          { name: "session0", type: "address" },
+          { name: "session1", type: "address" },
+          { name: "startTurn", type: "uint8" },
+          { name: "moves", type: "uint8[]" },
+          { name: "sigs", type: "bytes[]" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "finalize",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "event",
+    name: "ResultProposed",
+    inputs: [
+      { name: "matchId", type: "uint256", indexed: true },
+      { name: "winner", type: "uint8", indexed: false },
+      { name: "challengeDeadline", type: "uint64", indexed: false },
+    ],
+  },
+  {
     type: "event",
     name: "MatchJoined",
     inputs: [

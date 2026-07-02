@@ -53,4 +53,23 @@ describe("GameHub", () => {
     const pair = hub.queue({ id: "b", address: acct1.address, elo: 1020 });
     expect(pair).not.toBeNull();
   });
+
+  it("forfeits a match — no signature needed, opponent wins", () => {
+    const hub = new GameHub();
+    hub.open({
+      matchId: 9n,
+      chainId: CHAIN_ID,
+      verifier: VERIFIER,
+      sessions: [acct0.address, acct1.address],
+      startTurn: 0,
+    });
+    const state = hub.forfeit(9n, 0);
+    expect(state.over).toBe(true);
+    expect(state.winner).toBe(1);
+  });
+
+  it("throws forfeiting a match that doesn't exist", () => {
+    const hub = new GameHub();
+    expect(() => hub.forfeit(999n, 0)).toThrow("no such match");
+  });
 });

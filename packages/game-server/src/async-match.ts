@@ -29,6 +29,8 @@ export interface AsyncMatchState {
   players: [Address, Address];
   /** true while waiting for a second player to join (correspondence invite). */
   open: boolean;
+  /** epoch ms of the last move/join — basis for the "opponent inactive" claim. */
+  updatedAt: number;
 }
 
 const ZERO = "0x0000000000000000000000000000000000000000" as Address;
@@ -118,7 +120,16 @@ export class AsyncMatchService {
     const rec = await this.store.get(matchId);
     if (!rec) return null;
     const m = Match.rehydrate(rec.snapshot);
-    return { matchId, state: m.state, turn: m.turn, over: m.over, ply: m.ply, players: rec.players, open: rec.players[1] === ZERO };
+    return {
+      matchId,
+      state: m.state,
+      turn: m.turn,
+      over: m.over,
+      ply: m.ply,
+      players: rec.players,
+      open: rec.players[1] === ZERO,
+      updatedAt: rec.updatedAt,
+    };
   }
 
   /**
@@ -146,6 +157,36 @@ export class AsyncMatchService {
       await this.notifier.notifyTurn(opponent, matchId);
     }
     return next;
+  }
+
+  /**
+   * Claim a walkover: it's the opponent's turn and they haven't moved in
+   * `graceMs` — the same move-clock rule as live play, just measured in a
+   * correspondence match's own timescale (days, not minutes). Casual only —
+   * a staked ("cash") async match would need to settle through MatchEscrow
+   * like a live match's clock timeout, not through an unsigned server verdict.
+   */
+  async claimTimeout(matchId: string, claimant: 0 | 1, graceMs: number): Promise<GameState> {
+    const rec = await this.store.get(matchId);
+    if (!rec) throw new Error("no such match");
+    if (rec.mode !== "casual") throw new Error("staked async matches settle on-chain, not here");
+    if (rec.players[1] === ZERO) throw new Error("match still waiting for a second player");
+    const m = Match.rehydrate(rec.snapshot);
+    if (m.over) throw new Error("match over");
+    if (m.turn === claimant) throw new Error("it's your turn — nothing to claim");
+    if (Date.now() - rec.updatedAt < graceMs) throw new Error("opponent still has time to move");
+
+    const state = m.forfeit(m.turn as 0 | 1);
+    await this.store.save({
+      snapshot: m.snapshot(),
+      players: rec.players,
+      mode: rec.mode,
+      turn: m.turn,
+      over: m.over,
+      ply: m.ply,
+      updatedAt: Date.now(),
+    });
+    return state;
   }
 
   /** A player's matches, with whose-turn flagged. */

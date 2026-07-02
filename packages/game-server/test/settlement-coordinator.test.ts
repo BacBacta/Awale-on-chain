@@ -24,21 +24,14 @@ function hubWithTerminalMatch(matchId: bigint, winner: number) {
 
 function recorder() {
   const calls: { matchId: bigint; winner: number }[] = [];
-  const proposals: { matchId: bigint; winner: number }[] = [];
   const settlement = {
     settleSigned: async (matchId: bigint, winner: number) => {
       calls.push({ matchId, winner });
       return "0xhash" as Hex;
     },
-    proposeResult: async (matchId: bigint, winner: number) => {
-      proposals.push({ matchId, winner });
-      return "0xprop" as Hex;
-    },
   } as unknown as SettlementClient;
-  return { settlement, calls, proposals };
+  return { settlement, calls };
 }
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 describe("SettlementCoordinator", () => {
   it("settles once both session keys have signed the result", async () => {
@@ -75,34 +68,14 @@ describe("SettlementCoordinator", () => {
     expect(await coord.submit(hub, 7n, await acct0.sign({ hash: digest }))).toBe("ignored");
   });
 
-  it("proposes the result on-chain when a player never signs (abandonment)", async () => {
+  it("leaves the match open (uncollected) when only one player signs", async () => {
     const hub = hubWithTerminalMatch(8n, 1);
-    const { settlement, calls, proposals } = recorder();
-    const coord = new SettlementCoordinator({ escrow: ESCROW, chainId: CHAIN_ID, settlement, proposeAfterMs: 10 });
+    const { settlement, calls } = recorder();
+    const coord = new SettlementCoordinator({ escrow: ESCROW, chainId: CHAIN_ID, settlement });
 
-    coord.armProposalFallback(hub, 8n, 1);
-    // only one player signs — the other abandons
     const digest = resultDigest(8n, 1, { chainId: CHAIN_ID, escrow: ESCROW });
     expect(await coord.submit(hub, 8n, await acct0.sign({ hash: digest }))).toBe("collected");
-
-    await sleep(40);
-    expect(calls).toHaveLength(0); // never settled by signatures
-    expect(proposals).toEqual([{ matchId: 8n, winner: 1 }]);
-    expect(hub.get(8n)).toBeUndefined(); // closed after proposing
-  });
-
-  it("does not propose when both players sign in time", async () => {
-    const hub = hubWithTerminalMatch(9n, 0);
-    const { settlement, calls, proposals } = recorder();
-    const coord = new SettlementCoordinator({ escrow: ESCROW, chainId: CHAIN_ID, settlement, proposeAfterMs: 10 });
-
-    coord.armProposalFallback(hub, 9n, 0);
-    const digest = resultDigest(9n, 0, { chainId: CHAIN_ID, escrow: ESCROW });
-    await coord.submit(hub, 9n, await acct0.sign({ hash: digest }));
-    expect(await coord.submit(hub, 9n, await acct1.sign({ hash: digest }))).toBe("settled");
-
-    await sleep(40);
-    expect(calls).toEqual([{ matchId: 9n, winner: 0 }]);
-    expect(proposals).toHaveLength(0); // fallback cancelled on settle
+    expect(calls).toHaveLength(0);
+    expect(hub.get(8n)).toBeDefined(); // never closed — nothing settled on the abandoner's behalf
   });
 });
