@@ -1,9 +1,9 @@
 "use client";
 
-// Compete — every form of progression in one place: your rank, today's
-// quests, the streak, the skill ladder, and the doors to tournaments and the
-// season. This is the tab the trophy icon leads to; the ranked ladder is no
-// longer buried under "Stats".
+// Compete — progression in one place. For a brand-new player the page has one
+// job: explain the climb (Seedling → Grandmaster) and offer the first step.
+// Only once they hold a real rank does it become a dashboard: rank card,
+// quests, ladder, and the doors to tournaments and the season.
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -17,6 +17,14 @@ import { SkillLeaderboard } from "../../src/components/SkillLeaderboard.js";
 import { Icon, type IconName } from "../../src/components/Icon.js";
 import { tournamentsEnabled } from "../../src/lib/tournaments.js";
 import { harvestAddress } from "../../src/lib/league.js";
+
+const TIERS = [
+  { icon: "🌱", name: "Seedling" },
+  { icon: "✋", name: "Sower" },
+  { icon: "🌾", name: "Harvester" },
+  { icon: "🏆", name: "Captor" },
+  { icon: "👑", name: "Grandmaster" },
+];
 
 function Row({ href, icon, title, sub }: { href: string; icon: IconName; title: string; sub: string }) {
   return (
@@ -50,6 +58,7 @@ export default function Compete() {
       .catch(() => {});
   }, []);
 
+  const ranked = profile !== null && profile.gamesPlayed > 0;
   const rank = profile ? rankFor(profile.elo) : null;
 
   return (
@@ -63,9 +72,8 @@ export default function Compete() {
         )}
       </div>
 
-      {/* my rank — only once it's real. Showing "Sower · 1200" to someone who
-          has never played is fake progression next to an empty ladder. */}
-      {profile && rank && profile.gamesPlayed > 0 && (
+      {ranked && rank && profile ? (
+        // my rank — the reason to come back after a loss
         <div className="card row animate-in">
           <div className="col" style={{ gap: 4 }}>
             <span className="chip gold" style={{ alignSelf: "flex-start" }}>
@@ -80,28 +88,56 @@ export default function Compete() {
             {profile.elo}
           </span>
         </div>
+      ) : (
+        // new player — one card that explains the whole tab, one action
+        <div className="card stack animate-in" style={{ gap: 14, padding: "18px 16px" }}>
+          <div className="row" style={{ justifyContent: "space-between" }}>
+            {TIERS.map((t, i) => (
+              <span key={t.name} className="col" style={{ alignItems: "center", gap: 3, flex: 1 }}>
+                <span style={{ fontSize: 20, opacity: i === 0 ? 1 : 0.55 }}>{t.icon}</span>
+                <span className="faint" style={{ fontSize: 9.5, textAlign: "center" }}>
+                  {t.name}
+                </span>
+              </span>
+            ))}
+          </div>
+          <span className="muted" style={{ textAlign: "center" }}>
+            Win games to climb from Seedling to Grandmaster. Your first game places you on the ladder.
+          </span>
+          <Link className="btn block" href="/">
+            Play your first ranked game
+          </Link>
+        </div>
       )}
 
       {/* today's quests */}
       {profile && <DailyQuests quests={profile.quests ?? []} perfectDays={profile.perfectDays ?? 0} />}
 
-      {/* the ladder */}
-      <span className="section-label">Ranked ladder</span>
-      <SkillLeaderboard />
+      {/* the ladder — renders only once someone is on it */}
+      <SkillLeaderboard label="Ladder" />
 
-      {/* doors to the bigger arenas */}
-      <span className="section-label">Events</span>
-      <div className="stack" style={{ gap: 8 }}>
-        {tournamentsEnabled() && (
-          <Row href="/tournaments" icon="medal" title="Tournaments" sub="One entry fee, a bracket, winner takes the pool" />
-        )}
-        {harvestAddress() && (
-          <Row href="/league" icon="trophy" title="Season" sub="Deposit for the season — top of the ladder shares the prize" />
-        )}
-        <Row href="/stats" icon="chart" title="Money leaderboard & stats" sub="Biggest winners, global numbers" />
-      </div>
+      {/* bigger arenas — real events only; stats are not an event */}
+      {(tournamentsEnabled() || harvestAddress()) && (
+        <>
+          <span className="section-label">More ways to compete</span>
+          <div className="stack" style={{ gap: 8 }}>
+            {tournamentsEnabled() && (
+              <Row href="/tournaments" icon="medal" title="Tournaments" sub="One entry fee, a bracket, winner takes the pool" />
+            )}
+            {harvestAddress() && (
+              <Row href="/league" icon="trophy" title="Season" sub="Deposit for the season — top of the ladder shares the prize" />
+            )}
+          </div>
+        </>
+      )}
 
       <div className="spacer" />
+
+      <div className="row" style={{ justifyContent: "center", paddingBottom: 4 }}>
+        <Link href="/stats" className="faint" style={{ fontSize: 12.5 }}>
+          Money leaderboard & global stats
+        </Link>
+      </div>
     </main>
   );
 }

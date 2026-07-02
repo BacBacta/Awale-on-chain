@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import type { Address } from "viem";
 import { getInjectedProvider, connect } from "../lib/minipay.js";
 import { escrowConfig } from "../lib/escrow.js";
@@ -11,8 +10,10 @@ import { friendlyName } from "../lib/names.js";
 const MEDAL = ["#f6c863", "#cdd3da", "#cd8e5a"]; // gold / silver / bronze
 
 /** Skill ranking (Elo over casual + async play) — the money leaderboard's
- *  sibling, fed by the server-side player profile instead of chain events. */
-export function SkillLeaderboard() {
+ *  sibling, fed by the server-side player profile instead of chain events.
+ *  Renders nothing while empty: the page above it owns the "what is a rank"
+ *  introduction, so an empty ladder never stacks a second empty state. */
+export function SkillLeaderboard({ label }: { label?: string }) {
   const [rows, setRows] = useState<LeaderRow[] | null>(null);
   const [me, setMe] = useState<Address | null>(null);
 
@@ -22,28 +23,11 @@ export function SkillLeaderboard() {
     getLeaderboard(10).then(setRows).catch(() => setRows([]));
   }, []);
 
-  if (rows === null) {
-    return (
-      <div className="card">
-        <span className="chip">
-          <span className="dot pulse" /> Loading rankings…
-        </span>
-      </div>
-    );
-  }
-  if (rows.length === 0) {
-    return (
-      <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
-        <span className="muted">Nobody holds a rank yet — the first win takes the top spot.</span>
-        <Link className="btn block" href="/">
-          Play a Quick Match
-        </Link>
-      </div>
-    );
-  }
+  if (rows === null || rows.length === 0) return null;
 
   return (
     <div className="stack" style={{ gap: 8 }}>
+      {label && <span className="section-label">{label}</span>}
       {rows.map((r, i) => {
         const mine = me && r.address.toLowerCase() === me.toLowerCase();
         const rank = rankFor(r.elo);

@@ -14,7 +14,10 @@ export function DailyQuests({ quests, perfectDays }: { quests: QuestState[]; per
   return (
     <div className="card stack animate-in" style={{ gap: 10, padding: "14px 16px" }}>
       <div className="row">
-        <span style={{ fontWeight: 700, fontSize: 14.5 }}>Today&apos;s quests</span>
+        <span className="col" style={{ gap: 1 }}>
+          <span style={{ fontWeight: 700, fontSize: 14.5 }}>Today&apos;s quests</span>
+          {!allDone && <span className="faint">Finish all three for a ✨ Perfect day</span>}
+        </span>
         {allDone ? (
           <span className="chip gold">✨ Perfect day{perfectDays > 1 ? ` · ${perfectDays}` : ""}</span>
         ) : (
