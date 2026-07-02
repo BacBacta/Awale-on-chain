@@ -32,6 +32,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   const [minStake, setMinStake] = useState<bigint>(0n);
   const [copied, setCopied] = useState(false);
   const [sel, setSel] = useState(0); // index into TOKENS
+  const [showJoin, setShowJoin] = useState(false); // join-by-number is the rare path
 
   const busy = step === "approving" || step === "staking";
   const tok = TOKENS[sel];
@@ -269,14 +270,25 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
           </div>
         )}
 
-        <div className="row" style={{ gap: 8 }}>
-          <div className="row input" style={{ gap: 6 }}>
+        {/* one decision: how much? — presets and the custom field share a line */}
+        <div className="row" style={{ gap: 6 }}>
+          {QUICK_STAKES.map((q) => (
+            <button
+              key={q}
+              className={`chip ${stake === q ? "positive" : ""}`}
+              onClick={() => setStake(q)}
+              style={{ cursor: "pointer", minWidth: 52, justifyContent: "center", padding: "10px 0" }}
+            >
+              {q}
+            </button>
+          ))}
+          <div className="row input" style={{ gap: 6, flex: 1, minWidth: 0 }}>
             <input
               value={stake}
               onChange={(e) => setStake(e.target.value)}
               inputMode="decimal"
               aria-label="Amount"
-              style={{ background: "transparent", border: "none", color: "var(--text)", width: "100%", outline: "none" }}
+              style={{ background: "transparent", border: "none", color: "var(--text)", width: "100%", minWidth: 0, outline: "none" }}
             />
             <span className="muted" style={{ fontWeight: 700 }}>
               {sym}
@@ -284,48 +296,33 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
           </div>
         </div>
 
-        <div className="row" style={{ gap: 6 }}>
-          {QUICK_STAKES.map((q) => (
-            <button
-              key={q}
-              className={`chip ${stake === q ? "positive" : ""}`}
-              onClick={() => setStake(q)}
-              style={{ cursor: "pointer", flex: 1, justifyContent: "center", padding: "8px 0" }}
-            >
-              {q}
-            </button>
-          ))}
-        </div>
-
-        {/* payout preview — mirrors MatchEscrow._payout. Until the live rake
-            is confirmed on-chain, show a placeholder rather than a wrong 0%. */}
-        <div className="card flat row" style={{ padding: "10px 12px" }}>
-          <span className="muted">
-            Pot <b style={{ color: "var(--text)" }}>{fmt(pot, dec)}</b>
-          </span>
-          <span className="muted">
-            You win{" "}
-            <b style={{ color: "var(--accent)" }}>
-              {rakeBps === null ? "…" : `${fmt(prize, dec)} ${sym}`}
-            </b>
-          </span>
-          <span className="faint">{rakeBps === null ? "fee …" : `fee ${fmt(rake, dec)} (${rakePct(rakeBps)})`}</span>
-        </div>
+        {/* the whole deal in one quiet line — mirrors MatchEscrow._payout;
+            placeholder (never a made-up 0%) until the live rake is confirmed */}
+        <span className="faint" style={{ textAlign: "center" }}>
+          {rakeBps === null
+            ? "Checking the winner's payout…"
+            : `Winner takes ${fmt(prize, dec)} ${sym} of the ${fmt(pot, dec)} pot · fee ${rakePct(rakeBps)}`}
+        </span>
 
         <button className="btn block" onClick={onCreate} disabled={busy || !token}>
           {step === "approving" ? "Confirm in wallet…" : step === "staking" ? "Adding to the pot…" : `Put ${stake || "0"} ${sym} in the pot`}
         </button>
         {tok?.faucet && (
-          <button className="btn secondary block" onClick={onFaucet} disabled={busy}>
-            Get test {sym} (faucet)
+          <button
+            className="faint"
+            onClick={onFaucet}
+            disabled={busy}
+            style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12.5, alignSelf: "center" }}
+          >
+            Need test {sym}? Use the faucet
           </button>
         )}
       </div>
 
-      {/* Join */}
-      <div className="card stack" style={{ gap: 10 }}>
-        <span className="h2">Join a match</span>
-        <div className="row" style={{ gap: 8 }}>
+      {/* joining by number is the rare path (invites travel as links) — a
+          quiet toggle, not a second form competing with "create" */}
+      {showJoin ? (
+        <div className="row animate-in" style={{ gap: 8 }}>
           <input
             className="input"
             value={joinId}
@@ -333,12 +330,21 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
             inputMode="numeric"
             placeholder="Match #"
             aria-label="Match id"
+            style={{ flex: 1 }}
           />
           <button className="btn secondary" onClick={onJoin} disabled={busy || !joinId}>
             Join
           </button>
         </div>
-      </div>
+      ) : (
+        <button
+          className="faint"
+          onClick={() => setShowJoin(true)}
+          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12.5, alignSelf: "center" }}
+        >
+          Got a match number? Join it
+        </button>
+      )}
 
       {error && (
         <div className="chip danger" style={{ alignSelf: "stretch", justifyContent: "center", padding: "10px" }}>
