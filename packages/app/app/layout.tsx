@@ -11,7 +11,7 @@ const fraunces = Fraunces({ subsets: ["latin"], weight: ["600", "700", "800", "9
 
 export const metadata: Metadata = {
   title: "Awalé",
-  description: "Play Awalé for stablecoin stakes on MiniPay.",
+  description: "Play Awalé and win real money — right in MiniPay.",
 };
 
 export const viewport: Viewport = {

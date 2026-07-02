@@ -14,6 +14,7 @@ import { QuickMatch } from "../src/components/QuickMatch.js";
 import { Icon, type IconName } from "../src/components/Icon.js";
 import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
+import { HowItWorks } from "../src/components/HowItWorks.js";
 import { streakCount, solvedToday } from "../src/lib/daily.js";
 
 const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
@@ -99,17 +100,24 @@ export default function Lobby() {
           Awalé
         </span>
         <span style={{ display: "none" }}>v30</span>
-        {address ? (
-          <Link href="/profile" className="chip positive" title={shortAddress(address)} style={{ textDecoration: "none" }}>
-            <span className="dot" />
-            {friendlyName(address)}
-          </Link>
-        ) : (
-          <span className="chip">
-            <span className={`dot ${inMiniPay ? "pulse" : ""}`} />
-            {inMiniPay ? "Connecting…" : "Open in MiniPay"}
-          </span>
-        )}
+        <span className="row" style={{ gap: 6 }}>
+          {streak > 0 && (
+            <Link href="/daily" className="chip gold" style={{ textDecoration: "none" }} title="Daily puzzle streak">
+              🔥 {streak}
+            </Link>
+          )}
+          {address ? (
+            <Link href="/profile" className="chip positive" title={shortAddress(address)} style={{ textDecoration: "none" }}>
+              <span className="dot" />
+              {friendlyName(address)}
+            </Link>
+          ) : (
+            <span className="chip">
+              <span className={`dot ${inMiniPay ? "pulse" : ""}`} />
+              {inMiniPay ? "Connecting…" : "Open in MiniPay"}
+            </span>
+          )}
+        </span>
       </div>
 
       {/* hero — a calm, living board behind the headline */}
@@ -137,9 +145,9 @@ export default function Lobby() {
         />
         <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 8 }}>
           <span className="display" style={{ fontSize: 32, textShadow: "0 2px 16px rgba(0,0,0,0.6)" }}>
-            Play Awalé for stablecoin
+            Play Awalé, win real money
           </span>
-          <span className="muted">Sow, capture, win the pot. Winner takes the stake.</span>
+          <span className="muted">Sow, capture, win the pot. Play free, or put a few dollars on a match.</span>
         </div>
       </div>
 
@@ -163,7 +171,7 @@ export default function Lobby() {
           title="Daily puzzle"
           sub={didDaily ? `Solved · ${streak}-day streak 🔥` : streak > 0 ? `Keep your ${streak}-day streak 🔥` : "Solve one capture a day"}
         />
-        <NavRow href="/play" icon="play" title="Practice vs AI" sub="Pick your level, no stake" />
+        <NavRow href="/play" icon="play" title="Practice vs AI" sub="Pick your level — always free" />
         <NavRow
           href="/learn"
           icon="info"
@@ -171,11 +179,12 @@ export default function Lobby() {
           title="How to play"
           sub={showLearnHint ? "New here? Learn in 30 seconds" : "Sowing, capturing, winning"}
         />
+        <HowItWorks />
       </div>
 
       <div className="spacer" />
       <a className="btn ghost block" href={addCashDeeplink()} style={{ gap: 8 }}>
-        <Icon name="wallet" size={16} /> Deposit stablecoin
+        <Icon name="wallet" size={16} /> Add money
       </a>
     </main>
   );

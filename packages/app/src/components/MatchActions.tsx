@@ -121,9 +121,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     setError(null);
     try {
       const amount = parseStake(stake, dec);
-      if (amount <= 0n) return setError("Enter a stake greater than zero.");
-      if (minStake > 0n && amount < minStake) return setError(`Minimum stake is ${fmt(minStake, dec)} ${sym}.`);
-      if (balance !== null && amount > balance) return setError(`Not enough ${sym} for this stake.`);
+      if (amount <= 0n) return setError("Enter an amount greater than zero.");
+      if (minStake > 0n && amount < minStake) return setError(`Minimum is ${fmt(minStake, dec)} ${sym}.`);
+      if (balance !== null && amount > balance) return setError(`Not enough ${sym} — add money to MiniPay first.`);
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
       const matchId = (await readContract(client, {
         address: cfg.escrow,
@@ -273,7 +273,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
               value={stake}
               onChange={(e) => setStake(e.target.value)}
               inputMode="decimal"
-              aria-label="Stake"
+              aria-label="Amount"
               style={{ background: "transparent", border: "none", color: "var(--text)", width: "100%", outline: "none" }}
             />
             <span className="muted" style={{ fontWeight: 700 }}>
@@ -312,7 +312,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         </div>
 
         <button className="btn block" onClick={onCreate} disabled={busy || !token}>
-          {step === "approving" ? "Approving…" : step === "staking" ? "Staking…" : `Stake ${stake || "0"} ${sym} & create`}
+          {step === "approving" ? "Confirm in wallet…" : step === "staking" ? "Adding to the pot…" : `Put ${stake || "0"} ${sym} in the pot`}
         </button>
         {tok?.faucet && (
           <button className="btn secondary block" onClick={onFaucet} disabled={busy}>

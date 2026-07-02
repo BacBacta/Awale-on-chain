@@ -76,7 +76,7 @@ export function LiveMatch({
   useEffect(() => {
     const cfg = escrowConfig();
     if (!cfg) {
-      setStatus("App not configured for on-chain play");
+      setStatus("Money matches aren’t available on this deployment");
       return;
     }
     let sock: Socket | null = null;
@@ -145,7 +145,7 @@ export function LiveMatch({
       });
       sock.on("settled", () => {
         setSettled(true);
-        setStatus((s) => `${s} · settled on-chain ✅`);
+        setStatus((s) => `${s} · winnings paid out ✅`);
       });
       sock.on("error", (e: { message: string }) => setStatus(e.message));
     })().catch((e) => setStatus((e as Error).message));

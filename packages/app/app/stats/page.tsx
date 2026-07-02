@@ -54,7 +54,7 @@ export default async function Stats() {
         </div>
       ))}
 
-      <span className="muted">Volume &amp; protocol revenue per stablecoin</span>
+      <span className="muted">Volume &amp; fees per currency</span>
       {s.perToken.length === 0 ? (
         <div className="card muted">No settled matches yet.</div>
       ) : (
@@ -72,7 +72,7 @@ export default async function Stats() {
       )}
 
       <span className="muted" style={{ textAlign: "center" }}>
-        Sourced on-chain from settlement events · updated every minute.
+        Computed from public match results · updated every minute.
       </span>
     </main>
   );

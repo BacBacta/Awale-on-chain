@@ -12,8 +12,8 @@ const TABS: Tab[] = [
   { href: "/", label: "Play", icon: "play" },
   { href: "/matches", label: "Matches", icon: "target" },
   { href: "/tournaments", label: "Cups", icon: "medal", advanced: true },
-  { href: "/league", label: "League", icon: "trophy", advanced: true },
-  { href: "/shop", label: "Skins", icon: "palette", advanced: true },
+  { href: "/league", label: "League", icon: "trophy" },
+  { href: "/shop", label: "Style", icon: "palette", advanced: true },
   { href: "/stats", label: "Stats", icon: "chart" },
 ];
 
@@ -21,7 +21,7 @@ const HIDDEN = ["/play", "/learn"];
 
 export function BottomNav() {
   const pathname = usePathname() ?? "/";
-  // Progressive disclosure: hide League/Skins until the player has played once.
+  // Progressive disclosure: hide Cups/Style until the player has played once.
   const [played, setPlayed] = useState(false);
   useEffect(() => {
     try {

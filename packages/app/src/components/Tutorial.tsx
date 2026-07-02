@@ -46,6 +46,11 @@ const STEPS: Step[] = [
     success: "Capture! The seeds go into your store (on the right). That's how you score.",
   },
   {
+    title: "Playing for money",
+    body: "Practice and the daily puzzle are always free. When you're ready, you and an opponent can each put the same amount into the pot — say $1. The winner takes the pot, minus a small house fee shown before you start.",
+    success: "",
+  },
+  {
     title: "Ready to play",
     body: "That's all you need to get started. You'll pick up the finer points as you play. Have a great game!",
     success: "",
@@ -109,7 +114,7 @@ export function Tutorial() {
       {(s.target == null || solved) &&
         (isLast ? (
           <Link className="btn block" href="/play">
-            Play a demo
+            Play your first game — free
           </Link>
         ) : (
           <button className="btn block" onClick={() => setStep((n) => n + 1)}>

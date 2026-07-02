@@ -128,13 +128,13 @@ export default function Shop() {
   if (!cos) {
     return (
       <main className="pad stack" style={{ flex: 1, gap: 14 }}>
-        <span className="title">Skins</span>
+        <span className="title">Style</span>
         <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
           <span className="lead" style={{ width: 52, height: 52, borderRadius: 16 }}>
             <Icon name="palette" size={26} />
           </span>
           <span className="h2">Coming soon</span>
-          <span className="muted">Board and seed skins (tradeable, with on-chain royalties) aren’t configured on this deployment yet.</span>
+          <span className="muted">Board and seed styles aren’t available on this deployment yet.</span>
           <Link className="btn block" href="/" style={{ marginTop: 4 }}>
             Back to lobby
           </Link>
@@ -191,7 +191,7 @@ export default function Shop() {
   return (
     <main className="pad stack" style={{ flex: 1, gap: 14 }}>
       <div className="row">
-        <span className="title">Skins</span>
+        <span className="title">Style</span>
         {account && (
           <button className="chip" onClick={faucet} disabled={busy} style={{ cursor: "pointer" }}>
             + test {SYMBOL}

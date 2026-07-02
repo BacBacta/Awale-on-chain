@@ -75,15 +75,26 @@ export function Welcome() {
           Awalé
         </span>
         <span className="muted" style={{ textAlign: "center", lineHeight: 1.5 }}>
-          Sow seeds, capture, and win the pot. A timeless strategy game — now for stablecoin stakes, non-custodial.
+          Sow seeds, capture, and win the pot. Play free, or put a few dollars on a match — winner takes the pot.
         </span>
 
         <div className="stack" style={{ width: "100%", marginTop: 6, gap: 10 }}>
           <button className="btn block" onClick={() => dismiss(() => router.push("/learn"))}>
-            <Icon name="info" size={17} /> Learn to play
+            <Icon name="info" size={17} /> Learn to play · 30 sec
           </button>
-          <button className="btn secondary block" onClick={() => dismiss()}>
-            Start playing
+          <button
+            className="btn ghost block"
+            onClick={() => {
+              // Skipping is an explicit "I know the game" — don't nag with learn hints later.
+              try {
+                localStorage.setItem("awale_tutorial_seen", "1");
+              } catch {
+                /* ignore */
+              }
+              dismiss();
+            }}
+          >
+            I already know Awalé
           </button>
         </div>
       </div>

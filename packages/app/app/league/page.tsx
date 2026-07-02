@@ -184,7 +184,7 @@ export default function League() {
           </span>
           <span className="h2">Coming soon</span>
           <span className="muted">
-            Deposit a stablecoin for the season, play ranked games, and share the yield — your deposit always comes back in
+            Put money in for the season, play ranked games, and share the prize pool — you always get your deposit back in
             full. The league isn’t configured on this deployment yet.
           </span>
           <Link className="btn block" href="/" style={{ marginTop: 4 }}>

@@ -109,7 +109,7 @@ export default function Matches() {
     const cfg = escrowConfig();
     const ids = listLocalMatches();
     if (!cfg) {
-      setError("App not configured for on-chain play.");
+      setError("Money matches aren’t available on this deployment.");
       setRows([]);
       return;
     }
