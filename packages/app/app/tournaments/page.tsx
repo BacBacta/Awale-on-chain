@@ -8,6 +8,7 @@ import { getInjectedProvider, connect } from "../../src/lib/minipay.js";
 import { escrowConfig, type WriteClient } from "../../src/lib/escrow.js";
 import { fmt } from "../../src/lib/money.js";
 import { friendlyName } from "../../src/lib/names.js";
+import { humanizeError } from "../../src/lib/errors.js";
 import {
   listOpenTournaments,
   joinTournament,
@@ -57,7 +58,7 @@ export default function Tournaments() {
       await joinTournament({ wallet, account, t, chainId: cfg.chainId, rpcUrl: cfg.rpcUrl, feeCurrency: FEE_CURRENCY });
       window.location.href = `/play?tournament=${t.id}`;
     } catch (e) {
-      setError((e as Error).message);
+      setError(humanizeError(e));
       setJoining(null);
     }
   }

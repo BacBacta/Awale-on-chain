@@ -9,6 +9,7 @@ import { getInjectedProvider, connect, publicClient } from "../../src/lib/minipa
 import { escrowConfig } from "../../src/lib/escrow.js";
 import { listLocalMatches, statusView } from "../../src/lib/matches.js";
 import { computePayout, fmt } from "../../src/lib/money.js";
+import { humanizeError } from "../../src/lib/errors.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 import { createSessionKey, persistSession } from "../../src/lib/session.js";
 import { asyncEnabled, createAsync, recordAsyncMatch, listAsyncMatchIds, getAsync, roleOf } from "../../src/lib/asyncClient.js";
@@ -77,7 +78,7 @@ export default function Matches() {
       await joinOpenMatch({ wallet, account, cfg, matchId, feeCurrency: FEE_CURRENCY });
       window.location.href = `/play?match=${matchId.toString()}`;
     } catch (e) {
-      setError((e as Error).message);
+      setError(humanizeError(e));
       setJoining(null);
     }
   }
@@ -122,7 +123,10 @@ export default function Matches() {
     const provider = getInjectedProvider();
     if (provider) connect(provider, cfg.chainId).catch(() => {});
 
-    Promise.all(
+    // allSettled, not all: one saved match id failing to read (e.g. a stale
+    // local id left over from a previous contract deployment) shouldn't blank
+    // out every other match the player actually has.
+    Promise.allSettled(
       ids.map(async (id) => {
         const m = (await readContract(client, {
           address: cfg.escrow,
@@ -132,12 +136,21 @@ export default function Matches() {
         })) as { status: number; stake: bigint; rakeBps: number };
         return { id, status: Number(m.status), stake: m.stake, rakeBps: Number(m.rakeBps) };
       }),
-    )
-      .then(setRows)
-      .catch((e) => {
-        setError((e as Error).message);
-        setRows([]);
-      });
+    ).then((results) => {
+      const ok = results
+        .filter((r): r is PromiseFulfilledResult<Row> => r.status === "fulfilled")
+        .map((r) => r.value)
+        .filter((r) => r.status !== 0); // status 0 = None: never existed on this contract (stale local id)
+      setRows(ok);
+      const failed = results.length - ok.length;
+      if (failed > 0 && ok.length === 0) {
+        setError(
+          results.find((r) => r.status === "rejected")
+            ? humanizeError((results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason)
+            : null,
+        );
+      }
+    });
   }, []);
 
   const [creating, setCreating] = useState(false);
