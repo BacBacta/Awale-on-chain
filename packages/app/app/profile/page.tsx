@@ -102,6 +102,7 @@ export default function Profile() {
             </span>
             <span className="faint">
               {profile.gamesWon} wins · {profile.gamesPlayed} games
+              {(profile.perfectDays ?? 0) > 0 ? ` · ✨ ${profile.perfectDays} perfect day${profile.perfectDays > 1 ? "s" : ""}` : ""}
             </span>
           </div>
           <span className="title score" style={{ color: "var(--gold)" }}>

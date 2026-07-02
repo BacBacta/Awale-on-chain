@@ -41,6 +41,7 @@ import {
   topByElo,
   type ProfileStore,
 } from "./profile/store.js";
+import { recordQuestGame, recordQuestDaily, questStates, currentProgress } from "./profile/quests.js";
 import { retentionSweep } from "./retention.js";
 import { TournamentService, type TournamentMeta } from "./tournament/service.js";
 import { matchEscrowAbi, tournamentEscrowAbi } from "../../protocol/src/abis.js";
@@ -163,8 +164,8 @@ function recordGameResult(players: [Address, Address], winner: number): void {
       profiles.get(players[1]).then((p) => p ?? freshProfile(players[1])),
     ]);
     const [n0, n1] = applyGameResult(p0, p1, winner);
-    await profiles.save(n0);
-    await profiles.save(n1);
+    await profiles.save(recordQuestGame(n0, winner === 0));
+    await profiles.save(recordQuestGame(n1, winner === 1));
   })().catch((e) => console.warn(`[profile] result not recorded: ${(e as Error).message}`));
 }
 
@@ -291,7 +292,13 @@ const httpServer = createServer((req, res) => {
     (async () => {
       const p = (await profiles.get(address)) ?? freshProfile(address);
       await profiles.save({ ...p, lastSeenAt: Date.now() });
-      json(200, { profile: { ...p, streak: liveStreak(p) } });
+      json(200, {
+        profile: {
+          ...p,
+          streak: liveStreak(p),
+          quests: questStates(currentProgress(p)), // resolved for today, not the raw counters
+        },
+      });
     })().catch((e) => json(500, { error: (e as Error).message }));
     return;
   }
@@ -319,6 +326,7 @@ const httpServer = createServer((req, res) => {
         let p = (await profiles.get(address)) ?? freshProfile(address);
         if (local) p = migrateLocalStreak(p, local); // one-time device-streak adoption
         p = applyDailySolve({ ...p, lastSeenAt: Date.now() });
+        p = recordQuestDaily(p);
         await profiles.save(p);
         return { streak: liveStreak(p) };
       })

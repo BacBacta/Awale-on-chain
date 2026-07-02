@@ -11,6 +11,7 @@ import type { Address } from "viem";
 import { updateElo, scoreForWinner } from "../elo.js";
 import { DEFAULT_ELO } from "../store/types.js";
 import type { RedisLike } from "../persistence/redis-store.js";
+import type { QuestProgress } from "./quests.js"; // type-only: no runtime cycle
 
 export interface PlayerProfile {
   address: Address;
@@ -23,6 +24,10 @@ export interface PlayerProfile {
   gamesWon: number;
   /** Skill rating over casual + async play (Elo, K=32, starts at DEFAULT_ELO). */
   elo: number;
+  /** Today's daily-quest progress (see profile/quests.ts); rolls over by day. */
+  quests: QuestProgress;
+  /** Days on which every daily quest was completed. Only ever grows. */
+  perfectDays: number;
   /** UTC day a streak-expiry nudge was last sent (dedupe: max one per day). */
   lastStreakNudge: string;
   /** UTC day a your-turn nudge was last sent (dedupe: max one per day). */
@@ -46,6 +51,8 @@ export function freshProfile(address: Address): PlayerProfile {
     gamesPlayed: 0,
     gamesWon: 0,
     elo: DEFAULT_ELO,
+    quests: { day: "", playGames: 0, winGames: 0, solvedDaily: false, rewarded: false },
+    perfectDays: 0,
     lastStreakNudge: "",
     lastTurnNudge: "",
   };

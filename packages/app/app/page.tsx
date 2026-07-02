@@ -15,8 +15,9 @@ import { Icon, type IconName } from "../src/components/Icon.js";
 import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
 import { HowItWorks } from "../src/components/HowItWorks.js";
+import { DailyQuests } from "../src/components/DailyQuests.js";
 import { streakCount, solvedToday } from "../src/lib/daily.js";
-import { getProfile } from "../src/lib/profile.js";
+import { getProfile, type PlayerProfile } from "../src/lib/profile.js";
 
 const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
@@ -66,6 +67,7 @@ export default function Lobby() {
   const [showLearnHint, setShowLearnHint] = useState(false);
   const [streak, setStreak] = useState(0);
   const [didDaily, setDidDaily] = useState(true);
+  const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const cfg: EscrowConfig | null = escrowConfig();
 
   useEffect(() => {
@@ -89,6 +91,7 @@ export default function Lobby() {
         // the server-side profile may hold a longer streak than this device
         const p = await getProfile(address);
         if (p && p.streak > 0) setStreak((s) => Math.max(s, p.streak));
+        setProfile(p);
       })
       .catch(() => {});
   }, []);
@@ -157,6 +160,9 @@ export default function Lobby() {
 
       {/* primary action */}
       <QuickMatch account={address ?? undefined} />
+
+      {/* today's quests — the daily reason to play a couple of games */}
+      {profile && <DailyQuests quests={profile.quests ?? []} perfectDays={profile.perfectDays ?? 0} />}
 
       {/* stake-a-match (when connected) */}
       {staking &&

@@ -7,6 +7,14 @@ import type { Address } from "viem";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
 
+export interface QuestState {
+  id: "solveDaily" | "playGames" | "winGames";
+  label: string;
+  target: number;
+  count: number;
+  done: boolean;
+}
+
 export interface PlayerProfile {
   address: Address;
   streak: number; // live streak (0 once a day has been missed)
@@ -14,6 +22,9 @@ export interface PlayerProfile {
   gamesPlayed: number;
   gamesWon: number;
   elo: number;
+  /** Today's quests, already resolved (labels, targets, progress). */
+  quests: QuestState[];
+  perfectDays: number;
 }
 
 export interface LeaderRow {
