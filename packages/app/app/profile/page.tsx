@@ -13,6 +13,7 @@ import { Icon } from "../../src/components/Icon.js";
 import { listOpponents } from "../../src/lib/social.js";
 import { asyncEnabled, createAsync, recordAsyncMatch } from "../../src/lib/asyncClient.js";
 import { createSessionKey, persistSession } from "../../src/lib/session.js";
+import { getProfile, rankFor, type PlayerProfile } from "../../src/lib/profile.js";
 
 function avatarGradient(seed: string): string {
   let h = 0;
@@ -24,11 +25,18 @@ export default function Profile() {
   const cfg = escrowConfig();
   const [address, setAddress] = useState<Address | null>(null);
   const [equipped, setEquipped] = useState(getEquipped());
+  const [profile, setProfile] = useState<PlayerProfile | null>(null);
 
   useEffect(() => {
     setEquipped(getEquipped());
     const p = getInjectedProvider();
-    if (p) connect(p, cfg?.chainId).then(({ address }) => setAddress(address)).catch(() => {});
+    if (p)
+      connect(p, cfg?.chainId)
+        .then(async ({ address }) => {
+          setAddress(address);
+          setProfile(await getProfile(address));
+        })
+        .catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const [opponents, setOpponents] = useState<Address[]>([]);
@@ -84,6 +92,23 @@ export default function Profile() {
           </div>
         </div>
       </div>
+
+      {/* skill rank — the durable server-side rating (casual + async play) */}
+      {profile && profile.gamesPlayed > 0 && (
+        <div className="card row animate-in">
+          <div className="col" style={{ gap: 4 }}>
+            <span className="chip gold" style={{ alignSelf: "flex-start" }}>
+              {rankFor(profile.elo).icon} {rankFor(profile.elo).name}
+            </span>
+            <span className="faint">
+              {profile.gamesWon} wins · {profile.gamesPlayed} games
+            </span>
+          </div>
+          <span className="title score" style={{ color: "var(--gold)" }}>
+            {profile.elo}
+          </span>
+        </div>
+      )}
 
       {/* record */}
       <span className="section-label">Record</span>

@@ -37,6 +37,8 @@ import {
   liveStreak,
   applyDailySolve,
   migrateLocalStreak,
+  applyGameResult,
+  topByElo,
   type ProfileStore,
 } from "./profile/store.js";
 import { retentionSweep } from "./retention.js";
@@ -151,7 +153,22 @@ const notifier: Notifier =
     ? new WebPushNotifier(subStore, { publicKey: VAPID_PUBLIC, privateKey: VAPID_PRIVATE, subject: process.env.VAPID_SUBJECT ?? "mailto:ops@awale.app" })
     : new LogNotifier();
 console.log(`push: ${VAPID_PUBLIC && VAPID_PRIVATE ? "web-push enabled" : "log-only (set VAPID keys)"}`);
-const asyncMatches = new AsyncMatchService(matchStore, notifier);
+// Every finished two-player game (casual quick-match or async, by play or by
+// forfeit) lands here: Elo transfer + played/won counters on both profiles.
+// Fire-and-forget — a profile hiccup must never affect the game itself.
+function recordGameResult(players: [Address, Address], winner: number): void {
+  void (async () => {
+    const [p0, p1] = await Promise.all([
+      profiles.get(players[0]).then((p) => p ?? freshProfile(players[0])),
+      profiles.get(players[1]).then((p) => p ?? freshProfile(players[1])),
+    ]);
+    const [n0, n1] = applyGameResult(p0, p1, winner);
+    await profiles.save(n0);
+    await profiles.save(n1);
+  })().catch((e) => console.warn(`[profile] result not recorded: ${(e as Error).message}`));
+}
+
+const asyncMatches = new AsyncMatchService(matchStore, notifier, { onResult: recordGameResult });
 
 // Tournaments: in-memory lobby + bracket orchestration (same single-machine
 // model as matchmaking). When a bracket completes, the finalize hook reports the
@@ -275,6 +292,22 @@ const httpServer = createServer((req, res) => {
       const p = (await profiles.get(address)) ?? freshProfile(address);
       await profiles.save({ ...p, lastSeenAt: Date.now() });
       json(200, { profile: { ...p, streak: liveStreak(p) } });
+    })().catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/leaderboard") {
+    const n = Math.min(50, Math.max(1, Number(url.searchParams.get("n") ?? "20")));
+    (async () => {
+      const addrs = await profiles.list();
+      const all = (await Promise.all(addrs.map((a) => profiles.get(a)))).filter((p) => p !== null);
+      json(200, {
+        leaders: topByElo(all, n).map((p) => ({
+          address: p.address,
+          elo: p.elo,
+          gamesPlayed: p.gamesPlayed,
+          gamesWon: p.gamesWon,
+        })),
+      });
     })().catch((e) => json(500, { error: (e as Error).message }));
     return;
   }
@@ -481,6 +514,7 @@ attachSocketIO(io, {
   onGameOver: (matchId, winner) => {
     console.log(`[match ${matchId}] over, winner=${winner} — awaiting result signatures`);
   },
+  onResult: recordGameResult,
 });
 
 // First-move randomness lifecycle:

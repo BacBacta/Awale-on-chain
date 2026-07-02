@@ -108,9 +108,14 @@ describe("Socket.IO transport (integration)", () => {
       return { a, b, matchId: ma.matchId, roleA: ma.role, roleB: mb.role, turn: sa.state.turn };
     }
 
-    it("casual: forfeits whoever's turn-clock expires, opponent wins", async () => {
+    it("casual: forfeits whoever's turn-clock expires, opponent wins, result reaches the profile hook", async () => {
       const hub = new GameHub();
-      const port = await start(hub, { casualCtx: { chainId: CHAIN_ID, verifier: VERIFIER }, turnClockMs: 50 });
+      const results: { players: [Address, Address]; winner: number }[] = [];
+      const port = await start(hub, {
+        casualCtx: { chainId: CHAIN_ID, verifier: VERIFIER },
+        turnClockMs: 50,
+        onResult: (players, winner) => results.push({ players, winner }),
+      });
       const { a, b, matchId, roleA, roleB, turn } = await matchTwoCasualPlayers(port);
       client = a;
       client2 = b;
@@ -126,6 +131,12 @@ describe("Socket.IO transport (integration)", () => {
       const msg = await gameover;
       expect(msg.winner).toBe(expectedWinner);
       expect(hub.get(BigInt(matchId))).toBeUndefined(); // closed after the forfeit
+      // both wallet addresses + the winner made it to the Elo/profile feed
+      expect(results).toHaveLength(1);
+      expect(results[0].winner).toBe(expectedWinner);
+      expect(results[0].players.map((p) => p.toLowerCase()).sort()).toEqual(
+        [acct0.address, acct1.address].map((p) => p.toLowerCase()).sort(),
+      );
     });
 
     it("casual: a timely move hands the clock to the next mover, not a re-forfeit of the one who just played", async () => {

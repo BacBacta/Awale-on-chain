@@ -35,11 +35,23 @@ export interface AsyncMatchState {
 
 const ZERO = "0x0000000000000000000000000000000000000000" as Address;
 
+export interface AsyncMatchHooks {
+  /** A game finished (by play or by walkover) — both wallet addresses + the
+   *  engine-convention winner (0, 1, 2 = draw). Feeds the player profiles. */
+  onResult?: (players: [Address, Address], winner: number) => void;
+}
+
 export class AsyncMatchService {
   constructor(
     private readonly store: MatchStore,
     private readonly notifier: Notifier,
+    private readonly hooks: AsyncMatchHooks = {},
   ) {}
+
+  private reportResult(players: [Address, Address], winner: number): void {
+    if (players[1] === ZERO) return; // never finished pairing — nothing to rate
+    this.hooks.onResult?.(players, winner);
+  }
 
   /** Open a new async match. Returns the match id. */
   async create(opts: {
@@ -155,6 +167,8 @@ export class AsyncMatchService {
     if (!m.over) {
       const opponent = rec.players[1 - player];
       await this.notifier.notifyTurn(opponent, matchId);
+    } else {
+      this.reportResult(rec.players, m.state.winner);
     }
     return next;
   }
@@ -186,6 +200,7 @@ export class AsyncMatchService {
       ply: m.ply,
       updatedAt: Date.now(),
     });
+    this.reportResult(rec.players, state.winner);
     return state;
   }
 

@@ -111,5 +111,24 @@ describe("AsyncMatchService", () => {
       });
       await expect(svc.claimTimeout(id, 1, 0)).rejects.toThrow("settle on-chain");
     });
+
+    it("reports the walkover to the onResult hook (profiles/Elo feed)", async () => {
+      const { notifier } = spyNotifier();
+      const results: { players: [Address, Address]; winner: number }[] = [];
+      const svc = new AsyncMatchService(new InMemoryMatchStore(), notifier, {
+        onResult: (players, winner) => results.push({ players, winner }),
+      });
+      const id = await svc.create({
+        matchId: 44n,
+        chainId: CHAIN_ID,
+        verifier: VERIFIER,
+        sessions: [s0.address, s1.address],
+        players: [A, B],
+        startTurn: 0,
+        mode: "casual",
+      });
+      await svc.claimTimeout(id, 1, 0); // player 0 timed out — B wins
+      expect(results).toEqual([{ players: [A, B], winner: 1 }]);
+    });
   });
 });

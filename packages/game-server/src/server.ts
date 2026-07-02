@@ -60,6 +60,9 @@ export interface ServerDeps {
   /** How long to wait for the two-signature fast path before telling a staked
    *  winner to self-claim on-chain (default 45s). */
   unsettledWatchdogMs?: number;
+  /** Called when a casual quick-match ends, with both wallet addresses —
+   *  feeds Elo + win/played counters on the durable player profile. */
+  onResult?: (players: [Address, Address], winner: number) => void;
 }
 
 /** A fresh, collision-free id for an off-chain casual match (also used for async). */
@@ -86,6 +89,11 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
 
   // One move-clock timer per live match, keyed by room id (matchId.toString()).
   const turnClockTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  // Casual quick-match seats by room id — the wallet addresses behind player 0
+  // and 1, known only at pairing time. Lets a finished game feed the durable
+  // player profiles (Elo, played/won). Entries die with the match.
+  const casualPlayers = new Map<string, [Address, Address]>();
 
   function clearTurnClock(roomId: string): void {
     const t = turnClockTimers.get(roomId);
@@ -163,6 +171,12 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
     io.to(roomId).emit("gameover", { matchId: roomId, winner: state.winner });
     deps.onGameOver?.(matchId, state.winner);
 
+    const players = casualPlayers.get(roomId);
+    if (players) {
+      casualPlayers.delete(roomId);
+      deps.onResult?.(players, state.winner);
+    }
+
     if (isCasualMatch(matchId)) {
       hub.close(matchId);
       return;
@@ -209,6 +223,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
           });
           const m = hub.get(matchId)!;
           const id = matchId.toString();
+          casualPlayers.set(id, [pairing.a.address, pairing.b.address]); // role 0 = a, role 1 = b
           armTurnClockIfNeeded(matchId, id);
           io.to(pairing.a.id).emit("matched", { matchId: id, role: 0, opponent: pairing.b.address, casual: true });
           io.to(pairing.b.id).emit("matched", { matchId: id, role: 1, opponent: pairing.a.address, casual: true });

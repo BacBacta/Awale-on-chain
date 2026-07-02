@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import type { Address } from "viem";
 import { createSessionKey, persistSession } from "../lib/session.js";
+import { getProfile } from "../lib/profile.js";
 import { Icon } from "./Icon.js";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
@@ -48,8 +49,10 @@ export function QuickMatch({ account }: { account?: Address }) {
 
     timerRef.current = setTimeout(toBot, FALLBACK_MS);
 
-    sock.on("connect", () => {
-      sock.emit("queue", { address: account ?? session.address, elo: 1000, mode: "casual", sessionPubKey: session.address });
+    sock.on("connect", async () => {
+      // pair on the player's real skill rating when they have one
+      const elo = account ? ((await getProfile(account))?.elo ?? 1200) : 1200;
+      sock.emit("queue", { address: account ?? session.address, elo, mode: "casual", sessionPubKey: session.address });
     });
     sock.on("matched", (msg: { matchId?: string; role?: 0 | 1; opponent?: string }) => {
       if (!msg.matchId) return;

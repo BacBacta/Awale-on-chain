@@ -13,6 +13,23 @@ export interface PlayerProfile {
   lastDailyDone: string; // UTC YYYY-MM-DD, "" if never
   gamesPlayed: number;
   gamesWon: number;
+  elo: number;
+}
+
+export interface LeaderRow {
+  address: Address;
+  elo: number;
+  gamesPlayed: number;
+  gamesWon: number;
+}
+
+/** Display tier for a skill rating — themed on the game's own verbs. */
+export function rankFor(elo: number): { name: string; icon: string } {
+  if (elo >= 1550) return { name: "Grandmaster", icon: "👑" };
+  if (elo >= 1400) return { name: "Captor", icon: "🏆" };
+  if (elo >= 1275) return { name: "Harvester", icon: "🌾" };
+  if (elo >= 1150) return { name: "Sower", icon: "✋" };
+  return { name: "Seedling", icon: "🌱" };
 }
 
 export function profileEnabled(): boolean {
@@ -28,6 +45,19 @@ export async function getProfile(address: Address): Promise<PlayerProfile | null
     return profile;
   } catch {
     return null;
+  }
+}
+
+/** Skill leaderboard: players ranked by Elo, best first. [] when unavailable. */
+export async function getLeaderboard(n = 20): Promise<LeaderRow[]> {
+  if (!SERVER_URL) return [];
+  try {
+    const res = await fetch(`${SERVER_URL}/leaderboard?n=${n}`);
+    if (!res.ok) return [];
+    const { leaders } = (await res.json()) as { leaders: LeaderRow[] };
+    return leaders;
+  } catch {
+    return [];
   }
 }
 

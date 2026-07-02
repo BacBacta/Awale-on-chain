@@ -7,10 +7,13 @@ import {
   liveStreak,
   applyDailySolve,
   migrateLocalStreak,
+  applyGameResult,
+  topByElo,
   dayKey,
   prevDayKey,
   type ProfileStore,
 } from "../src/profile/store.js";
+import { DEFAULT_ELO } from "../src/store/types.js";
 import type { RedisLike } from "../src/persistence/redis-store.js";
 
 class FakeRedis implements RedisLike {
@@ -95,6 +98,54 @@ describe("local-streak migration", () => {
   });
 });
 
+describe("game results → Elo + counters", () => {
+  const B: Address = "0x000000000000000000000000000000000000000b";
+
+  it("winner gains what the loser drops; counters track played/won", () => {
+    const [w, l] = applyGameResult(freshProfile(A), freshProfile(B), 0);
+    expect(w.elo).toBeGreaterThan(DEFAULT_ELO);
+    expect(l.elo).toBeLessThan(DEFAULT_ELO);
+    expect(w.elo + l.elo).toBe(2 * DEFAULT_ELO); // zero-sum at equal ratings
+    expect(w.gamesPlayed).toBe(1);
+    expect(w.gamesWon).toBe(1);
+    expect(l.gamesPlayed).toBe(1);
+    expect(l.gamesWon).toBe(0);
+  });
+
+  it("a draw between equals moves nothing but counts the game", () => {
+    const [a, b] = applyGameResult(freshProfile(A), freshProfile(B), 2);
+    expect(a.elo).toBe(DEFAULT_ELO);
+    expect(b.elo).toBe(DEFAULT_ELO);
+    expect(a.gamesWon).toBe(0);
+    expect(a.gamesPlayed).toBe(1);
+    expect(b.gamesPlayed).toBe(1);
+  });
+
+  it("upsets transfer more than expected wins", () => {
+    const underdog = { ...freshProfile(A), elo: 1100 };
+    const favourite = { ...freshProfile(B), elo: 1400 };
+    const [u] = applyGameResult(underdog, favourite, 0); // underdog wins
+    const [f2] = applyGameResult({ ...freshProfile(A), elo: 1400 }, { ...freshProfile(B), elo: 1100 }, 0); // favourite wins
+    expect(u.elo - 1100).toBeGreaterThan(f2.elo - 1400);
+  });
+});
+
+describe("topByElo", () => {
+  const B: Address = "0x000000000000000000000000000000000000000b";
+  const C: Address = "0x000000000000000000000000000000000000000c";
+
+  it("ranks by elo, hides players with zero games, respects n", () => {
+    const players = [
+      { ...freshProfile(A), elo: 1300, gamesPlayed: 4 },
+      { ...freshProfile(B), elo: 1500, gamesPlayed: 2 },
+      { ...freshProfile(C), elo: 1900, gamesPlayed: 0 }, // never played — invisible
+    ];
+    const top = topByElo(players, 10);
+    expect(top.map((p) => p.elo)).toEqual([1500, 1300]);
+    expect(topByElo(players, 1).map((p) => p.elo)).toEqual([1500]);
+  });
+});
+
 function storeSuite(name: string, make: () => ProfileStore) {
   describe(name, () => {
     it("round-trips a profile and lists its address", async () => {
@@ -109,6 +160,17 @@ function storeSuite(name: string, make: () => ProfileStore) {
 
     it("returns null for an unknown address", async () => {
       expect(await make().get(A)).toBeNull();
+    });
+
+    it("fills fields missing from records saved by an older build", async () => {
+      const s = make();
+      // simulate a pre-elo record: save a full profile, then strip the field
+      const legacy = { ...freshProfile(A), streak: 3 } as Partial<ReturnType<typeof freshProfile>>;
+      delete legacy.elo;
+      await s.save(legacy as ReturnType<typeof freshProfile>);
+      const got = await s.get(A);
+      expect(got?.elo).toBe(DEFAULT_ELO);
+      expect(got?.streak).toBe(3);
     });
   });
 }

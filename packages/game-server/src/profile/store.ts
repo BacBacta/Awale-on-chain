@@ -8,6 +8,8 @@
 // streak rule mirrors the client's: alive if last solved today or yesterday.
 
 import type { Address } from "viem";
+import { updateElo, scoreForWinner } from "../elo.js";
+import { DEFAULT_ELO } from "../store/types.js";
 import type { RedisLike } from "../persistence/redis-store.js";
 
 export interface PlayerProfile {
@@ -19,6 +21,8 @@ export interface PlayerProfile {
   lastSeenAt: number; // epoch ms
   gamesPlayed: number;
   gamesWon: number;
+  /** Skill rating over casual + async play (Elo, K=32, starts at DEFAULT_ELO). */
+  elo: number;
   /** UTC day a streak-expiry nudge was last sent (dedupe: max one per day). */
   lastStreakNudge: string;
   /** UTC day a your-turn nudge was last sent (dedupe: max one per day). */
@@ -41,9 +45,15 @@ export function freshProfile(address: Address): PlayerProfile {
     lastSeenAt: Date.now(),
     gamesPlayed: 0,
     gamesWon: 0,
+    elo: DEFAULT_ELO,
     lastStreakNudge: "",
     lastTurnNudge: "",
   };
+}
+
+/** Fill any fields a record persisted by an older build doesn't have yet. */
+function normalize(address: Address, parsed: Partial<PlayerProfile>): PlayerProfile {
+  return { ...freshProfile(address), lastSeenAt: 0, ...parsed };
 }
 
 /** The streak as it stands *right now*: 0 once a day has been missed. */
@@ -77,6 +87,33 @@ export function migrateLocalStreak(
   return { ...p, streak: Math.floor(local.count), lastDailyDone: local.lastDone };
 }
 
+/**
+ * Apply a finished two-player game to both profiles: Elo transfer plus
+ * played/won counters. `winner` uses the engine convention (0, 1, 2 = draw).
+ * Pure — callers load, apply, save.
+ */
+export function applyGameResult(
+  p0: PlayerProfile,
+  p1: PlayerProfile,
+  winner: number,
+): [PlayerProfile, PlayerProfile] {
+  const [elo0, elo1] = updateElo(p0.elo, p1.elo, scoreForWinner(winner));
+  return [
+    { ...p0, elo: elo0, gamesPlayed: p0.gamesPlayed + 1, gamesWon: p0.gamesWon + (winner === 0 ? 1 : 0) },
+    { ...p1, elo: elo1, gamesPlayed: p1.gamesPlayed + 1, gamesWon: p1.gamesWon + (winner === 1 ? 1 : 0) },
+  ];
+}
+
+/** Ranked slice of profiles for the skill leaderboard: players with at least
+ *  one game, highest Elo first. Fine to compute by sorting at MiniPay-test
+ *  scale; switch the store to a Redis ZSET when the index outgrows this. */
+export function topByElo(profiles: PlayerProfile[], n: number): PlayerProfile[] {
+  return profiles
+    .filter((p) => p.gamesPlayed > 0)
+    .sort((a, b) => b.elo - a.elo || b.gamesWon - a.gamesWon)
+    .slice(0, n);
+}
+
 export interface ProfileStore {
   get(address: Address): Promise<PlayerProfile | null>;
   save(profile: PlayerProfile): Promise<void>;
@@ -87,7 +124,8 @@ export interface ProfileStore {
 export class InMemoryProfileStore implements ProfileStore {
   private readonly byAddr = new Map<string, PlayerProfile>();
   async get(address: Address): Promise<PlayerProfile | null> {
-    return this.byAddr.get(address.toLowerCase()) ?? null;
+    const p = this.byAddr.get(address.toLowerCase());
+    return p ? normalize(address, p) : null;
   }
   async save(profile: PlayerProfile): Promise<void> {
     this.byAddr.set(profile.address.toLowerCase(), profile);
@@ -104,7 +142,7 @@ export class RedisProfileStore implements ProfileStore {
   constructor(private readonly redis: RedisLike) {}
   async get(address: Address): Promise<PlayerProfile | null> {
     const raw = await this.redis.get(profKey(address));
-    return raw ? (JSON.parse(raw) as PlayerProfile) : null;
+    return raw ? normalize(address, JSON.parse(raw) as Partial<PlayerProfile>) : null;
   }
   async save(profile: PlayerProfile): Promise<void> {
     await this.redis.set(profKey(profile.address), JSON.stringify(profile));
