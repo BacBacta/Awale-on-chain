@@ -182,7 +182,7 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
         </Link>
         <span className="row" style={{ gap: 8 }}>
           <span className="chip">
-            {data.turnClockMs != null ? `⏱ ${Math.round(data.turnClockMs / 60_000)} min/move` : "correspondence"}
+            {data.turnClockMs != null ? `⏱ ${Math.round(data.turnClockMs / 60_000)} min/move` : "play anytime"}
           </span>
           <SoundToggle />
         </span>

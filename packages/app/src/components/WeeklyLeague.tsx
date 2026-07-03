@@ -60,12 +60,19 @@ export function WeeklyLeague() {
           <span className="faint">Ends in {raceEndsIn(data.endsAt)}</span>
         </div>
 
-        <div className="row" style={{ alignItems: "baseline", gap: 6 }}>
-          <span className="title score" style={{ color: "var(--gold)" }}>
-            {fmt(pool, STAKE_DECIMALS)} {STAKE_SYMBOL}
+        {pool > 0n ? (
+          <div className="row" style={{ alignItems: "baseline", gap: 6 }}>
+            <span className="title score" style={{ color: "var(--gold)" }}>
+              {fmt(pool, STAKE_DECIMALS)} {STAKE_SYMBOL}
+            </span>
+            <span className="faint">prize pot — top 5 share it Monday</span>
+          </div>
+        ) : (
+          // a bare "0" pot reads as "dead app" — sell the mechanic instead
+          <span className="muted">
+            The pot grows with every money game played this week — top 5 share it Monday. Be first on the board.
           </span>
-          <span className="faint">prize pot — top 5 share it Monday</span>
-        </div>
+        )}
 
         {entered && data.me ? (
           <span className="muted">

@@ -31,10 +31,9 @@ export default function Daily() {
 
   useEffect(() => {
     setStreak(streakCount());
-    if (solvedToday()) {
-      setDone(true);
-      setFeedback("You've already solved today's puzzle.");
-    }
+    // the header line already says "Solved ✓ — come back tomorrow"; a second
+    // banner repeating it below the board was noise, not reassurance
+    if (solvedToday()) setDone(true);
     // Best-effort wallet identity: with it the streak lives server-side and
     // survives reinstalls/device changes; without it, localStorage still works.
     const provider = getInjectedProvider();

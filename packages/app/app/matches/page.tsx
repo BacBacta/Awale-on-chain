@@ -6,7 +6,7 @@ import Link from "next/link";
 import { readContract } from "viem/actions";
 import type { Address } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../../src/lib/minipay.js";
-import { escrowConfig } from "../../src/lib/escrow.js";
+import { escrowConfig, cancelMatch } from "../../src/lib/escrow.js";
 import { listLocalMatches, statusView } from "../../src/lib/matches.js";
 import { computePayout, fmt } from "../../src/lib/money.js";
 import { humanizeError } from "../../src/lib/errors.js";
@@ -27,6 +27,8 @@ interface Row {
   status: number;
   stake: bigint;
   rakeBps: number;
+  /** match creator — the only wallet allowed to cancel an open match. */
+  player0: Address;
 }
 
 interface AsyncRow {
@@ -133,8 +135,8 @@ export default function Matches() {
           abi: matchEscrowAbi,
           functionName: "getMatch",
           args: [id],
-        })) as { status: number; stake: bigint; rakeBps: number };
-        return { id, status: Number(m.status), stake: m.stake, rakeBps: Number(m.rakeBps) };
+        })) as { status: number; stake: bigint; rakeBps: number; player0: Address };
+        return { id, status: Number(m.status), stake: m.stake, rakeBps: Number(m.rakeBps), player0: m.player0 };
       }),
     ).then((results) => {
       const ok = results
@@ -154,7 +156,7 @@ export default function Matches() {
   }, []);
 
   const [creating, setCreating] = useState(false);
-  async function newCorrespondence() {
+  async function newFriendGame() {
     if (creating) return;
     setCreating(true);
     try {
@@ -168,19 +170,34 @@ export default function Matches() {
     }
   }
 
+  // Cancel an open money match nobody joined — the full stake comes back.
+  const [cancelling, setCancelling] = useState<bigint | null>(null);
+  async function cancelOpen(id: bigint) {
+    const cfg = escrowConfig();
+    if (!cfg || !wallet || !account || cancelling !== null) return;
+    setCancelling(id);
+    try {
+      await cancelMatch(wallet, { account, escrow: cfg.escrow, matchId: id, feeCurrency: FEE_CURRENCY });
+      setRows((r) => (r ? r.filter((x) => x.id !== id) : r));
+    } catch (e) {
+      setError(humanizeError(e));
+    }
+    setCancelling(null);
+  }
+
   return (
     <main className="pad stack" style={{ flex: 1, gap: 12 }}>
       <span className="title">Your matches</span>
 
       {asyncEnabled() && (
-        <button className="btn block" onClick={newCorrespondence} disabled={creating}>
-          <Icon name="versus" size={17} /> {creating ? "Creating…" : "New correspondence game"}
+        <button className="btn block" onClick={newFriendGame} disabled={creating}>
+          <Icon name="versus" size={17} /> {creating ? "Creating…" : "Invite a friend — free game"}
         </button>
       )}
 
       {openMatches.length > 0 && (
         <>
-          <span className="section-label">Open games to join</span>
+          <span className="section-label">Money matches — open to join</span>
           {openMatches.map((o) => {
             const { prize } = computePayout(o.stake, o.rakeBps);
             return (
@@ -191,10 +208,10 @@ export default function Matches() {
                 <span className="col" style={{ flex: 1, gap: 1 }}>
                   <span style={{ fontWeight: 700, fontSize: 14 }}>{friendlyName(o.creator)}</span>
                   <span className="faint">
-                    Stake {fmt(o.stake, STAKE_DECIMALS)} · win {fmt(prize, STAKE_DECIMALS)} {STAKE_SYMBOL}
+                    Stake {fmt(o.stake, STAKE_DECIMALS)} · winner takes {fmt(prize, STAKE_DECIMALS)} {STAKE_SYMBOL}
                   </span>
                 </span>
-                <button className="btn" style={{ padding: "8px 14px" }} onClick={() => joinOpen(o.id)} disabled={!wallet || joining !== null}>
+                <button className="btn secondary" style={{ padding: "8px 14px" }} onClick={() => joinOpen(o.id)} disabled={!wallet || joining !== null}>
                   {joining === o.id ? "Joining…" : "Join"}
                 </button>
               </div>
@@ -206,7 +223,7 @@ export default function Matches() {
       {asyncRows.length > 0 && (
         <>
           <span className="section-label">
-            Correspondence
+            Friendly games
             {asyncRows.some((r) => r.yourTurn) && (
               <span className="chip positive" style={{ marginLeft: 8 }}>
                 {asyncRows.filter((r) => r.yourTurn).length} need your move
@@ -262,31 +279,48 @@ export default function Matches() {
           </Link>
         </div>
       ) : (
-        rows.map((r) => {
-          const sv = statusView(r.status);
-          const { prize } = computePayout(r.stake, r.rakeBps);
-          return (
-            <div className="card row animate-in" key={r.id.toString()}>
-              <div className="col" style={{ gap: 6 }}>
-                <span className="h2">Match #{r.id.toString()}</span>
-                <span className={`chip ${sv.tone}`} style={{ alignSelf: "flex-start" }}>
-                  {sv.live && <span className="dot pulse" />}
-                  {sv.label}
-                </span>
-                <span className="faint">
-                  Stake {fmt(r.stake, STAKE_DECIMALS)} · pot pays {fmt(prize, STAKE_DECIMALS)} {STAKE_SYMBOL}
-                </span>
+        <>
+          <span className="section-label">Your money matches</span>
+          {rows.map((r) => {
+            const sv = statusView(r.status);
+            const { prize } = computePayout(r.stake, r.rakeBps);
+            const mineOpen =
+              r.status === 1 && account !== null && r.player0.toLowerCase() === account.toLowerCase();
+            return (
+              <div className="card stack animate-in" key={r.id.toString()} style={{ gap: 8 }}>
+                <div className="row">
+                  <span className="col" style={{ gap: 4 }}>
+                    <span style={{ fontWeight: 700, fontSize: 14.5 }}>Match #{r.id.toString()}</span>
+                    <span className="faint">
+                      You each stake {fmt(r.stake, STAKE_DECIMALS)} · winner takes {fmt(prize, STAKE_DECIMALS)} {STAKE_SYMBOL}
+                    </span>
+                  </span>
+                  <span className={`chip ${sv.tone}`}>
+                    {sv.live && <span className="dot pulse" />}
+                    {sv.label}
+                  </span>
+                </div>
+                {sv.live && (
+                  <div className="row" style={{ gap: 8 }}>
+                    <Link className="btn secondary" href={`/play?match=${r.id.toString()}`} style={{ flex: 1, justifyContent: "center" }}>
+                      {r.status === 1 ? "Open & invite" : "Resume"}
+                    </Link>
+                    {mineOpen && (
+                      <button
+                        className="btn ghost"
+                        style={{ flex: 1, justifyContent: "center" }}
+                        onClick={() => cancelOpen(r.id)}
+                        disabled={cancelling !== null}
+                      >
+                        {cancelling === r.id ? "Cancelling…" : "Cancel & refund"}
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
-              {sv.live ? (
-                <Link className="btn" href={`/play?match=${r.id.toString()}`}>
-                  {r.status === 1 ? "Open" : "Resume"}
-                </Link>
-              ) : (
-                <span className="chip">done</span>
-              )}
-            </div>
-          );
-        })
+            );
+          })}
+        </>
       )}
     </main>
   );

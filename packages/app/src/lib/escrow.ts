@@ -80,6 +80,23 @@ export function joinMatch(
   });
 }
 
+/** Withdraw an open match nobody has joined — the full stake comes back.
+ *  Staking must feel reversible: money stuck in a lobby with no exit is the
+ *  fastest way to lose a first-time player's trust. */
+export function cancelMatch(
+  wallet: WriteClient,
+  p: { account: Address; escrow: Address; matchId: bigint; feeCurrency?: Address },
+): Promise<Hex> {
+  return wallet.writeContract({
+    address: p.escrow,
+    abi: matchEscrowAbi,
+    functionName: "cancelMatch",
+    args: [p.matchId],
+    account: p.account,
+    feeCurrency: p.feeCurrency,
+  });
+}
+
 /** Move-clock forfeit / abandonment: claim a result and open the challenge
  *  window. Must exactly match ReplayVerifier.transcriptHash so a later
  *  {@link challenge} with the real transcript is checked against the same

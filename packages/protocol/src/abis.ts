@@ -65,6 +65,13 @@ export const matchEscrowAbi = [
   },
   {
     type: "function",
+    name: "cancelMatch",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "settleSigned",
     stateMutability: "nonpayable",
     inputs: [

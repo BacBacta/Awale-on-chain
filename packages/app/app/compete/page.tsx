@@ -102,10 +102,11 @@ export default function Compete() {
             ))}
           </div>
           <span className="muted" style={{ textAlign: "center" }}>
-            Win games to climb from Seedling to Grandmaster. Your first game places you on the ladder.
+            Win games to climb from Seedling to Grandmaster. Every game you finish counts — your first one places you
+            on the ladder.
           </span>
           <Link className="btn block" href="/">
-            Play your first ranked game
+            Play your first game
           </Link>
         </div>
       )}

@@ -16,7 +16,7 @@ import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
 import { HowItWorks } from "../src/components/HowItWorks.js";
 import { streakCount, solvedToday } from "../src/lib/daily.js";
-import { getProfile } from "../src/lib/profile.js";
+import { getProfile, rankFor } from "../src/lib/profile.js";
 
 const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
@@ -67,6 +67,8 @@ export default function Lobby() {
   const [streak, setStreak] = useState(0);
   const [didDaily, setDidDaily] = useState(true);
   const [showMoney, setShowMoney] = useState(false);
+  // the ONE rank system (Seedling → Grandmaster) shown on the identity chip
+  const [tierIcon, setTierIcon] = useState<string | null>(null);
   const cfg: EscrowConfig | null = escrowConfig();
 
   useEffect(() => {
@@ -90,6 +92,7 @@ export default function Lobby() {
         // the server-side profile may hold a longer streak than this device
         const p = await getProfile(address);
         if (p && p.streak > 0) setStreak((s) => Math.max(s, p.streak));
+        if (p && p.gamesPlayed > 0) setTierIcon(rankFor(p.elo).icon);
       })
       .catch(() => {});
   }, []);
@@ -113,7 +116,7 @@ export default function Lobby() {
           )}
           {address ? (
             <Link href="/profile" className="chip positive" title={shortAddress(address)} style={{ textDecoration: "none" }}>
-              <span className="dot" />
+              {tierIcon ?? <span className="dot" />}
               {friendlyName(address)}
             </Link>
           ) : (
@@ -167,16 +170,26 @@ export default function Lobby() {
       <div className="stack" style={{ gap: 10 }}>
         <QuickMatch account={address ?? undefined} />
         <div className="row" style={{ gap: 8 }}>
-          <Link className="btn secondary" href="/matches" style={{ flex: 1, justifyContent: "center", gap: 6 }}>
-            <Icon name="versus" size={15} /> With a friend
+          <Link className="btn secondary" href="/matches" style={{ flex: 1, justifyContent: "center", gap: 6, padding: "10px 12px" }}>
+            <span className="col" style={{ gap: 2, alignItems: "center" }}>
+              <span className="row" style={{ gap: 6 }}>
+                <Icon name="versus" size={15} /> With a friend
+              </span>
+              <span style={{ fontSize: 10.5, fontWeight: 500, opacity: 0.65 }}>Share a link · play anytime</span>
+            </span>
           </Link>
           <button
             className="btn secondary"
-            style={{ flex: 1, justifyContent: "center", gap: 6 }}
+            style={{ flex: 1, justifyContent: "center", gap: 6, padding: "10px 12px" }}
             onClick={() => setShowMoney((v) => !v)}
             aria-expanded={showMoney}
           >
-            <Icon name="wallet" size={15} /> For money
+            <span className="col" style={{ gap: 2, alignItems: "center" }}>
+              <span className="row" style={{ gap: 6 }}>
+                <Icon name="wallet" size={15} /> For money
+              </span>
+              <span style={{ fontSize: 10.5, fontWeight: 500, opacity: 0.65 }}>Stake $0.25–1 · winner takes 92%</span>
+            </span>
           </button>
         </div>
       </div>

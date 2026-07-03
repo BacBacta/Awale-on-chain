@@ -7,7 +7,8 @@ import { readContract } from "viem/actions";
 import type { Address, Hex } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
 import { loadSession, signMove, signResult, signResign, signDrawOffer, type SessionKey } from "../lib/session.js";
-import { escrowConfig, proposeResult, challengeResult, type WriteClient } from "../lib/escrow.js";
+import { escrowConfig, proposeResult, challengeResult, cancelMatch, type WriteClient } from "../lib/escrow.js";
+import { humanizeError } from "../lib/errors.js";
 import { stakeTokens } from "../lib/stakeTokens.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 import { legalMovesMask, type GameState } from "../../../engine/src/awale.js";
@@ -75,6 +76,8 @@ export function LiveMatch({
   // the match screen is a blank "Connected" — say so, and hand out the invite.
   const [waitingOpen, setWaitingOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
   // A staked match's move-clock ran out (or a natural ending never settled)
   // and *someone* is eligible to claim on-chain. `theirClaim` is set only
   // when the opponent is the one claiming, so we can offer to dispute it.
@@ -336,6 +339,26 @@ export function LiveMatch({
     return () => clearInterval(iv);
   }, [casualRole, state === null, role === null, waitingOpen, matchId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Staking must feel reversible: an open match nobody joined refunds in full.
+  async function cancelOpenMatch() {
+    const cfg = escrowConfig();
+    if (!cfg || !wallet.current || !myAddress.current || cancelling) return;
+    setCancelling(true);
+    setCancelError(null);
+    try {
+      await cancelMatch(wallet.current, {
+        account: myAddress.current,
+        escrow: cfg.escrow,
+        matchId,
+        feeCurrency: feeCurrency.current,
+      });
+      window.location.href = "/";
+    } catch (e) {
+      setCancelError(humanizeError(e));
+      setCancelling(false);
+    }
+  }
+
   function shareMatchInvite() {
     const url = `${window.location.origin}/play?match=${matchId.toString()}`;
     const data = { title: "Awalé", text: `Join my Awalé match #${matchId.toString()}`, url };
@@ -452,8 +475,9 @@ export function LiveMatch({
           )}
         </div>
       ) : waitingOpen ? (
-        // created but nobody joined yet — say so and hand out the invite;
-        // the polling effect above swaps the board in the moment they join
+        // created but nobody joined yet — say so, hand out the invite, and keep
+        // the exit visible: money locked in a lobby with no way back is churn.
+        // The polling effect above swaps the board in the moment someone joins.
         <div className="card stack animate-in" style={{ gap: 12, alignItems: "center", textAlign: "center" }}>
           <span className="chip positive">
             <span className="dot pulse" /> Waiting for an opponent
@@ -467,6 +491,13 @@ export function LiveMatch({
           <button className="btn block" onClick={shareMatchInvite}>
             {copied ? "Link copied ✓" : "Invite an opponent"}
           </button>
+          <button className="btn secondary block" onClick={cancelOpenMatch} disabled={cancelling}>
+            {cancelling ? "Cancelling…" : "Cancel & refund"}
+          </button>
+          <span className="faint" style={{ fontSize: 12 }}>
+            No one joined yet — cancel anytime and your stake comes back in full.
+          </span>
+          {cancelError && <span className="muted" style={{ color: "var(--danger)" }}>{cancelError}</span>}
         </div>
       ) : (
         <div className="card">

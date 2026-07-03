@@ -165,13 +165,7 @@ export default function Shop() {
         </div>
         <div className="row">
           <span style={{ fontWeight: 700, fontSize: 13 }}>{s.name}</span>
-          {s.itemId === 0 ? (
-            <span className="faint">Free</span>
-          ) : (
-            <span className="faint">
-              {s.price} {SYMBOL}
-            </span>
-          )}
+          {s.itemId === 0 && <span className="faint">Free</span>}
         </div>
         {eq ? (
           <span className="chip positive" style={{ justifyContent: "center" }}>
@@ -182,8 +176,10 @@ export default function Shop() {
             Equip
           </button>
         ) : (
-          <button className="btn" onClick={() => buy(s)} disabled={busy || !account}>
-            Buy
+          // quiet outline, price on the button: a shop full of shouting green
+          // "Buy" reads as pressure, not premium — green stays for "Equipped"
+          <button className="btn secondary" onClick={() => buy(s)} disabled={busy || !account}>
+            Buy · {s.price} {SYMBOL}
           </button>
         )}
       </div>

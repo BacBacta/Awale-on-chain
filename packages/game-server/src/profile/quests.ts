@@ -50,10 +50,15 @@ export function questsFor(day: string): QuestDef[] {
   ];
 }
 
-/** Today's progress off a profile, rolling over stale days. */
-export function currentProgress(p: Pick<PlayerProfile, "quests">, now = new Date()): QuestProgress {
+/** Today's progress off a profile, rolling over stale days. The daily-solve
+ *  flag derives from the profile's own `lastDailyDone` (the streak's source of
+ *  truth) rather than trusting a separately-written boolean — the two fields
+ *  once disagreed on screen (streak said "solved", quest said "not yet"),
+ *  which is exactly the kind of inconsistency a player reads as "broken". */
+export function currentProgress(p: Pick<PlayerProfile, "quests" | "lastDailyDone">, now = new Date()): QuestProgress {
   const today = dayKey(now);
-  return p.quests.day === today ? p.quests : emptyProgress(today);
+  const base = p.quests.day === today ? p.quests : emptyProgress(today);
+  return { ...base, solvedDaily: base.solvedDaily || p.lastDailyDone === today };
 }
 
 function counted(progress: QuestProgress, id: QuestDef["id"]): number {

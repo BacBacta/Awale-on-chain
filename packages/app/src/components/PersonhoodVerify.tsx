@@ -55,7 +55,7 @@ export function PersonhoodVerify({
 
   return (
     <div className="card" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <span className="muted">Verify you&apos;re human (required for ranked &amp; cash play)</span>
+      <span className="muted">Verify you&apos;re human (required to play for money)</span>
       {status === "verified" && <span>✓ Verified</span>}
       {status === "error" && <span className="muted">Verification failed — try again.</span>}
       {status !== "verified" && selfApp && (

@@ -66,11 +66,22 @@ export function QuickMatch({ account }: { account?: Address }) {
     sock.on("connect_error", () => toBot());
   }
 
+  // One-line promise under the label: a first-time player must know what the
+  // button costs (nothing) and what it starts (a live game vs a real person).
+  const face = (
+    <span className="col" style={{ gap: 2, alignItems: "center" }}>
+      <span className="row" style={{ gap: 8 }}>
+        <Icon name="bolt" size={18} /> Quick match
+      </span>
+      <span style={{ fontSize: 11.5, fontWeight: 500, opacity: 0.75 }}>Free · live vs a real player</span>
+    </span>
+  );
+
   if (!SERVER_URL) {
     // server not configured — still give a game: straight to the AI
     return (
-      <a className="btn block" href="/play" style={{ fontSize: 16, padding: "16px 18px" }}>
-        <Icon name="bolt" size={18} /> Quick match
+      <a className="btn block" href="/play" style={{ fontSize: 16, padding: "12px 18px" }}>
+        {face}
       </a>
     );
   }
@@ -88,8 +99,8 @@ export function QuickMatch({ account }: { account?: Address }) {
       <Icon name="spinner" size={18} /> Finding an opponent… · tap to cancel
     </button>
   ) : (
-    <button className="btn block" onClick={find} style={{ fontSize: 16, padding: "16px 18px" }}>
-      <Icon name="bolt" size={18} /> Quick match
+    <button className="btn block" onClick={find} style={{ fontSize: 16, padding: "12px 18px" }}>
+      {face}
     </button>
   );
 }

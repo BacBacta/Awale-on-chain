@@ -72,7 +72,8 @@ export function PlayerPanel({
         <div className="col">
           <span style={{ fontWeight: 700, fontSize: 14 }}>
             {name}
-            {you && <span className="faint" style={{ marginLeft: 6 }}>(you)</span>}
+            {/* the suffix disambiguates a friendly name — "You" needs no help */}
+            {you && name !== "You" && <span className="faint" style={{ marginLeft: 6 }}>(you)</span>}
           </span>
           <span className="faint">
             {active ? (

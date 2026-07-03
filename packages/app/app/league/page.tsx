@@ -82,7 +82,9 @@ export default function League() {
   }, [vault, cfg]);
 
   useEffect(() => {
-    refresh().catch((e) => setError(humanizeError(e)));
+    // a failed background read is not the player's problem — the page renders
+    // without it, and any *action* they take reports its own error
+    refresh().catch(() => {});
   }, [refresh]);
 
   // Once finalized, pull this player's prize (amount + Merkle proof) from the
@@ -177,14 +179,14 @@ export default function League() {
   if (!vault) {
     return (
       <main className="pad stack" style={{ flex: 1, gap: 14 }}>
-        <span className="title">No-loss League</span>
+        <span className="title">Season</span>
         <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
           <span className="lead gold" style={{ width: 52, height: 52, borderRadius: 16 }}>
             <Icon name="trophy" size={26} />
           </span>
           <span className="h2">Coming soon</span>
           <span className="muted">
-            Put money in for the season, play ranked games, and share the prize pool — you always get your deposit back in
+            Put money in for the season, play games, and share the prize pool — you always get your deposit back in
             full. The league isn’t configured on this deployment yet.
           </span>
           <Link className="btn block" href="/" style={{ marginTop: 4 }}>
@@ -201,7 +203,7 @@ export default function League() {
 
   return (
     <main className="pad stack" style={{ flex: 1, gap: 14 }}>
-      <span className="title">No-loss League</span>
+      <span className="title">Season</span>
 
       <div className="card stack animate-in" style={{ gap: 10 }}>
         <div className="row">
@@ -215,7 +217,7 @@ export default function League() {
           )}
         </div>
         <span className="muted">
-          Deposit {SYMBOL} for the season, climb the ranked ladder, and share the season’s prize pool. Your deposit is
+          Deposit {SYMBOL} for the season, climb the ladder, and share the season’s prize pool. Your deposit is
           always returned in full — you can only win.
         </span>
         {season && (
@@ -267,11 +269,11 @@ export default function League() {
           <span className="h2">Deposits are closed for this season</span>
           <span className="muted">
             {mine > 0n
-              ? "Your deposit is riding the season — play ranked games to climb the ladder before it ends."
-              : "The season is in play. Win ranked games now; deposits reopen next season."}
+              ? "Your deposit is riding the season — keep winning games to climb the ladder before it ends."
+              : "The season is in play. Games you win now count on the ladder; deposits reopen next season."}
           </span>
           <Link className="btn block" href="/" style={{ marginTop: 4 }}>
-            <Icon name="play" size={17} /> Play a ranked game
+            <Icon name="play" size={17} /> Play a game
           </Link>
         </div>
       ) : (

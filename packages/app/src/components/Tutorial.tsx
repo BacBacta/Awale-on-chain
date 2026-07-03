@@ -94,13 +94,22 @@ export function Tutorial() {
         </span>
       </div>
 
-      <div className="stack" style={{ flex: 1, justifyContent: "center", gap: 16 }}>
+      {/* one layout for every step — card up top, board beneath. Text-only
+          steps keep a (non-playable) board so the screen never collapses into
+          a lone paragraph floating in darkness. */}
+      <div className="stack" style={{ flex: 1, gap: 16 }}>
         <div className="card stack animate-in" style={{ gap: 8 }} key={step}>
           <span className="h2">{s.title}</span>
           <span className="muted">{solved && s.success ? s.success : s.body}</span>
         </div>
 
-        {board && <Board state={board} onPlay={onPlay} playable={playable} />}
+        {board ? (
+          <Board state={board} onPlay={onPlay} playable={playable} />
+        ) : (
+          <div style={{ opacity: 0.55, pointerEvents: "none" }} aria-hidden>
+            <Board state={initialState()} onPlay={() => {}} playable={[]} />
+          </div>
+        )}
 
         {s.target != null && !solved && (
           <span className="chip gold" style={{ alignSelf: "center" }}>

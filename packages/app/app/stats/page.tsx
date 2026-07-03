@@ -20,16 +20,19 @@ function decimalsForSymbol(symbol?: string): number {
 export default async function Stats() {
   const s = await getStats();
 
-  // Operator metrics (MiniPay listing requirement). "—" placeholders are hidden
-  // rather than shown raw.
+  // Operator metrics (MiniPay listing requirement). A wall of raw zeros reads
+  // as "dead app" — when the indexer has nothing yet (cold start, or an RPC
+  // that can't reach old blocks) show em-dashes, never "0 users".
+  const empty = s.uniquePlayers === 0 && s.matches.created === 0;
+  const dash = (v: string) => (empty ? "—" : v);
   const rows: { label: string; value: string }[] = [
-    { label: "Daily active users", value: String(s.dau) },
-    { label: "Monthly active users", value: String(s.mau) },
-    { label: "Unique players", value: String(s.uniquePlayers) },
-    { label: "Matches (settled / total)", value: `${s.matches.settled} / ${s.matches.created}` },
+    { label: "Daily active users", value: dash(String(s.dau)) },
+    { label: "Monthly active users", value: dash(String(s.mau)) },
+    { label: "Unique players", value: dash(String(s.uniquePlayers)) },
+    { label: "Matches (settled / total)", value: dash(`${s.matches.settled} / ${s.matches.created}`) },
     {
       label: "D1 / D7 / D30 retention",
-      value: `${pct(s.retention.d1)} / ${pct(s.retention.d7)} / ${pct(s.retention.d30)}`,
+      value: dash(`${pct(s.retention.d1)} / ${pct(s.retention.d7)} / ${pct(s.retention.d30)}`),
     },
   ];
 
@@ -72,7 +75,9 @@ export default async function Stats() {
       )}
 
       <span className="muted" style={{ textAlign: "center" }}>
-        Computed from public match results · updated every minute.
+        {empty
+          ? "Early days — these numbers fill in as games settle on-chain."
+          : "Computed from public match results · updated every minute."}
       </span>
     </main>
   );

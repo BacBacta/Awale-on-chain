@@ -10,7 +10,7 @@ import { createSessionKey, persistSession } from "../lib/session.js";
 import { receiptDeeplink } from "../lib/deeplinks.js";
 import { computePayout, fmt, rakePct } from "../lib/money.js";
 import { humanizeError } from "../lib/errors.js";
-import { recordLocalMatch } from "../lib/matches.js";
+import { recordLocalMatch, listLocalMatches } from "../lib/matches.js";
 import { stakeTokens, preferredIndex } from "../lib/stakeTokens.js";
 import { faucetAbi } from "../lib/league.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
@@ -36,6 +36,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   const [copied, setCopied] = useState(false);
   const [sel, setSel] = useState(0); // index into TOKENS
   const [showJoin, setShowJoin] = useState(false); // join-by-number is the rare path
+  // a match of mine already waiting for an opponent — steer to sharing it
+  // instead of quietly stacking a second stake in a second empty lobby
+  const [alreadyOpen, setAlreadyOpen] = useState<bigint | null>(null);
 
   const busy = step === "approving" || step === "staking";
   const tok = TOKENS[sel];
@@ -69,6 +72,30 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       .catch(() => {
         /* balance preview is best-effort */
       });
+  }, [account, cfg]);
+
+  // does one of my recent matches already sit open? (checked once, best-effort)
+  useEffect(() => {
+    const ids = listLocalMatches().slice(0, 6);
+    if (ids.length === 0) return;
+    const client = publicClient(cfg.rpcUrl, cfg.chainId);
+    Promise.allSettled(
+      ids.map(async (id) => {
+        const m = (await readContract(client, {
+          address: cfg.escrow,
+          abi: matchEscrowAbi,
+          functionName: "getMatch",
+          args: [id],
+        })) as { status: number; player0: Address };
+        return { id, status: Number(m.status), creator: m.player0 };
+      }),
+    ).then((results) => {
+      const mine = results
+        .filter((r): r is PromiseFulfilledResult<{ id: bigint; status: number; creator: Address }> => r.status === "fulfilled")
+        .map((r) => r.value)
+        .find((m) => m.status === 1 && m.creator.toLowerCase() === account.toLowerCase());
+      if (mine) setAlreadyOpen(mine.id);
+    });
   }, [account, cfg]);
 
   // keep the displayed balance in sync with the selected token
@@ -213,7 +240,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       return 0n;
     }
   })();
-  const { pot, rake, prize } = computePayout(stakeRaw, rakeBps ?? 0);
+  const { prize } = computePayout(stakeRaw, rakeBps ?? 0);
 
   // --- waiting room after a successful create/join ---
   if (step === "done" && openId !== null) {
@@ -226,7 +253,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
           </span>
           <span className="display">Match #{openId.toString()}</span>
           <span className="muted">
-            Pot {fmt(pot, dec)} {sym} · winner takes {fmt(prize, dec)}
+            You each stake {fmt(stakeRaw, dec)} · winner takes {fmt(prize, dec)} {sym}
           </span>
         </div>
         <button className="btn block" onClick={shareInvite}>
@@ -299,13 +326,24 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
           </div>
         </div>
 
-        {/* the whole deal in one quiet line — mirrors MatchEscrow._payout;
-            placeholder (never a made-up 0%) until the live rake is confirmed */}
+        {/* the whole deal in one quiet line — the app's single canonical money
+            phrase ("you each stake X · winner takes Y"), mirroring
+            MatchEscrow._payout; placeholder (never a made-up 0%) until the
+            live rake is confirmed */}
         <span className="faint" style={{ textAlign: "center" }}>
           {rakeBps === null
             ? "Checking the winner's payout…"
-            : `Winner takes ${fmt(prize, dec)} ${sym} of the ${fmt(pot, dec)} pot · fee ${rakePct(rakeBps)}`}
+            : `You each stake ${fmt(stakeRaw, dec)} · winner takes ${fmt(prize, dec)} ${sym} (fee ${rakePct(rakeBps)})`}
         </span>
+
+        {alreadyOpen !== null && (
+          <span className="muted" style={{ textAlign: "center", fontSize: 12.5 }}>
+            Match #{alreadyOpen.toString()} is already waiting for an opponent —{" "}
+            <Link href={`/play?match=${alreadyOpen.toString()}`} style={{ color: "var(--accent)" }}>
+              share it instead?
+            </Link>
+          </span>
+        )}
 
         <button className="btn block" onClick={onCreate} disabled={busy || !token}>
           {step === "approving" ? "Confirm in wallet…" : step === "staking" ? "Adding to the pot…" : `Put ${stake || "0"} ${sym} in the pot`}

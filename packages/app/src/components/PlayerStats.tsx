@@ -7,6 +7,7 @@ import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
 import { escrowConfig } from "../lib/escrow.js";
 import { listLocalMatches, STATUS } from "../lib/matches.js";
 import { fmt } from "../lib/money.js";
+import { getProfile, rankFor } from "../lib/profile.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
@@ -26,12 +27,21 @@ interface Stats {
 export function PlayerStats() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [connected, setConnected] = useState(true);
+  // The ONE rating in the app: the server Elo, shown as the Seedling →
+  // Grandmaster tier — same number and names as Compete and the ladder.
+  const [elo, setElo] = useState<number | null>(null);
 
   useEffect(() => {
     const cfg = escrowConfig();
     const ids = listLocalMatches();
     if (!cfg || ids.length === 0) {
       setStats({ played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n });
+      const p = getInjectedProvider();
+      if (cfg && p)
+        connect(p, cfg.chainId)
+          .then(({ address }) => getProfile(address))
+          .then((prof) => prof && prof.gamesPlayed > 0 && setElo(prof.elo))
+          .catch(() => {});
       return;
     }
     (async () => {
@@ -45,6 +55,11 @@ export function PlayerStats() {
         }
       } else {
         setConnected(false);
+      }
+      if (address) {
+        getProfile(address)
+          .then((prof) => prof && prof.gamesPlayed > 0 && setElo(prof.elo))
+          .catch(() => {});
       }
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
 
@@ -120,13 +135,7 @@ export function PlayerStats() {
   const decided = stats.won + stats.lost;
   const winRate = decided > 0 ? Math.round((stats.won / decided) * 100) : null;
   const netPositive = stats.net >= 0n;
-
-  // A simple visible rating derived from results (server ELO is the source of
-  // truth once persistence is wired; this gives players a number + tier now).
-  const rating = 1000 + stats.won * 24 - stats.lost * 18 + stats.drawn * 2;
-  const tier =
-    rating >= 1400 ? "Master" : rating >= 1250 ? "Gold" : rating >= 1120 ? "Silver" : rating >= 1000 ? "Bronze" : "Wood";
-  const tierColor = tier === "Master" ? "var(--accent)" : tier === "Gold" ? "var(--gold)" : "var(--text)";
+  const tier = elo !== null ? rankFor(elo) : null;
 
   const cells: { label: string; value: string; tone?: string }[] = [
     { label: "Played", value: String(stats.played) },
@@ -137,20 +146,25 @@ export function PlayerStats() {
 
   return (
     <div className="stack" style={{ gap: 12 }}>
-      <div className="row">
-        <span className="h2">Your record</span>
-        {!connected && <span className="chip">connect wallet for full stats</span>}
-      </div>
-
-      <div className="card row" style={{ alignItems: "center" }}>
-        <div className="col" style={{ gap: 1 }}>
-          <span className="faint">Rank</span>
-          <span style={{ fontWeight: 750, fontSize: 17, color: tierColor }}>{tier}</span>
+      {!connected && (
+        <div className="row">
+          <span className="chip">connect wallet for full stats</span>
         </div>
-        <span className="title score" style={{ color: tierColor }}>
-          {rating}
-        </span>
-      </div>
+      )}
+
+      {tier && elo !== null && (
+        <div className="card row" style={{ alignItems: "center" }}>
+          <div className="col" style={{ gap: 1 }}>
+            <span className="faint">Rank</span>
+            <span style={{ fontWeight: 750, fontSize: 17 }}>
+              {tier.icon} {tier.name}
+            </span>
+          </div>
+          <span className="title score" style={{ color: "var(--gold)" }}>
+            {elo}
+          </span>
+        </div>
+      )}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         {cells.map((c) => (
