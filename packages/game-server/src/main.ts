@@ -810,6 +810,7 @@ async function backfillSettled(): Promise<void> {
   let from = last !== null && last + 1n > floor ? last + 1n : floor;
   if (from > latest) return;
   const blockTimes = new Map<bigint, Date>();
+  let seen = 0;
   for (let b = from; b <= latest; b += BACKFILL_STEP) {
     const to = b + BACKFILL_STEP - 1n < latest ? b + BACKFILL_STEP - 1n : latest;
     const logs = await publicClient.getLogs({ address: ESCROW, event: SETTLED_EVENT, fromBlock: b, toBlock: to });
@@ -823,12 +824,34 @@ async function backfillSettled(): Promise<void> {
         blockTimes.set(log.blockNumber, at);
       }
       await onSettled(matchId, Number(winner), prize ?? 0n, at);
+      seen++;
     }
     await ledger.setLastBlock(to);
   }
-  console.log(`[settled] backfill caught up: blocks ${from} → ${latest}`);
+  // the 5-min sweeps are usually empty — only narrate the interesting ones
+  if (seen > 0 || last === null) console.log(`[settled] backfill: blocks ${from} → ${latest}, ${seen} settlement(s)`);
 }
-void backfillSettled().catch((e) => console.warn(`[settled] backfill failed: ${(e as Error).message}`));
+// The poller is the guarantee, the live watcher just the accelerator: if
+// watchContractEvent ever fights the RPC (forno has rejected filter methods
+// before), settlements would silently stop counting until the next deploy.
+// Resuming from lastBlock makes each sweep one cheap getLogs over new blocks.
+let backfillRunning = false;
+async function backfillTick(): Promise<void> {
+  if (backfillRunning) return;
+  backfillRunning = true;
+  try {
+    await backfillSettled();
+  } catch (e) {
+    console.warn(`[settled] backfill failed: ${(e as Error).message}`);
+  } finally {
+    backfillRunning = false;
+  }
+}
+{
+  void backfillTick();
+  const bt = setInterval(() => void backfillTick(), 5 * 60_000);
+  if ("unref" in bt) bt.unref();
+}
 
 // League prizes are paid from the operator wallet (the rake itself accrues in
 // the Treasury; ops keeps the operator funded to cover the pool share).
