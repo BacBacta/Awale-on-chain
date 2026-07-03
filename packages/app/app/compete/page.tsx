@@ -3,7 +3,7 @@
 // Compete — progression in one place. For a brand-new player the page has one
 // job: explain the climb (Seedling → Grandmaster) and offer the first step.
 // Only once they hold a real rank does it become a dashboard: rank card,
-// quests, ladder, and the doors to tournaments and the season.
+// weekly race, quests, ladder, and the door to the season.
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -14,8 +14,8 @@ import { getProfile, rankFor, type PlayerProfile } from "../../src/lib/profile.j
 import { streakCount } from "../../src/lib/daily.js";
 import { DailyQuests } from "../../src/components/DailyQuests.js";
 import { SkillLeaderboard } from "../../src/components/SkillLeaderboard.js";
+import { WeeklyLeague } from "../../src/components/WeeklyLeague.js";
 import { Icon, type IconName } from "../../src/components/Icon.js";
-import { tournamentsEnabled } from "../../src/lib/tournaments.js";
 import { harvestAddress } from "../../src/lib/league.js";
 
 const TIERS = [
@@ -110,6 +110,10 @@ export default function Compete() {
         </div>
       )}
 
+      {/* the weekly race — the recurring money event (replaced tournaments:
+          a leaderboard works at any player count, a bracket doesn't) */}
+      <WeeklyLeague />
+
       {/* today's quests */}
       {profile && <DailyQuests quests={profile.quests ?? []} perfectDays={profile.perfectDays ?? 0} />}
 
@@ -117,16 +121,11 @@ export default function Compete() {
       <SkillLeaderboard label="Ladder" />
 
       {/* bigger arenas — real events only; stats are not an event */}
-      {(tournamentsEnabled() || harvestAddress()) && (
+      {harvestAddress() && (
         <>
           <span className="section-label">More ways to compete</span>
           <div className="stack" style={{ gap: 8 }}>
-            {tournamentsEnabled() && (
-              <Row href="/tournaments" icon="medal" title="Tournaments" sub="One entry fee, a bracket, winner takes the pool" />
-            )}
-            {harvestAddress() && (
-              <Row href="/league" icon="trophy" title="Season" sub="Deposit for the season — top of the ladder shares the prize" />
-            )}
+            <Row href="/league" icon="trophy" title="Season" sub="Deposit for the season — top of the ladder shares the prize" />
           </div>
         </>
       )}

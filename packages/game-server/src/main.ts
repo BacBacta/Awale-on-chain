@@ -44,7 +44,14 @@ import {
 import { recordQuestGame, recordQuestDaily, questStates, currentProgress } from "./profile/quests.js";
 import { retentionSweep } from "./retention.js";
 import { TournamentService, type TournamentMeta } from "./tournament/service.js";
-import { matchEscrowAbi, tournamentEscrowAbi } from "../../protocol/src/abis.js";
+import {
+  WeeklyLeague,
+  InMemoryLeagueStore,
+  RedisLeagueStore,
+  type LeagueStore,
+  type LeagueWinner,
+} from "./weekly-league.js";
+import { erc20Abi, matchEscrowAbi, tournamentEscrowAbi } from "../../protocol/src/abis.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
 import { InMemoryPersonhoodRegistry } from "./personhood/registry.js";
 import { verifyAndRegister } from "./personhood/gate.js";
@@ -141,6 +148,7 @@ let matchStore: MatchStore = new InMemoryMatchStore();
 let socialStore: SocialStore = new InMemorySocialStore();
 let subStore: SubscriptionStore = new InMemorySubscriptionStore();
 let profiles: ProfileStore = new InMemoryProfileStore();
+let leagueStore: LeagueStore = new InMemoryLeagueStore();
 if (process.env.REDIS_URL) {
   const redis = new IORedis(process.env.REDIS_URL, { family: 6, maxRetriesPerRequest: 5, lazyConnect: true });
   redis.on("error", (e) => console.warn(`[redis] ${e.message}`));
@@ -150,7 +158,8 @@ if (process.env.REDIS_URL) {
   socialStore = new RedisSocialStore(redis);
   subStore = new RedisSubscriptionStore(redis);
   profiles = new RedisProfileStore(redis);
-  console.log("stores: redis (async, social, push subscriptions, profiles)");
+  leagueStore = new RedisLeagueStore(redis);
+  console.log("stores: redis (async, social, push subscriptions, profiles, league)");
 } else {
   console.log("stores: in-memory (set REDIS_URL for durability + scaling)");
 }
@@ -178,6 +187,15 @@ function recordGameResult(players: [Address, Address], winner: number): void {
 }
 
 const asyncMatches = new AsyncMatchService(matchStore, notifier, { onResult: recordGameResult });
+
+// Weekly prize-pool league — the recurring money event. Credited from the
+// chain's MatchSettled events (see the watcher near the bottom), paid out and
+// reset every Monday 00:00 UTC by leagueTick.
+const league = new WeeklyLeague(leagueStore, {
+  minGames: Number(process.env.LEAGUE_MIN_GAMES ?? "5"),
+  pairCap: Number(process.env.LEAGUE_PAIR_CAP ?? "3"),
+  poolShareBps: Number(process.env.LEAGUE_POOL_SHARE_BPS ?? "5000"),
+});
 
 // Tournaments: in-memory lobby + bracket orchestration (same single-machine
 // model as matchmaking). When a bracket completes, the finalize hook reports the
@@ -361,6 +379,15 @@ const httpServer = createServer((req, res) => {
         })),
       });
     })().catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  // --- weekly league: this week's race, my rank, last week's winners ---
+  if (req.method === "GET" && url.pathname === "/weekly-league") {
+    const address = url.searchParams.get("address") as Address | null;
+    league
+      .snapshot(address ?? undefined)
+      .then((s) => json(200, s))
+      .catch((e) => json(500, { error: (e as Error).message }));
     return;
   }
   if (req.method === "POST" && url.pathname === "/profile/daily-solved") {
@@ -713,6 +740,91 @@ watchStartFinalized(
   { escrow: ESCROW, ctx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER, clockMs: BLITZ_CLOCK_MS }, readMatch },
   hub,
 );
+
+// League feed: MatchSettled is emitted by every staked settlement path
+// (settleSigned, finalize after the challenge window, a successful challenge,
+// draws included) — so the league credits exactly the games where money
+// actually moved, never a server-side opinion of who won.
+const leagueSeen = new Set<string>();
+publicClient.watchContractEvent({
+  address: ESCROW,
+  abi: matchEscrowAbi,
+  eventName: "MatchSettled",
+  onLogs: (logs) => {
+    for (const log of logs) {
+      const { matchId, winner } = (log as unknown as { args: { matchId?: bigint; winner?: number } }).args;
+      if (matchId === undefined || winner === undefined) continue;
+      const key = matchId.toString();
+      if (leagueSeen.has(key)) continue;
+      leagueSeen.add(key);
+      void (async () => {
+        const m = (await publicClient.readContract({
+          address: ESCROW,
+          abi: matchEscrowAbi,
+          functionName: "getMatch",
+          args: [matchId],
+        })) as { token: Address; stake: bigint; player0: Address; player1: Address; rakeBps: number };
+        await league.recordGame([m.player0, m.player1], Number(winner), BigInt(m.stake) * 2n, Number(m.rakeBps), m.token);
+        console.log(`[league] counted match ${key} (winner=${winner})`);
+      })().catch((e) => console.warn(`[league] match ${key} not recorded: ${(e as Error).message}`));
+    }
+  },
+});
+
+// League prizes are paid from the operator wallet (the rake itself accrues in
+// the Treasury; ops keeps the operator funded to cover the pool share).
+// Returns the winners actually paid — anything unpaid rolls into next week.
+async function leaguePayout(token: Address, winners: LeagueWinner[]): Promise<LeagueWinner[]> {
+  if (!(SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66)) {
+    console.warn("[league] no operator signer — pool carried to next week");
+    return [];
+  }
+  const wallet = createWalletClient({
+    chain: chainFor(CHAIN_ID),
+    transport: http(RPC_URL),
+    account: privateKeyToAccount(SIGNER as Hex),
+  });
+  const paid: LeagueWinner[] = [];
+  for (const w of winners) {
+    try {
+      const hash = await wallet.writeContract({
+        address: token,
+        abi: erc20Abi,
+        functionName: "transfer",
+        args: [w.address, BigInt(w.amountWei)],
+        ...(FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {}),
+      } as Parameters<typeof wallet.writeContract>[0]);
+      await publicClient.waitForTransactionReceipt({ hash });
+      paid.push(w);
+      console.log(`[league] prize ${w.amountWei} → ${w.address} (${hash})`);
+    } catch (e) {
+      console.warn(`[league] prize to ${w.address} failed (carried over): ${(e as Error).message}`);
+    }
+  }
+  return paid;
+}
+
+async function leagueTick(): Promise<void> {
+  const result = await league.rollover(leaguePayout);
+  if (!result) return;
+  console.log(`[league] week ${result.week} closed — pool ${result.poolWei}, ${result.winners.length} paid`);
+  result.winners.forEach((w, i) => {
+    void notifier
+      .notify(w.address, {
+        title: "You won the weekly league! 🏆",
+        body: `You finished #${i + 1} this week — your prize just landed in your wallet.`,
+        url: "/compete",
+        tag: `awale-league-${result.week}`,
+      })
+      .catch(() => {});
+  });
+}
+{
+  const tick = () => void leagueTick().catch((e) => console.warn(`[league] tick failed: ${(e as Error).message}`));
+  tick(); // adopt/settle the open week immediately on boot, not up to 5 min later
+  const lt = setInterval(tick, 5 * 60_000);
+  if ("unref" in lt) lt.unref();
+}
 
 // Retention sweep: streak-expiry and stale-turn nudges, at most one of each
 // per player per UTC day (deduped inside the sweep via the profile record).
