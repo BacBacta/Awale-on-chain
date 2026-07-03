@@ -143,7 +143,7 @@ export function GameOverlay({
       <div className="stack" style={{ width: "100%", maxWidth: 260, marginTop: 8 }}>
         {saveHref && (
           <a className="btn block" href={saveHref} style={{ background: "linear-gradient(180deg, #f7d27a, var(--gold))" }}>
-            <Icon name="trophy" size={17} /> Grow winnings in the League
+            <Icon name="trophy" size={17} /> You scored league points — see the race
           </a>
         )}
         <button className={`btn ${saveHref ? "secondary" : ""} block`} onClick={onPlayAgain}>

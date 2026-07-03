@@ -16,7 +16,6 @@ import { Board } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
 import { computePayout, fmt } from "../lib/money.js";
-import { harvestAddress } from "../lib/league.js";
 import { recordOpponent } from "../lib/social.js";
 import { shareResult } from "../lib/share.js";
 import { getEquipped, type EquippedSkin } from "../lib/skins.js";
@@ -535,12 +534,9 @@ export function LiveMatch({
               : undefined
           }
           saveHref={
-            outcome === 0 && stakeInfo.current && harvestAddress()
-              ? `/league?deposit=${Math.max(
-                  1,
-                  Math.round(Number(fmt(computePayout(stakeInfo.current.stake, stakeInfo.current.rakeBps).prize, STAKE_DECIMALS)) * 0.3),
-                )}`
-              : undefined
+            // a money win just scored league points — hand the winner the race
+            // they're now in, not a Season page whose deposits may be closed
+            outcome === 0 && stakeInfo.current ? "/compete" : undefined
           }
           onPlayAgain={() => (window.location.href = "/")}
           onShare={() =>

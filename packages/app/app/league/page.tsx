@@ -323,6 +323,10 @@ export default function League() {
         </div>
       )}
 
+      <Link href="/guide#season" className="faint" style={{ alignSelf: "center", fontSize: 12.5 }}>
+        How the season works →
+      </Link>
+
       {status && <span className="muted">{status}</span>}
       {error && (
         <div className="chip danger" style={{ alignSelf: "stretch", justifyContent: "center", padding: 10 }}>

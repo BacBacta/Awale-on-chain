@@ -46,6 +46,9 @@ export function HowItWorks() {
               </span>
             </span>
           ))}
+          <a href="/guide" className="faint" style={{ alignSelf: "center", fontSize: 12.5 }}>
+            The full guide — game, money, league, safety →
+          </a>
         </div>
       )}
     </div>

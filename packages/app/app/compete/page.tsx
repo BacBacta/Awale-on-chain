@@ -133,7 +133,10 @@ export default function Compete() {
 
       <div className="spacer" />
 
-      <div className="row" style={{ justifyContent: "center", paddingBottom: 4 }}>
+      <div className="row" style={{ justifyContent: "center", gap: 14, paddingBottom: 4 }}>
+        <Link href="/guide" className="faint" style={{ fontSize: 12.5 }}>
+          How it all works
+        </Link>
         <Link href="/stats" className="faint" style={{ fontSize: 12.5 }}>
           Money leaderboard & global stats
         </Link>

@@ -12,7 +12,7 @@ import { Icon, type IconName } from "./Icon.js";
 // still exist; they highlight their owning tab.
 type Tab = { href: string; label: string; icon: IconName; owns: string[] };
 const TABS: Tab[] = [
-  { href: "/", label: "Play", icon: "play", owns: ["/matches"] },
+  { href: "/", label: "Play", icon: "play", owns: ["/matches", "/guide"] },
   { href: "/compete", label: "Compete", icon: "trophy", owns: ["/league"] },
   { href: "/profile", label: "Me", icon: "seed", owns: ["/shop", "/stats"] },
 ];
