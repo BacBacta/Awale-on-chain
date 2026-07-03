@@ -50,12 +50,21 @@ describe("WeeklyLeague.recordGame", () => {
     expect((await league.snapshot(B, WED)).me).toEqual({ rank: null, points: 0, games: 1, wins: 0 });
   });
 
-  it("a draw scores 1 point each and adds nothing to the pool (no rake on-chain)", async () => {
+  it("a draw scores ZERO (it pays no rake — points would be farmable for free) but still counts for eligibility", async () => {
     const league = newLeague();
     await league.recordGame([A, B], 2, POT, RAKE_BPS, TOKEN, WED);
     const s = await league.snapshot(A, WED);
     expect(s.poolWei).toBe("0");
-    expect(s.me?.points).toBe(1);
+    expect(s.me?.points).toBe(0);
+    expect(s.me?.games).toBe(1);
+  });
+
+  it("referral bonuses add points, capped per referrer per week", async () => {
+    const league = new WeeklyLeague(new InMemoryLeagueStore(), { refBonusCap: 2 });
+    expect(await league.addReferralBonus(A, 2, WED)).toBe(true);
+    expect(await league.addReferralBonus(A, 2, WED)).toBe(true);
+    expect(await league.addReferralBonus(A, 2, WED)).toBe(false); // capped
+    expect((await league.snapshot(A, WED)).me?.points).toBe(4);
   });
 
   it("past the per-opponent cap, games still count for eligibility but score nothing", async () => {

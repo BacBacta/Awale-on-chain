@@ -7,12 +7,19 @@ import {
   emptyProgress,
   recordQuestGame,
   recordQuestDaily,
+  recordQuestPractice,
 } from "../src/profile/quests.js";
 import { freshProfile, dayKey, type PlayerProfile } from "../src/profile/store.js";
 
 const A: Address = "0x000000000000000000000000000000000000000A";
 const NOW = new Date("2026-07-02T12:00:00Z");
 const TODAY = dayKey(NOW);
+
+/** A profile with online history — sees the standard quest set, not the
+ *  gentler beginner one (see isBeginner). */
+function veteran(p: PlayerProfile): PlayerProfile {
+  return { ...p, gamesPlayed: 50 };
+}
 
 function playUntilPerfect(p: PlayerProfile, now = NOW): PlayerProfile {
   p = recordQuestDaily(p, now);
@@ -66,7 +73,7 @@ describe("quest progress", () => {
   });
 
   it("a perfect day is counted exactly once, even with more games after", () => {
-    let p = playUntilPerfect(freshProfile(A));
+    let p = playUntilPerfect(veteran(freshProfile(A)));
     expect(p.perfectDays).toBe(1);
     p = recordQuestGame(p, true, NOW); // keep playing past completion
     p = recordQuestDaily(p, NOW);
@@ -74,7 +81,7 @@ describe("quest progress", () => {
   });
 
   it("perfect days accumulate across days", () => {
-    let p = playUntilPerfect(freshProfile(A), new Date("2026-07-01T12:00:00Z"));
+    let p = playUntilPerfect(veteran(freshProfile(A)), new Date("2026-07-01T12:00:00Z"));
     p = playUntilPerfect(p, NOW);
     expect(p.perfectDays).toBe(2);
   });
@@ -85,5 +92,27 @@ describe("quest progress", () => {
     const play = questStates(progress).find((q) => q.id === "playGames")!;
     expect(play.count).toBe(play.target);
     expect(play.done).toBe(true);
+  });
+});
+
+describe("beginner quests", () => {
+  it("a brand-new player gets the gentle set, stable all day", () => {
+    let p = freshProfile("0x000000000000000000000000000000000000000A");
+    let progress = currentProgress(p, NOW);
+    expect(questStates(progress, true).map((q) => q.id)).toEqual(["solveDaily", "tryPractice", "playGames"]);
+    // finishing the first online game must NOT flip the set mid-day
+    p = { ...p, gamesPlayed: 1 };
+    p = recordQuestGame(p, true, NOW);
+    progress = currentProgress(p, NOW);
+    expect(p.gamesPlayed - progress.playGames <= 0).toBe(true); // still beginner today
+  });
+
+  it("practice completes the beginner quest and a full gentle day is perfect", () => {
+    let p = freshProfile("0x000000000000000000000000000000000000000A");
+    p = recordQuestDaily(p, NOW);
+    p = recordQuestPractice(p, NOW);
+    p = { ...p, gamesPlayed: 1 };
+    p = recordQuestGame(p, true, NOW); // the "play 1 game online" quest
+    expect(p.perfectDays).toBe(1);
   });
 });

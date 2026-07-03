@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { initialState, applyMove, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "./Board.js";
+import { track } from "../lib/analytics.js";
 
 // Interactive "how to play" — teaches sowing then capture by doing. Each
 // interactive step only lets the learner tap the highlighted house; the board
@@ -68,6 +69,7 @@ export function Tutorial() {
   useEffect(() => {
     setBoard(s.board ? makeState(s.board.pits, s.board.turn as 0 | 1, s.board.store0, s.board.store1) : null);
     setSolved(false);
+    if (isLast) track("tutorial_done");
     try {
       localStorage.setItem("awale_tutorial_seen", "1");
     } catch {

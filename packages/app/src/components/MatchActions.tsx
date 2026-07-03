@@ -13,6 +13,7 @@ import { humanizeError } from "../lib/errors.js";
 import { recordLocalMatch, listLocalMatches } from "../lib/matches.js";
 import { stakeTokens, preferredIndex } from "../lib/stakeTokens.js";
 import { faucetAbi } from "../lib/league.js";
+import { track } from "../lib/analytics.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
 
 const TOKENS = stakeTokens();
@@ -39,6 +40,8 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   // a match of mine already waiting for an opponent — steer to sharing it
   // instead of quietly stacking a second stake in a second empty lobby
   const [alreadyOpen, setAlreadyOpen] = useState<bigint | null>(null);
+  // one-time 18+ / responsible-play acknowledgement before the first stake
+  const [adultOk, setAdultOk] = useState(false);
 
   const busy = step === "approving" || step === "staking";
   const tok = TOKENS[sel];
@@ -73,6 +76,24 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         /* balance preview is best-effort */
       });
   }, [account, cfg]);
+
+  useEffect(() => {
+    track("money_open");
+    try {
+      setAdultOk(localStorage.getItem("awale_adult") === "1");
+    } catch {
+      /* storage unavailable — keep the checkbox visible */
+    }
+  }, []);
+
+  function confirmAdult() {
+    setAdultOk(true);
+    try {
+      localStorage.setItem("awale_adult", "1");
+    } catch {
+      /* ignore */
+    }
+  }
 
   // does one of my recent matches already sit open? (checked once, best-effort)
   useEffect(() => {
@@ -181,6 +202,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       setTx(hash);
       setOpenId(matchId);
       setStep("done");
+      track("match_created");
     } catch (e) {
       fail(e);
     }
@@ -215,6 +237,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       setTx(hash);
       setOpenId(matchId);
       setStep("done");
+      track("match_joined");
     } catch (e) {
       fail(e);
     }
@@ -345,7 +368,23 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
           </span>
         )}
 
-        <button className="btn block" onClick={onCreate} disabled={busy || !token}>
+        {!adultOk && (
+          <button
+            className="list-row"
+            onClick={confirmAdult}
+            style={{ font: "inherit", textAlign: "left" }}
+            aria-label="Confirm you are 18 or older"
+          >
+            <span className="chip" style={{ minWidth: 26, justifyContent: "center" }}>
+              ☐
+            </span>
+            <span className="muted" style={{ flex: 1, fontSize: 12.5 }}>
+              I&apos;m 18 or older and I only stake what I can afford to lose.
+            </span>
+          </button>
+        )}
+
+        <button className="btn block" onClick={onCreate} disabled={busy || !token || !adultOk}>
           {step === "approving" ? "Confirm in wallet…" : step === "staking" ? "Adding to the pot…" : `Put ${stake || "0"} ${sym} in the pot`}
         </button>
         {tok?.faucet && (
@@ -373,7 +412,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
             aria-label="Match id"
             style={{ flex: 1 }}
           />
-          <button className="btn secondary" onClick={onJoin} disabled={busy || !joinId}>
+          <button className="btn secondary" onClick={onJoin} disabled={busy || !joinId || !adultOk}>
             Join
           </button>
         </div>

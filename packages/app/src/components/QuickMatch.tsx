@@ -5,6 +5,7 @@ import { io, type Socket } from "socket.io-client";
 import type { Address } from "viem";
 import { createSessionKey, persistSession } from "../lib/session.js";
 import { getProfile } from "../lib/profile.js";
+import { track } from "../lib/analytics.js";
 import { Icon } from "./Icon.js";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
@@ -42,6 +43,7 @@ export function QuickMatch({ account }: { account?: Address }) {
 
   function find() {
     if (!SERVER_URL || phase !== "idle") return;
+    track("quick_match_start");
     setPhase("searching");
     const session = createSessionKey();
     const sock = io(SERVER_URL, { transports: ["websocket"] });

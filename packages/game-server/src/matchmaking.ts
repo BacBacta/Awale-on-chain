@@ -58,6 +58,9 @@ export class Matchmaker {
     let bestGap = Infinity;
     for (let i = 0; i < this.waiting.length; i++) {
       const w = this.waiting[i];
+      // never pair a wallet with itself (two tabs/devices): a self-match is
+      // free wins, and wins feed the ladder, the quests and the season split
+      if (w.address.toLowerCase() === p.address.toLowerCase()) continue;
       const gap = Math.abs(w.elo - p.elo);
       // a match is acceptable if it fits either player's (wait-widened) window
       if (gap <= Math.max(this.window(p), this.window(w)) && gap < bestGap) {

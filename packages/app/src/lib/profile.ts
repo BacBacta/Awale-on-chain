@@ -78,6 +78,50 @@ export async function getLeaderboard(n = 20): Promise<LeaderRow[]> {
  * has no history for this address). Returns the authoritative streak, or null
  * when offline/unconfigured — callers fall back to the local count.
  */
+/** A practice-vs-AI game finished — feeds the beginner quest (vanity only). */
+export function reportPracticePlayed(address: Address): void {
+  if (!SERVER_URL) return;
+  void fetch(`${SERVER_URL}/profile/practice-played`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ address }),
+  }).catch(() => {});
+}
+
+/**
+ * Referral capture: a visitor who arrived via /?ref=<address> is remembered
+ * on-device; once they connect, the pending referral is registered server-side
+ * and converts (into capped league points for the referrer) only when this
+ * player settles their first cash game — i.e. after they've paid real rake.
+ */
+export function captureReferrer(): void {
+  try {
+    const ref = new URLSearchParams(window.location.search).get("ref");
+    if (ref && /^0x[0-9a-fA-F]{40}$/.test(ref) && !localStorage.getItem("awale_ref")) {
+      localStorage.setItem("awale_ref", ref.toLowerCase());
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export function claimReferral(address: Address): void {
+  if (!SERVER_URL) return;
+  try {
+    const ref = localStorage.getItem("awale_ref");
+    if (!ref || ref === address.toLowerCase() || localStorage.getItem("awale_ref_claimed")) return;
+    void fetch(`${SERVER_URL}/referral/claim`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ referee: address, referrer: ref }),
+    }).then((r) => {
+      if (r.ok) localStorage.setItem("awale_ref_claimed", "1");
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function reportDailySolve(
   address: Address,
   local?: { count: number; lastDone: string },

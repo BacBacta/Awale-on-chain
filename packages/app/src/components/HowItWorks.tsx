@@ -9,6 +9,8 @@ const STEPS = [
   "You and your opponent each put the same amount in the pot — say $1.",
   "Play the match. The winner takes the pot, minus a small house fee (shown before you start).",
   "Practice and the daily puzzle are always free.",
+  "You can cancel an unjoined match anytime — your stake comes back in full.",
+  "18+ · play responsibly: only stake what you can afford to lose.",
 ];
 
 export function HowItWorks() {

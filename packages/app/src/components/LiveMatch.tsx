@@ -78,6 +78,10 @@ export function LiveMatch({
   const [copied, setCopied] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  // Mobile data blinks constantly for this audience — say so the moment it
+  // happens (the server grants the mover one reconnection grace, but the
+  // player must see WHY the board went quiet or they'll assume the app died).
+  const [connLost, setConnLost] = useState(false);
   // A staked match's move-clock ran out (or a natural ending never settled)
   // and *someone* is eligible to claim on-chain. `theirClaim` is set only
   // when the opponent is the one claiming, so we can offer to dispute it.
@@ -169,10 +173,15 @@ export function LiveMatch({
       sock = io(SERVER_URL, { transports: ["websocket"] });
       socket.current = sock;
       sock.on("connect", () => {
-        sock!.emit("watch", { matchId: matchId.toString() });
+        // declaring our seat lets the server grant this player their
+        // one-per-game reconnection grace if the link drops mid-move
+        sock!.emit("watch", { matchId: matchId.toString(), player: myRole });
         if (needsClaimCatchUp) sock!.emit("get-transcript", { matchId: matchId.toString() });
         setStatus("Connected");
+        setConnLost(false);
       });
+      sock.on("disconnect", () => setConnLost(true));
+      sock.io.on("reconnect", () => setConnLost(false));
       sock.on("state", (msg: { state: GameState; ply: number; clocks?: [number, number] | null }) => {
         setState(msg.state);
         setPly(msg.ply);
@@ -320,7 +329,7 @@ export function LiveMatch({
     const cfg = escrowConfig();
     if (!cfg) return;
     const iv = setInterval(async () => {
-      socket.current?.emit("watch", { matchId: matchId.toString() });
+      socket.current?.emit("watch", { matchId: matchId.toString(), player: role ?? undefined });
       if (waitingOpen) {
         try {
           const client = publicClient(cfg.rpcUrl, cfg.chainId);
@@ -419,6 +428,14 @@ export function LiveMatch({
           <SoundToggle />
         </span>
       </div>
+
+      {connLost && state && !state.over && (
+        <div className="row animate-in" style={{ justifyContent: "center" }}>
+          <span className="chip" style={{ boxShadow: "inset 0 0 0 1px rgba(255,122,118,0.45)" }}>
+            <span className="dot pulse" /> Connection lost — reconnecting… your clock keeps running
+          </span>
+        </div>
+      )}
 
       {drawOffered && (
         <div className="card row animate-in" style={{ gap: 10, alignItems: "center", justifyContent: "space-between" }}>

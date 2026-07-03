@@ -17,6 +17,9 @@ import { fmt } from "../lib/money.js";
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
 const MEDAL = ["#f6c863", "#cdd3da", "#cd8e5a"];
+// once Self verification is live, prizes only pay out to verified humans —
+// the card says so the week it turns on, not the Monday someone isn't paid
+const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.env.NEXT_PUBLIC_SELF_ENDPOINT);
 
 export function WeeklyLeague() {
   const [data, setData] = useState<WeeklyLeagueSnapshot | null>(null);
@@ -121,7 +124,8 @@ export function WeeklyLeague() {
         )}
 
         <span className="faint" style={{ fontSize: 11.5 }}>
-          Win 3 pts · draw 1 pt · first {data.pairCap} games vs the same opponent count
+          Win 3 pts · first {data.pairCap} games vs the same opponent count
+          {SELF_CONFIGURED ? " · prizes require a one-time identity check" : ""}
           {lastWinner
             ? ` · last week ${friendlyName(lastWinner.address)} won ${fmt(BigInt(lastWinner.amountWei), STAKE_DECIMALS)} ${STAKE_SYMBOL}`
             : ""}

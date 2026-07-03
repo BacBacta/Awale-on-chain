@@ -51,7 +51,7 @@ export function freshProfile(address: Address): PlayerProfile {
     gamesPlayed: 0,
     gamesWon: 0,
     elo: DEFAULT_ELO,
-    quests: { day: "", playGames: 0, winGames: 0, solvedDaily: false, rewarded: false },
+    quests: { day: "", playGames: 0, winGames: 0, practiceGames: 0, solvedDaily: false, rewarded: false },
     perfectDays: 0,
     lastStreakNudge: "",
     lastTurnNudge: "",

@@ -12,6 +12,7 @@ import { pushSupported, registerPush } from "../../src/lib/push.js";
 import { getInjectedProvider, connect } from "../../src/lib/minipay.js";
 import { escrowConfig } from "../../src/lib/escrow.js";
 import { sfx } from "../../src/lib/sound.js";
+import { track } from "../../src/lib/analytics.js";
 
 function legalHouses(s: GameState): number[] {
   const m = legalMovesMask(s);
@@ -56,6 +57,7 @@ export default function Daily() {
       setBoard(applyMove(puzzle.state, h)); // animate the capture
       setDone(true);
       sfx("win");
+      track("daily_solved");
       const local = recordSolved();
       setStreak(local);
       setFeedback(null);

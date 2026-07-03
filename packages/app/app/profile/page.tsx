@@ -58,6 +58,14 @@ export default function Profile() {
     }
   }
 
+  function shareReferral() {
+    if (!address) return;
+    const url = `${window.location.origin}/?ref=${address}`;
+    const data = { title: "Awalé", text: "Play Awalé with me — win real money on MiniPay", url };
+    if (navigator.share) navigator.share(data).catch(() => {});
+    else navigator.clipboard?.writeText(url).catch(() => {});
+  }
+
   const name = friendlyName(address);
   const initial = name.trim()[0]?.toUpperCase() ?? "?";
   const boardSkin = ALL_SKINS.find((s) => s.asset === equipped.wood);
@@ -203,6 +211,19 @@ export default function Profile() {
               <Icon name="versus" size={16} /> {challenging ? "Creating…" : "Challenge a friend"}
             </button>
           )}
+        </>
+      )}
+
+      {/* referral — the growth loop: your link, their first money game, your league points */}
+      {address && (
+        <>
+          <span className="section-label">Invite &amp; earn</span>
+          <button className="btn secondary block" onClick={shareReferral}>
+            <Icon name="share" size={16} /> Invite friends — earn league points
+          </button>
+          <span className="faint" style={{ textAlign: "center", fontSize: 12 }}>
+            When a friend you invited plays their first money game, you earn league points.
+          </span>
         </>
       )}
 

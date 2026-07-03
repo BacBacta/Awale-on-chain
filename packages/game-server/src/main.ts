@@ -41,7 +41,7 @@ import {
   topByElo,
   type ProfileStore,
 } from "./profile/store.js";
-import { recordQuestGame, recordQuestDaily, questStates, currentProgress } from "./profile/quests.js";
+import { recordQuestGame, recordQuestDaily, recordQuestPractice, questStates, currentProgress, isBeginner } from "./profile/quests.js";
 import { retentionSweep } from "./retention.js";
 import { TournamentService, type TournamentMeta } from "./tournament/service.js";
 import {
@@ -153,6 +153,19 @@ let profiles: ProfileStore = new InMemoryProfileStore();
 let leagueStore: LeagueStore = new InMemoryLeagueStore();
 let ledgerStore: LedgerStore = new InMemoryLedgerStore();
 let inboxStore: InboxStore = new InMemoryInboxStore();
+// tiny KV facade for small markers/counters (funnel events, referrals):
+// redis when configured, in-process map otherwise
+let kv: { get(k: string): Promise<string | null>; set(k: string, v: string): Promise<unknown> } = (() => {
+  const mem = new Map<string, string>();
+  return {
+    async get(k: string) {
+      return mem.get(k) ?? null;
+    },
+    async set(k: string, v: string) {
+      mem.set(k, v);
+    },
+  };
+})();
 if (process.env.REDIS_URL) {
   const redis = new IORedis(process.env.REDIS_URL, { family: 6, maxRetriesPerRequest: 5, lazyConnect: true });
   redis.on("error", (e) => console.warn(`[redis] ${e.message}`));
@@ -166,6 +179,7 @@ if (process.env.REDIS_URL) {
   ledgerStore = new RedisLedgerStore(redis);
   inboxStore = new RedisInboxStore(redis);
   personhood = new RedisPersonhoodRegistry(redis);
+  kv = redis;
   console.log("stores: redis (async, social, push subscriptions, profiles, league, ledger, inbox, personhood)");
 } else {
   console.log("stores: in-memory (set REDIS_URL for durability + scaling)");
@@ -207,7 +221,64 @@ const league = new WeeklyLeague(leagueStore, {
   minGames: Number(process.env.LEAGUE_MIN_GAMES ?? "5"),
   pairCap: Number(process.env.LEAGUE_PAIR_CAP ?? "3"),
   poolShareBps: Number(process.env.LEAGUE_POOL_SHARE_BPS ?? "5000"),
+  // until verified-payout is live, an unclaimed pot must not compound into a
+  // sybil-worthy prize — default cap: 25 tokens (18 decimals)
+  maxCarryWei: BigInt(process.env.LEAGUE_MAX_CARRY_WEI ?? "25000000000000000000"),
+  refBonusCap: Number(process.env.LEAGUE_REF_BONUS_CAP ?? "5"),
 });
+/** League points a referrer earns when their friend settles a first cash game. */
+const REFERRAL_POINTS = Number(process.env.REFERRAL_POINTS ?? "2");
+
+// --- funnel events: anonymous per-day counters (name whitelist, no payloads).
+// Racy read-modify-write is fine here — these steer product decisions, not money.
+const FUNNEL_EVENTS = new Set([
+  "app_open",
+  "tutorial_done",
+  "practice_start",
+  "quick_match_start",
+  "money_open",
+  "match_created",
+  "match_joined",
+  "daily_solved",
+]);
+const evKey = (day: string, name: string) => `awale:ev:${day}:${name}`;
+async function bumpEvent(name: string): Promise<void> {
+  const day = new Date().toISOString().slice(0, 10);
+  const cur = Number((await kv.get(evKey(day, name))) ?? 0);
+  await kv.set(evKey(day, name), String(cur + 1));
+}
+async function readEvent(day: string, name: string): Promise<number> {
+  return Number((await kv.get(evKey(day, name))) ?? 0);
+}
+
+// --- referral: a friend arrives via ?ref=<address>. The pending marker only
+// converts when the referee settles a FIRST cash game — they've paid real
+// rake by then, so manufacturing "friends" costs a farmer more than the
+// capped league points are worth.
+const refPendingKey = (a: string) => `awale:ref:pending:${a.toLowerCase()}`;
+const refDoneKey = (a: string) => `awale:ref:done:${a.toLowerCase()}`;
+async function registerReferral(referee: Address, referrer: Address): Promise<void> {
+  if (await kv.get(refDoneKey(referee))) return; // already converted
+  if (await kv.get(refPendingKey(referee))) return; // first referrer wins
+  await kv.set(refPendingKey(referee), referrer.toLowerCase());
+}
+async function convertReferral(player: Address): Promise<void> {
+  const referrer = await kv.get(refPendingKey(player));
+  if (!referrer) return;
+  await kv.set(refDoneKey(player), "1");
+  await kv.set(refPendingKey(player), "");
+  const awarded = await league.addReferralBonus(referrer as Address, REFERRAL_POINTS);
+  if (!awarded) return; // weekly cap reached — conversion still consumed
+  console.log(`[referral] ${player} converted → +${REFERRAL_POINTS} league pts for ${referrer}`);
+  void notifier
+    .notify(referrer as Address, {
+      title: "Your friend is playing! 🎉",
+      body: `They just finished their first money game — you earned +${REFERRAL_POINTS} league points.`,
+      url: "/compete",
+      tag: `awale-ref-${player.toLowerCase()}`,
+    })
+    .catch(() => {});
+}
 
 // Tournaments: in-memory lobby + bracket orchestration (same single-machine
 // model as matchmaking). When a bracket completes, the finalize hook reports the
@@ -335,14 +406,67 @@ const httpServer = createServer((req, res) => {
     (async () => {
       const p = (await profiles.get(address)) ?? freshProfile(address);
       await profiles.save({ ...p, lastSeenAt: Date.now() });
+      const progress = currentProgress(p);
       json(200, {
         profile: {
           ...p,
           streak: liveStreak(p),
-          quests: questStates(currentProgress(p)), // resolved for today, not the raw counters
+          // resolved for today, not the raw counters; brand-new players get
+          // the gentler beginner quest set
+          quests: questStates(progress, isBeginner(p, progress)),
         },
       });
     })().catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  // --- a practice-vs-AI game finished (feeds the beginner quest; vanity only) ---
+  if (req.method === "POST" && url.pathname === "/profile/practice-played") {
+    readJson(req)
+      .then(async (b) => {
+        const { address } = b as { address: Address };
+        if (!address) throw new Error("address required");
+        const p = (await profiles.get(address)) ?? freshProfile(address);
+        await profiles.save(recordQuestPractice({ ...p, lastSeenAt: Date.now() }));
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  // --- funnel events: anonymous per-day counters so we can SEE where new
+  //     players drop off instead of guessing (name whitelist, address hashed
+  //     into a per-day unique set via the profile store's redis) ---
+  if (req.method === "POST" && url.pathname === "/events") {
+    readJson(req)
+      .then((b) => {
+        const { name } = b as { name: string };
+        if (!name || !FUNNEL_EVENTS.has(name)) throw new Error("unknown event");
+        return bumpEvent(name);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "GET" && url.pathname === "/events") {
+    const day = url.searchParams.get("day") ?? new Date().toISOString().slice(0, 10);
+    (async () => {
+      const out: Record<string, number> = {};
+      for (const name of FUNNEL_EVENTS) out[name] = await readEvent(day, name);
+      json(200, { day, events: out });
+    })().catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  // --- referral: friend arrives via ?ref=<address>; the bonus only fires
+  //     when the friend settles a FIRST cash game (rake paid = sybil cost) ---
+  if (req.method === "POST" && url.pathname === "/referral/claim") {
+    readJson(req)
+      .then(async (b) => {
+        const { referee, referrer } = b as { referee: Address; referrer: Address };
+        if (!referee || !referrer) throw new Error("referee + referrer required");
+        if (referee.toLowerCase() === referrer.toLowerCase()) throw new Error("cannot refer yourself");
+        await registerReferral(referee, referrer);
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
     return;
   }
   if (req.method === "GET" && url.pathname === "/leaderboard") {
@@ -373,7 +497,7 @@ const httpServer = createServer((req, res) => {
   // --- all-time money leaderboard, fed from MatchSettled (was a client-side
   //     scan of every log since block 0 on each visit) ---
   if (req.method === "GET" && url.pathname === "/money-leaderboard") {
-    const n = Math.min(50, Math.max(1, Number(url.searchParams.get("n") ?? "25")));
+    const n = Math.min(200, Math.max(1, Number(url.searchParams.get("n") ?? "25")));
     ledger
       .top(n)
       .then((leaders) => json(200, { leaders }))
@@ -609,6 +733,9 @@ attachSocketIO(io, {
     console.log(`[match ${matchId}] over, winner=${winner} — awaiting result signatures`);
   },
   onResult: recordGameResult,
+  // matchmaking rates from the server profile — the client's "elo" field is
+  // attacker-chosen and only a fallback for players with no profile yet
+  eloOf: async (address) => (await profiles.get(address))?.elo ?? null,
 });
 
 // First-move randomness lifecycle:
@@ -733,18 +860,9 @@ async function maybeSyncTournaments() {
   lastTournamentSync = now;
   await syncTournaments();
 }
-if (TOURNAMENT) {
-  // best-effort startup sync with a couple of retries (cold-start RPC can time out)
-  void (async () => {
-    for (let i = 0; i < 3; i++) {
-      await syncTournaments();
-      if (tournaments.list().length > 0) break;
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-  })();
-  const ts = setInterval(() => void syncTournaments(), 60_000);
-  if ("unref" in ts) ts.unref();
-}
+// Tournaments are retired (replaced by the weekly league): no startup sync, no
+// interval. The debounced on-demand sync in GET /tournaments still works for
+// an in-flight bracket reached by deep link — otherwise the chain is never polled.
 watchStartFinalized(
   publicClient as unknown as EventWatcher,
   { escrow: ESCROW, ctx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER, clockMs: BLITZ_CLOCK_MS }, readMatch },
@@ -770,7 +888,13 @@ async function onSettled(matchId: bigint, winner: number, prizeWei: bigint, at: 
     args: [matchId],
   })) as { token: Address; stake: bigint; player0: Address; player1: Address; rakeBps: number };
   await league.recordGame([m.player0, m.player1], winner, BigInt(m.stake) * 2n, Number(m.rakeBps), m.token, at);
-  if (winner === 0 || winner === 1) await ledger.recordWin(winner === 0 ? m.player0 : m.player1, prizeWei);
+  if (winner === 0 || winner === 1) {
+    await ledger.recordWin(winner === 0 ? m.player0 : m.player1, prizeWei);
+    // rake was actually paid on this game — it can convert a pending referral
+    // (draws refund without rake and must not, or referrals become free)
+    await convertReferral(m.player0).catch(() => {});
+    await convertReferral(m.player1).catch(() => {});
+  }
   recordGameResult([m.player0, m.player1], winner);
   console.log(`[settled] counted match ${key} (winner=${winner})`);
 }

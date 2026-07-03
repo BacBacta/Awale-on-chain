@@ -15,13 +15,15 @@ import type { RedisLike } from "./persistence/redis-store.js";
 
 export interface LeagueEntry {
   address: Address;
-  /** 3 per win, 1 per draw — only within the per-opponent cap. */
+  /** 3 per win (draws score 0) — only within the per-opponent cap. */
   points: number;
   /** Every counted staked game (eligibility bar), capped or not. */
   games: number;
   wins: number;
   /** Games played vs each opponent this week; past the cap they stop scoring. */
   perOpp: Record<string, number>;
+  /** Referral bonuses granted this week (capped — see addReferralBonus). */
+  refBonuses?: number;
 }
 
 export interface LeagueWeek {
@@ -54,7 +56,11 @@ export interface LeagueStanding {
 }
 
 export const WIN_POINTS = 3;
-export const DRAW_POINTS = 1;
+/** A draw refunds both stakes on-chain — no rake is ever paid. Scoring it
+ *  would hand out league points for free (two colluding wallets signing
+ *  agreed draws at gas-only cost), so a draw counts for eligibility but
+ *  earns nothing. */
+export const DRAW_POINTS = 0;
 /** Payout schedule for ranks 1..5, in bps of the pool. Unclaimed shares
  *  (fewer eligible players, or a failed transfer) roll into the next week. */
 export const PAYOUT_BPS = [5000, 2500, 1500, 700, 300];
@@ -146,12 +152,20 @@ export interface LeagueOptions {
   pairCap?: number;
   /** Share of the rake that feeds the pool, in bps (default 5000 = half). */
   poolShareBps?: number;
+  /** Ceiling on the pool carried into a new week (0 = no cap). A pot that
+   *  compounds unpaid week over week eventually makes sybil-sniping +EV;
+   *  until verified-payout is on, the carry is what needs the brake. */
+  maxCarryWei?: bigint;
+  /** Referral bonuses a player can earn per week (default 5). */
+  refBonusCap?: number;
 }
 
 export class WeeklyLeague {
   readonly minGames: number;
   readonly pairCap: number;
   readonly poolShareBps: number;
+  readonly maxCarryWei: bigint;
+  readonly refBonusCap: number;
 
   constructor(
     private readonly store: LeagueStore,
@@ -160,6 +174,8 @@ export class WeeklyLeague {
     this.minGames = opts.minGames ?? DEFAULT_MIN_GAMES;
     this.pairCap = opts.pairCap ?? DEFAULT_PAIR_CAP;
     this.poolShareBps = opts.poolShareBps ?? DEFAULT_POOL_SHARE_BPS;
+    this.maxCarryWei = opts.maxCarryWei ?? 0n;
+    this.refBonusCap = opts.refBonusCap ?? 5;
   }
 
   private async loadOrCreate(week: string): Promise<LeagueWeek> {
@@ -202,6 +218,24 @@ export class WeeklyLeague {
     }
     if (!w.token) w.token = token;
     await this.store.save(w);
+  }
+
+  /**
+   * Award referral league points to `referrer` — called when a referred friend
+   * settles their FIRST cash game (so the bonus is always backed by real rake
+   * the friend paid; a sybil "friend" costs the farmer more than the points
+   * are worth). Capped per referrer per week. Returns false when capped.
+   */
+  async addReferralBonus(referrer: Address, points: number, now = new Date()): Promise<boolean> {
+    const w = await this.loadOrCreate(weekKey(now));
+    const key = referrer.toLowerCase();
+    const e: LeagueEntry = w.entries[key] ?? { address: key as Address, points: 0, games: 0, wins: 0, perOpp: {} };
+    if ((e.refBonuses ?? 0) >= this.refBonusCap) return false;
+    e.refBonuses = (e.refBonuses ?? 0) + 1;
+    e.points += points;
+    w.entries[key] = e;
+    await this.store.save(w);
+    return true;
   }
 
   /** Eligible players (>= minGames), best first. */
@@ -275,8 +309,10 @@ export class WeeklyLeague {
     const paidTotal = paid.reduce((a, c) => a + BigInt(c.amountWei), 0n);
 
     // whatever wasn't paid out (no eligible players, unpaid shares, failed
-    // transfers) seeds next week's pool
-    const carry = pool - paidTotal;
+    // transfers) seeds next week's pool — clipped to maxCarryWei when set,
+    // so an unclaimed pot can't compound into a sybil-worthy prize
+    let carry = pool - paidTotal;
+    if (this.maxCarryWei > 0n && carry > this.maxCarryWei) carry = this.maxCarryWei;
     if (carry > 0n || w.token) {
       const next = await this.loadOrCreate(current);
       next.poolWei = (BigInt(next.poolWei) + carry).toString();

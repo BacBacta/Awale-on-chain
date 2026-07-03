@@ -74,21 +74,31 @@ async function main() {
   }
   if (principal.size === 0) throw new Error("no depositors for this season");
 
-  // 2. wins + Elo from the game-server profile — the same ladder the app's
-  // Compete tab shows. Profiles are fed from casual play AND the chain's
-  // MatchSettled events (main.ts settled pipeline), so cash wins are already
-  // in gamesWon; adding a settled-log count on top would double-count them.
+  // 2. CASH wins only, from the server's settled-match ledger. The prize pool
+  // is split proportionally to wins — casual/async wins are free to farm
+  // (self-pairing, resign-trading), so counting them would let a farmer
+  // capture the yield other people's deposits earned. A cash win is backed by
+  // rake actually paid: farming it costs more than it yields. Elo is fetched
+  // only as a display/tiebreak.
   const wins = new Map<string, number>();
   const elo = new Map<string, number>();
+  try {
+    const res = await fetch(`${SERVER_URL}/money-leaderboard?n=200`);
+    if (res.ok) {
+      const { leaders } = (await res.json()) as { leaders: { address: string; wins: number }[] };
+      for (const l of leaders) if (principal.has(l.address.toLowerCase())) wins.set(l.address.toLowerCase(), l.wins);
+    }
+  } catch {
+    /* ledger unreachable — everyone ranks by principal (still no free-win exploit) */
+  }
   for (const account of principal.keys()) {
     try {
       const res = await fetch(`${SERVER_URL}/profile?address=${account}`);
       if (!res.ok) continue;
-      const { profile } = (await res.json()) as { profile: { elo: number; gamesWon: number } };
+      const { profile } = (await res.json()) as { profile: { elo: number } };
       elo.set(account, profile.elo);
-      wins.set(account, profile.gamesWon ?? 0);
     } catch {
-      /* server unreachable — this player ranks by principal alone */
+      /* tiebreak only — safe to skip */
     }
   }
 

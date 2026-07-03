@@ -23,6 +23,17 @@ describe("Matchmaker", () => {
     expect(mm.queueSize).toBe(2);
   });
 
+  it("never pairs a wallet with itself (two tabs = free wins otherwise)", () => {
+    const mm = new Matchmaker({ baseWindow: 100 });
+    mm.enqueue({ id: "tab1", address: addr(1), elo: 1000 });
+    expect(mm.enqueue({ id: "tab2", address: addr(1), elo: 1000 })).toBeNull(); // same wallet waits
+    expect(mm.queueSize).toBe(2);
+    // a genuine second player still matches immediately
+    const pair = mm.enqueue({ id: "c", address: addr(2), elo: 1010 });
+    expect(pair).not.toBeNull();
+    expect(pair!.b.address).toBe(addr(1));
+  });
+
   it("pairs with the closest-rated waiter", () => {
     // window 100: a(1000) and b(1190) are 190 apart so they don't pair with each
     // other, but c(1100) is within window of both -> picks the closer one (b).

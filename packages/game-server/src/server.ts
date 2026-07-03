@@ -66,6 +66,16 @@ export interface ServerDeps {
   /** Called when a casual quick-match ends, with both wallet addresses —
    *  feeds Elo + win/played counters on the durable player profile. */
   onResult?: (players: [Address, Address], winner: number) => void;
+  /** Server-side rating lookup for matchmaking. The client also sends an elo
+   *  in "queue", but that value is attacker-chosen — never trust it when the
+   *  profile can answer. */
+  eloOf?: (address: Address) => Promise<number | null>;
+  /** One reconnection grace per seat per match: if the player on the move
+   *  drops (mobile data blink — the norm for the target market), the forfeit
+   *  timer is pushed back this much once instead of firing on time (0 = off,
+   *  default 45s). Their blitz bank keeps draining — this only prevents the
+   *  *forfeit* from landing while they can't see the board. */
+  reconnectGraceMs?: number;
 }
 
 /** A fresh, collision-free id for an off-chain casual match (also used for async). */
@@ -85,12 +95,14 @@ function isCasualMatch(matchId: bigint): boolean {
 const DEFAULT_TURN_CLOCK_MS = 2 * 60_000;
 const DEFAULT_BLITZ_CLOCK_MS = 3 * 60_000;
 const DEFAULT_UNSETTLED_WATCHDOG_MS = 45_000;
+const DEFAULT_RECONNECT_GRACE_MS = 45_000;
 
 export function attachSocketIO(io: Server, deps: ServerDeps): void {
   const { hub } = deps;
   const TURN_CLOCK_MS = deps.turnClockMs ?? DEFAULT_TURN_CLOCK_MS;
   const BLITZ_CLOCK_MS = deps.blitzClockMs ?? DEFAULT_BLITZ_CLOCK_MS;
   const UNSETTLED_WATCHDOG_MS = deps.unsettledWatchdogMs ?? DEFAULT_UNSETTLED_WATCHDOG_MS;
+  const RECONNECT_GRACE_MS = deps.reconnectGraceMs ?? DEFAULT_RECONNECT_GRACE_MS;
 
   // One move-clock timer per live match, keyed by room id (matchId.toString()).
   const turnClockTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -99,6 +111,11 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
   // and 1, known only at pairing time. Lets a finished game feed the durable
   // player profiles (Elo, played/won). Entries die with the match.
   const casualPlayers = new Map<string, [Address, Address]>();
+
+  // Reconnection grace bookkeeping: which seat each socket watches (declared
+  // via "watch"), and which seats have already spent their one grace.
+  const socketSeats = new Map<string, { roomId: string; player: 0 | 1 }>();
+  const graceUsed = new Set<string>(); // `${roomId}:${player}`
 
   function clearTurnClock(roomId: string): void {
     const t = turnClockTimers.get(roomId);
@@ -186,6 +203,8 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
   // match within UNSETTLED_WATCHDOG_MS, tell the room to self-claim.
   function announceGameOver(matchId: bigint, roomId: string, state: GameState): void {
     clearTurnClock(roomId);
+    graceUsed.delete(`${roomId}:0`);
+    graceUsed.delete(`${roomId}:1`);
     const gm = hub.get(matchId);
     io.to(roomId).emit("state", { matchId: roomId, state, ply: gm?.ply ?? 0, clocks: gm ? clocksOf(gm) : null });
     io.to(roomId).emit("gameover", { matchId: roomId, winner: state.winner });
@@ -221,10 +240,12 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
             return;
           }
         }
+        // the profile's rating wins over whatever the client claimed
+        const serverElo = deps.eloOf ? await deps.eloOf(msg.address).catch(() => null) : null;
         const pairing = hub.queue({
           id: socket.id,
           address: msg.address,
-          elo: msg.elo,
+          elo: serverElo ?? msg.elo,
           sessionPubKey: msg.sessionPubKey,
         });
         if (!pairing) return;
@@ -261,11 +282,14 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
     // subscribe to a match's room and get its current state + ply. Also arms
     // (or catches up) the move-clock — this is how a staked match's clock
     // starts, since it's opened directly by the on-chain listener, not here.
-    socket.on("watch", (msg: { matchId: string }) => {
+    // `player` (optional) declares which seat this socket is — that's what
+    // lets the disconnect handler grant the seat its reconnection grace.
+    socket.on("watch", (msg: { matchId: string; player?: 0 | 1 }) => {
       socket.join(msg.matchId);
       const matchId = BigInt(msg.matchId);
       const m = hub.get(matchId);
       if (m) socket.emit("state", { matchId: msg.matchId, state: m.state, ply: m.ply, clocks: clocksOf(m) });
+      if (msg.player === 0 || msg.player === 1) socketSeats.set(socket.id, { roomId: msg.matchId, player: msg.player });
       armTurnClockIfNeeded(matchId, msg.matchId);
     });
 
@@ -346,10 +370,26 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
 
     socket.on("disconnect", () => {
       hub.matchmaker.remove(socket.id);
-      // No per-socket cleanup needed beyond this: the move-clock is driven by
-      // match state (whose turn, since when), not connection state, so a
-      // disconnect on its own does nothing — the clock it's already running
-      // against (if it's this player's turn) takes care of it.
+      // The move-clock is driven by match state, not connection state — with
+      // ONE exception: if the player on the move just dropped, push their
+      // forfeit timer back once (their blitz bank keeps draining regardless).
+      // A mobile-data blink is routine for this audience; losing a staked
+      // game to 40 seconds of tunnel reads as theft, not as a rule.
+      const seat = socketSeats.get(socket.id);
+      socketSeats.delete(socket.id);
+      if (!seat || RECONNECT_GRACE_MS <= 0) return;
+      const m = hub.get(BigInt(seat.roomId));
+      if (!m || m.over || m.turn !== seat.player) return;
+      const key = `${seat.roomId}:${seat.player}`;
+      if (graceUsed.has(key)) return;
+      graceUsed.add(key);
+      clearTurnClock(seat.roomId);
+      const timer = setTimeout(
+        () => onTurnClockExpired(BigInt(seat.roomId), seat.roomId),
+        msUntilExpiry(m) + RECONNECT_GRACE_MS,
+      );
+      if ("unref" in timer) timer.unref?.();
+      turnClockTimers.set(seat.roomId, timer);
     });
   });
 }

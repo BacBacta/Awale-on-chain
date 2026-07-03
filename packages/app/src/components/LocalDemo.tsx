@@ -12,6 +12,10 @@ import { Icon } from "./Icon.js";
 import { SoundToggle } from "./SoundToggle.js";
 import { getEquipped, type EquippedSkin } from "../lib/skins.js";
 import { createSessionKey, signMove, type SessionKey } from "../lib/session.js";
+import { getInjectedProvider, connect } from "../lib/minipay.js";
+import { escrowConfig } from "../lib/escrow.js";
+import { reportPracticePlayed } from "../lib/profile.js";
+import { track } from "../lib/analytics.js";
 
 // Demo context — in a real match these come from the on-chain join events.
 const DEMO_CTX = { chainId: 31337n, verifier: "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3" as const };
@@ -72,11 +76,19 @@ export function LocalDemo() {
   useEffect(() => {
     if (state.over) {
       const t = setTimeout(() => setShowOverlay(true), 600);
+      // feeds the beginner quest ("play a practice game") — best-effort,
+      // needs a wallet identity to credit
+      const p = getInjectedProvider();
+      if (p)
+        connect(p, escrowConfig()?.chainId)
+          .then(({ address }) => reportPracticePlayed(address))
+          .catch(() => {});
       return () => clearTimeout(t);
     }
   }, [state.over]);
 
   useEffect(() => {
+    track("practice_start");
     try {
       localStorage.setItem("awale_played", "1"); // unlocks League/Skins in the nav
     } catch {
