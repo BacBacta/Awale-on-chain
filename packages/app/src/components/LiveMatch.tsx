@@ -71,6 +71,10 @@ export function LiveMatch({
   const [clocks, setClocks] = useState<[number, number] | null>(null);
   const [clocksAt, setClocksAt] = useState(0);
   const [, setTick] = useState(0); // re-render pulse for the countdown
+  // On-chain status 1 = Open: created but nobody has joined yet. Without this
+  // the match screen is a blank "Connected" — say so, and hand out the invite.
+  const [waitingOpen, setWaitingOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   // A staked match's move-clock ran out (or a natural ending never settled)
   // and *someone* is eligible to claim on-chain. `theirClaim` is set only
   // when the opponent is the one claiming, so we can offer to dispute it.
@@ -147,6 +151,7 @@ export function LiveMatch({
         // "claim-eligible" broadcast entirely). status 3 = Proposed. Only
         // chase it down if it's *not* our own claim.
         needsClaimCatchUp = m.status === 3 && m.proposedWinner !== r;
+        setWaitingOpen(m.status === 1); // Open: still waiting for an opponent
       }
       const sk = loadSession(matchId);
       if (!sk) {
@@ -304,6 +309,44 @@ export function LiveMatch({
     socket.current?.emit("draw-accept", { matchId: matchId.toString(), player: role, signature: sig as Hex });
   }
 
+  // The hub only opens a staked match once the opponent has joined on-chain
+  // (StartFinalized). While we have no board: poll the chain to notice the
+  // join, and keep re-watching so the screen wakes itself up — no reload.
+  useEffect(() => {
+    if (casualRole != null || state !== null || role === null) return;
+    const cfg = escrowConfig();
+    if (!cfg) return;
+    const iv = setInterval(async () => {
+      socket.current?.emit("watch", { matchId: matchId.toString() });
+      if (waitingOpen) {
+        try {
+          const client = publicClient(cfg.rpcUrl, cfg.chainId);
+          const m = (await readContract(client, {
+            address: cfg.escrow,
+            abi: matchEscrowAbi,
+            functionName: "getMatch",
+            args: [matchId],
+          })) as { status: number };
+          if (Number(m.status) !== 1) setWaitingOpen(false);
+        } catch {
+          /* transient read failure — try again next tick */
+        }
+      }
+    }, 4000);
+    return () => clearInterval(iv);
+  }, [casualRole, state === null, role === null, waitingOpen, matchId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function shareMatchInvite() {
+    const url = `${window.location.origin}/play?match=${matchId.toString()}`;
+    const data = { title: "Awalé", text: `Join my Awalé match #${matchId.toString()}`, url };
+    if (navigator.share) navigator.share(data).catch(() => {});
+    else
+      navigator.clipboard?.writeText(url).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      });
+  }
+
   const myTurn = state !== null && role !== null && !state.over && state.turn === role;
   const playable = myTurn ? legalHouses(state) : [];
 
@@ -407,6 +450,23 @@ export function LiveMatch({
               </span>
             </div>
           )}
+        </div>
+      ) : waitingOpen ? (
+        // created but nobody joined yet — say so and hand out the invite;
+        // the polling effect above swaps the board in the moment they join
+        <div className="card stack animate-in" style={{ gap: 12, alignItems: "center", textAlign: "center" }}>
+          <span className="chip positive">
+            <span className="dot pulse" /> Waiting for an opponent
+          </span>
+          {stakeInfo.current && (
+            <span className="muted">
+              Your {fmt(stakeInfo.current.stake, STAKE_DECIMALS)} {STAKE_SYMBOL} is in the pot. Share the invite — the
+              board appears the moment someone joins.
+            </span>
+          )}
+          <button className="btn block" onClick={shareMatchInvite}>
+            {copied ? "Link copied ✓" : "Invite an opponent"}
+          </button>
         </div>
       ) : (
         <div className="card">
