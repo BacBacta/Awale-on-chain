@@ -17,6 +17,9 @@ export interface AsyncState {
   players: [Address, Address];
   open: boolean;
   updatedAt: number;
+  /** per-match inactivity-claim window (ms); null = correspondence default.
+   *  Tournament bracket games are set to minutes. */
+  turnClockMs: number | null;
 }
 
 // Mirrors the server's ASYNC_TURN_CLOCK_MS default — used only to decide when

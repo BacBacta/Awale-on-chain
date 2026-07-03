@@ -181,7 +181,9 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
           <Icon name="back" size={16} /> Back
         </Link>
         <span className="row" style={{ gap: 8 }}>
-          <span className="chip">correspondence</span>
+          <span className="chip">
+            {data.turnClockMs != null ? `⏱ ${Math.round(data.turnClockMs / 60_000)} min/move` : "correspondence"}
+          </span>
           <SoundToggle />
         </span>
       </div>
@@ -211,9 +213,13 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
         </span>
       </div>
 
-      {!data.over && !data.open && !myTurn && Date.now() - data.updatedAt >= ASYNC_TURN_CLOCK_MS && (
+      {!data.over && !data.open && !myTurn && Date.now() - data.updatedAt >= (data.turnClockMs ?? ASYNC_TURN_CLOCK_MS) && (
         <div className="card stack animate-in" style={{ gap: 8, alignItems: "center", textAlign: "center" }}>
-          <span className="muted">Your opponent hasn't moved in a few days.</span>
+          <span className="muted">
+            {data.turnClockMs != null
+              ? "Your opponent's move timer has run out."
+              : "Your opponent hasn't moved in a few days."}
+          </span>
           <button className="btn secondary" onClick={claimTimeout}>
             Claim the win
           </button>

@@ -19,6 +19,9 @@ export interface MatchRecord {
   over: boolean;
   ply: number;
   updatedAt: number;
+  /** Per-match inactivity-claim window (ms), overriding the global default.
+   *  Tournament bracket games run on minutes, not correspondence days. */
+  turnClockMs?: number;
 }
 
 export interface MatchStore {

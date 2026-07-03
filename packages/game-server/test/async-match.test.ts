@@ -112,6 +112,29 @@ describe("AsyncMatchService", () => {
       await expect(svc.claimTimeout(id, 1, 0)).rejects.toThrow("settle on-chain");
     });
 
+    it("a tournament-style per-match clock overrides the global grace — both ways", async () => {
+      const { svc, id } = await newService(); // startTurn: 0 — A on move
+      // short leash set on the match: claimable now even though the caller
+      // passes the huge correspondence default
+      await svc.setTurnClock(id, 0);
+      const state = await svc.claimTimeout(id, 1, 3 * 24 * 3600_000);
+      expect(state.over).toBe(true);
+      expect(state.winner).toBe(1);
+
+      // and the reverse: a long per-match clock blocks a zero-grace call
+      const second = await newService();
+      await second.svc.setTurnClock(second.id, 60_000);
+      await expect(second.svc.claimTimeout(second.id, 1, 0)).rejects.toThrow("still has time");
+    });
+
+    it("the per-match clock survives moves", async () => {
+      const { svc, id } = await newService();
+      await svc.setTurnClock(id, 600_000);
+      const sig = await s0.sign({ hash: moveDigest(42n, 0n, 2, { chainId: CHAIN_ID, verifier: VERIFIER }) });
+      await svc.move(id, 0, 2, sig);
+      expect((await svc.getState(id))?.turnClockMs).toBe(600_000);
+    });
+
     it("reports the walkover to the onResult hook (profiles/Elo feed)", async () => {
       const { notifier } = spyNotifier();
       const results: { players: [Address, Address]; winner: number }[] = [];

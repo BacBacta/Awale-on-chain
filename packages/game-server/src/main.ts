@@ -64,6 +64,10 @@ const ASYNC_TURN_CLOCK_MS = Number(process.env.ASYNC_TURN_CLOCK_MS ?? String(3 *
 // A tournament is a live event — a host who never creates their bracket game
 // gets a much shorter leash than an ordinary correspondence match.
 const TOURNAMENT_WALKOVER_MS = Number(process.env.TOURNAMENT_WALKOVER_MS ?? String(15 * 60_000));
+// Tournament bracket games: short per-move inactivity claim so a tournament
+// stays a same-hour event (~45-90 min for 8 players) instead of drifting for
+// days on the correspondence default.
+const TOURNAMENT_TURN_CLOCK_MS = Number(process.env.TOURNAMENT_TURN_CLOCK_MS ?? String(10 * 60_000));
 // Blitz: total thinking time per player for live matches (casual + staked).
 // A full Awalé game can run 10-20 minutes; this audience plays in seconds-long
 // rounds — 3 min/player bounds every live game to ~6 minutes.
@@ -489,6 +493,9 @@ const httpServer = createServer((req, res) => {
         };
         if (!id || asyncMatchId == null) throw new Error("id + round + index + asyncMatchId required");
         tournaments.attachGame(id, round, index, asyncMatchId);
+        // bracket games run on minutes: swap the correspondence claim window
+        // for the tournament one, starting now
+        return asyncMatches.setTurnClock(asyncMatchId, TOURNAMENT_TURN_CLOCK_MS);
       })
       .then(() => json(200, { ok: true }))
       .catch((e) => json(400, { error: (e as Error).message }));

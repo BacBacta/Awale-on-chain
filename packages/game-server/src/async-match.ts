@@ -31,6 +31,9 @@ export interface AsyncMatchState {
   open: boolean;
   /** epoch ms of the last move/join — basis for the "opponent inactive" claim. */
   updatedAt: number;
+  /** per-match inactivity-claim window (ms); null = the global default.
+   *  Tournament bracket games are set to minutes instead of days. */
+  turnClockMs: number | null;
 }
 
 const ZERO = "0x0000000000000000000000000000000000000000" as Address;
@@ -141,6 +144,7 @@ export class AsyncMatchService {
       players: rec.players,
       open: rec.players[1] === ZERO,
       updatedAt: rec.updatedAt,
+      turnClockMs: rec.turnClockMs ?? null,
     };
   }
 
@@ -162,6 +166,7 @@ export class AsyncMatchService {
       over: m.over,
       ply: m.ply,
       updatedAt: Date.now(),
+      turnClockMs: rec.turnClockMs,
     });
 
     if (!m.over) {
@@ -171,6 +176,20 @@ export class AsyncMatchService {
       this.reportResult(rec.players, m.state.winner);
     }
     return next;
+  }
+
+  /**
+   * Put this match on a short leash: future inactivity claims use `ms`
+   * instead of the global correspondence default. Called when a game is
+   * attached to a tournament bracket — those run on minutes, not days.
+   * Resets the window so the current mover gets the full `ms` from now.
+   */
+  async setTurnClock(matchId: string, ms: number): Promise<void> {
+    const rec = await this.store.get(matchId);
+    if (!rec) throw new Error("no such match");
+    rec.turnClockMs = ms;
+    rec.updatedAt = Date.now();
+    await this.store.save(rec);
   }
 
   /**
@@ -188,7 +207,8 @@ export class AsyncMatchService {
     const m = Match.rehydrate(rec.snapshot);
     if (m.over) throw new Error("match over");
     if (m.turn === claimant) throw new Error("it's your turn — nothing to claim");
-    if (Date.now() - rec.updatedAt < graceMs) throw new Error("opponent still has time to move");
+    const grace = rec.turnClockMs ?? graceMs; // tournament games run on minutes
+    if (Date.now() - rec.updatedAt < grace) throw new Error("opponent still has time to move");
 
     const state = m.forfeit(m.turn as 0 | 1);
     await this.store.save({
@@ -199,6 +219,7 @@ export class AsyncMatchService {
       over: m.over,
       ply: m.ply,
       updatedAt: Date.now(),
+      turnClockMs: rec.turnClockMs,
     });
     this.reportResult(rec.players, state.winner);
     return state;
