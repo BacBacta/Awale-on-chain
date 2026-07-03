@@ -16,16 +16,30 @@ export async function getStats(): Promise<StatsSnapshot> {
   const escrow = process.env.ESCROW_ADDRESS as Address | undefined;
   if (!rpc || !escrow) return emptySnapshot();
 
-  const testnet = process.env.CELO_TESTNET === "true";
-  const client = createPublicClient({ chain: testnet ? celoAlfajores : celo, transport: http(rpc) });
-  const toBlock = await client.getBlockNumber();
-  const fromBlock = BigInt(process.env.ESCROW_FROM_BLOCK ?? "0");
+  try {
+    const testnet = process.env.CELO_TESTNET === "true";
+    const client = createPublicClient({ chain: testnet ? celoAlfajores : celo, transport: http(rpc) });
+    const toBlock = await client.getBlockNumber();
+    const fromBlock = BigInt(process.env.ESCROW_FROM_BLOCK ?? "0");
 
-  const reader: ChainReader = {
-    // viem's PublicClient satisfies these structurally; cast narrows the types
-    getLogs: (a) => client.getLogs(a as never) as never,
-    getBlock: (a) => client.getBlock(a),
-  };
+    const reader: ChainReader = {
+      // viem's PublicClient satisfies these structurally; cast narrows the types
+      getLogs: (a) => client.getLogs(a as never) as never,
+      getBlock: (a) => client.getBlock(a),
+    };
 
-  return indexEscrow(reader, { address: escrow, fromBlock, toBlock });
+    // This runs at build/revalidate time — it must never throw, or the whole
+    // deploy fails on an RPC hiccup (it did: forno serves only ~10k blocks of
+    // history, and the escrow's deploy block aged out of that window). Try the
+    // full range for RPCs that can do it, then the recent window forno allows,
+    // and always fall back to an empty snapshot so the page renders.
+    try {
+      return await indexEscrow(reader, { address: escrow, fromBlock, toBlock });
+    } catch {
+      const recent = toBlock > 9_000n ? toBlock - 9_000n : 0n;
+      return await indexEscrow(reader, { address: escrow, fromBlock: recent > fromBlock ? recent : fromBlock, toBlock });
+    }
+  } catch {
+    return emptySnapshot();
+  }
 }
