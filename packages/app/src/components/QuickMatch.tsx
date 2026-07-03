@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { io, type Socket } from "socket.io-client";
 import type { Address } from "viem";
 import { createSessionKey, persistSession } from "../lib/session.js";
@@ -14,10 +14,14 @@ const FALLBACK_MS = 12_000; // no human in this long → play the AI instead
 // Casual Quick Match: queue on the server's ELO matchmaker and jump into an
 // off-chain live game on pairing. If no opponent shows up, fall back to the AI
 // so the primary CTA *always* yields a game (never a dead-end spinner).
-export function QuickMatch({ account }: { account?: Address }) {
+// `autoStart` fires the search immediately on mount — used when another screen
+// links here to actually *start a game* (e.g. Compete's "Play your first
+// game"), so the button delivers a game rather than dumping the player home.
+export function QuickMatch({ account, autoStart }: { account?: Address; autoStart?: boolean }) {
   const [phase, setPhase] = useState<"idle" | "searching" | "fallback">("idle");
   const sockRef = useRef<Socket | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoFired = useRef(false);
 
   function clearTimer() {
     if (timerRef.current) {
@@ -67,6 +71,14 @@ export function QuickMatch({ account }: { account?: Address }) {
     sock.on("error", () => toBot());
     sock.on("connect_error", () => toBot());
   }
+
+  // fire once when asked to auto-start (guarded against React's double-mount)
+  useEffect(() => {
+    if (autoStart && !autoFired.current) {
+      autoFired.current = true;
+      find();
+    }
+  }, [autoStart]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // One-line promise under the label: a first-time player must know what the
   // button costs (nothing) and what it starts (a live game vs a real person).

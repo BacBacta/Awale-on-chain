@@ -272,7 +272,7 @@ export default function League() {
               ? "Your deposit is riding the season — keep winning games to climb the ladder before it ends."
               : "The season is in play. Games you win now count on the ladder; deposits reopen next season."}
           </span>
-          <Link className="btn block" href="/" style={{ marginTop: 4 }}>
+          <Link className="btn block" href="/?play=1" style={{ marginTop: 4 }}>
             <Icon name="play" size={17} /> Play a game
           </Link>
         </div>

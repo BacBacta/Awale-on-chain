@@ -89,7 +89,7 @@ export function WeeklyLeague() {
               Play {data.minGames} money games this week to enter ({played}/{data.minGames} so far). Every game counts
               automatically.
             </span>
-            <Link className="btn block" href="/">
+            <Link className="btn block" href="/?money=1">
               Play for money
             </Link>
           </div>

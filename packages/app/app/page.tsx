@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Address } from "viem";
 import { getInjectedProvider, isMiniPay, connect } from "../src/lib/minipay.js";
@@ -68,6 +68,12 @@ export default function Lobby() {
   const [streak, setStreak] = useState(0);
   const [didDaily, setDidDaily] = useState(true);
   const [showMoney, setShowMoney] = useState(false);
+  // set when another screen links here to actually start something: ?play=1
+  // auto-starts a quick match, ?money=1 opens the stake panel. Without these,
+  // "Play your first game" / "Play for money" on Compete just bounced the
+  // player to a home screen where nothing had happened.
+  const [autoPlay, setAutoPlay] = useState(false);
+  const moneyRef = useRef<HTMLDivElement | null>(null);
   // the ONE rank system (Seedling → Grandmaster) shown on the identity chip
   const [tierIcon, setTierIcon] = useState<string | null>(null);
   const cfg: EscrowConfig | null = escrowConfig();
@@ -82,7 +88,19 @@ export default function Lobby() {
     }
     setStreak(streakCount());
     setDidDaily(solvedToday());
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("play") === "1") setAutoPlay(true);
+    if (params.get("money") === "1") setShowMoney(true);
   }, []);
+
+  // when the stake panel opens from a ?money=1 deep link, bring it into view —
+  // it sits below the fold, so just expanding it isn't enough to feel like the
+  // button did something
+  useEffect(() => {
+    if (showMoney && moneyRef.current) {
+      moneyRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [showMoney]);
 
   useEffect(() => {
     const provider = getInjectedProvider();
@@ -174,7 +192,7 @@ export default function Lobby() {
           siblings. Everything below this block is habit or help — visibly
           lighter, so the screen reads as a game, not a menu. */}
       <div className="stack" style={{ gap: 10 }}>
-        <QuickMatch account={address ?? undefined} />
+        <QuickMatch account={address ?? undefined} autoStart={autoPlay} />
         <div className="row" style={{ gap: 8 }}>
           <Link className="btn secondary" href="/matches" style={{ flex: 1, justifyContent: "center", gap: 6, padding: "10px 12px" }}>
             <span className="col" style={{ gap: 2, alignItems: "center" }}>
@@ -206,7 +224,7 @@ export default function Lobby() {
           verify prompt sits ABOVE the panel only to unlock *league prize
           eligibility*. The real payout gate lives server-side. */}
       {showMoney && (
-        <div className="stack animate-in" style={{ gap: 10 }}>
+        <div className="stack animate-in" style={{ gap: 10 }} ref={moneyRef}>
           {staking ? (
             <>
               {SELF_CONFIGURED && !verified && (
