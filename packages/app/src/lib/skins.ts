@@ -15,15 +15,15 @@ export interface Skin {
 
 export const BOARD_SKINS: Skin[] = [
   { key: "classic", kind: "board", name: "Classic Honey", asset: "/assets/wood.png", itemId: 0 },
-  { key: "ebony", kind: "board", name: "Ebony", asset: "/assets/wood-ebony.png", itemId: 1, price: 5 },
-  { key: "pale", kind: "board", name: "Pale Ash", asset: "/assets/wood-pale.png", itemId: 2, price: 5 },
+  { key: "ebony", kind: "board", name: "Ebony", asset: "/assets/wood-ebony.png", itemId: 1, price: 0.5 },
+  { key: "pale", kind: "board", name: "Pale Ash", asset: "/assets/wood-pale.png", itemId: 2, price: 0.5 },
 ];
 
 export const SEED_SKINS: Skin[] = [
   { key: "amber", kind: "seed", name: "Amber", asset: "/assets/seed.png", itemId: 0 },
-  { key: "jade", kind: "seed", name: "Jade", asset: "/assets/seed-jade.png", itemId: 10, price: 3 },
-  { key: "pearl", kind: "seed", name: "Pearl", asset: "/assets/seed-pearl.png", itemId: 11, price: 3 },
-  { key: "onyx", kind: "seed", name: "Onyx", asset: "/assets/seed-onyx.png", itemId: 12, price: 3 },
+  { key: "jade", kind: "seed", name: "Jade", asset: "/assets/seed-jade.png", itemId: 10, price: 0.25 },
+  { key: "pearl", kind: "seed", name: "Pearl", asset: "/assets/seed-pearl.png", itemId: 11, price: 0.25 },
+  { key: "onyx", kind: "seed", name: "Onyx", asset: "/assets/seed-onyx.png", itemId: 12, price: 0.25 },
 ];
 
 export const ALL_SKINS = [...BOARD_SKINS, ...SEED_SKINS];

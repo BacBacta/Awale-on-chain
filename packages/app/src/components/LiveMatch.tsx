@@ -66,6 +66,11 @@ export function LiveMatch({
   const [oppAddr, setOppAddr] = useState<Address | null>(opponentAddress ?? null);
   const [drawOffered, setDrawOffered] = useState(false); // opponent offered a draw, awaiting our reply
   const [conceding, setConceding] = useState(false);
+  // Blitz clocks as last reported by the server, plus when we heard them — the
+  // active player's display ticks down locally between server updates.
+  const [clocks, setClocks] = useState<[number, number] | null>(null);
+  const [clocksAt, setClocksAt] = useState(0);
+  const [, setTick] = useState(0); // re-render pulse for the countdown
   // A staked match's move-clock ran out (or a natural ending never settled)
   // and *someone* is eligible to claim on-chain. `theirClaim` is set only
   // when the opponent is the one claiming, so we can offer to dispute it.
@@ -160,9 +165,13 @@ export function LiveMatch({
         if (needsClaimCatchUp) sock!.emit("get-transcript", { matchId: matchId.toString() });
         setStatus("Connected");
       });
-      sock.on("state", (msg: { state: GameState; ply: number }) => {
+      sock.on("state", (msg: { state: GameState; ply: number; clocks?: [number, number] | null }) => {
         setState(msg.state);
         setPly(msg.ply);
+        if (msg.clocks !== undefined) {
+          setClocks(msg.clocks);
+          setClocksAt(Date.now());
+        }
       });
       sock.on("gameover", async (msg: { winner: number }) => {
         setStatus(msg.winner === myRole ? "You win 🎉" : msg.winner === 2 ? "Draw" : "You lose");
@@ -301,6 +310,22 @@ export function LiveMatch({
   const myScore = role === 1 ? state?.store1 : state?.store0;
   const oppScore = role === 1 ? state?.store0 : state?.store1;
 
+  // Tick the countdown display twice a second while a timed game is live.
+  useEffect(() => {
+    if (!clocks || !state || state.over) return;
+    const iv = setInterval(() => setTick((t) => t + 1), 500);
+    return () => clearInterval(iv);
+  }, [clocks !== null, state?.over]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Live remaining time for a seat: the server's snapshot, minus local elapsed
+   *  time if that seat is currently on the move. */
+  function liveClock(player: 0 | 1): number | null {
+    if (!clocks || !state) return null;
+    const base = clocks[player];
+    if (state.over || state.turn !== player) return base;
+    return Math.max(0, base - (Date.now() - clocksAt));
+  }
+
   return (
     <main className="stack" style={{ flex: 1, gap: 14, position: "relative", padding: "12px 8px" }}>
       <div className="row" style={{ padding: "0 6px" }}>
@@ -370,9 +395,10 @@ export function LiveMatch({
             name={displayName(oppAddr)}
             score={oppScore ?? 0}
             active={!state.over && role !== null && state.turn !== role}
+            clockMs={role !== null ? liveClock((1 - role) as 0 | 1) : null}
           />
           <Board state={state} perspective={role ?? 0} onPlay={play} playable={playable} skin={skin} />
-          <PlayerPanel name="You" you score={myScore ?? 0} active={myTurn} />
+          <PlayerPanel name="You" you score={myScore ?? 0} active={myTurn} clockMs={role !== null ? liveClock(role) : null} />
           {state.over && (
             <div className="row" style={{ justifyContent: "center" }}>
               <span className="chip">

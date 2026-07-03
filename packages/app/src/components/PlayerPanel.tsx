@@ -9,20 +9,29 @@ function avatarGradient(seed: string): string {
   return `linear-gradient(135deg, hsl(${h} 62% 52%), hsl(${(h + 40) % 360} 60% 38%))`;
 }
 
+function fmtClock(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 export function PlayerPanel({
   name,
   score,
   active,
   you,
   thinking,
+  clockMs,
 }: {
   name: string;
   score: number;
   active: boolean;
   you?: boolean;
   thinking?: boolean;
+  /** Blitz: this player's remaining total time (ms). Omit for untimed play. */
+  clockMs?: number | null;
 }) {
   const initial = (name.trim()[0] ?? "?").toUpperCase();
+  const lowTime = clockMs != null && clockMs < 30_000;
   return (
     <div
       className="row"
@@ -76,9 +85,25 @@ export function PlayerPanel({
           </span>
         </div>
       </div>
-      <span className="title score" aria-label={`${score} captured`}>
-        {score}
-      </span>
+      <div className="row" style={{ gap: 10 }}>
+        {clockMs != null && (
+          <span
+            className="chip"
+            aria-label="time remaining"
+            style={{
+              fontVariantNumeric: "tabular-nums",
+              fontWeight: 700,
+              color: lowTime ? "#ff7a76" : active ? "var(--accent)" : "var(--faint)",
+              boxShadow: lowTime ? "inset 0 0 0 1px rgba(255,122,118,0.45)" : undefined,
+            }}
+          >
+            {fmtClock(clockMs)}
+          </span>
+        )}
+        <span className="title score" aria-label={`${score} captured`}>
+          {score}
+        </span>
+      </div>
     </div>
   );
 }

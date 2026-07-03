@@ -20,6 +20,11 @@ export interface MatchConfig {
   verifier: Address; // ReplayVerifier address (domain for move signatures)
   sessions: [Address, Address]; // session key of player 0 and player 1
   startTurn: 0 | 1;
+  /** Blitz: total thinking time per player (ms). A full Awalé game can run
+   *  10-20 minutes — far past this audience's seconds-long play rhythm — so
+   *  live matches carry a chess-style total clock that bounds the game.
+   *  Omit for untimed play (async/correspondence). */
+  clockMs?: number;
 }
 
 export interface Transcript {
@@ -56,6 +61,8 @@ export class Match {
   private _drawOffer?: 0 | 1;
   /** When the player currently on turn became on turn — the move-clock's start. */
   private _turnStartedAt: number;
+  /** Banked thinking time per player (blitz), excluding the running turn. */
+  private _clock: [number, number] | null;
 
   constructor(cfg: MatchConfig, now: () => number = Date.now) {
     this.cfg = cfg;
@@ -63,6 +70,7 @@ export class Match {
     this.state.turn = cfg.startTurn;
     this._now = now;
     this._turnStartedAt = now();
+    this._clock = cfg.clockMs != null ? [cfg.clockMs, cfg.clockMs] : null;
   }
 
   private readonly _now: () => number;
@@ -82,6 +90,21 @@ export class Match {
   /** How long the current mover has had the turn — the basis for a move-clock timeout. */
   msSinceTurnStart(): number {
     return this._now() - this._turnStartedAt;
+  }
+
+  /** Live remaining thinking time (blitz): the bank minus the running turn
+   *  for whoever is to move. null when the match is untimed. */
+  clockRemainingMs(player: 0 | 1): number | null {
+    if (!this._clock) return null;
+    const banked = this._clock[player];
+    const spent = !this.state.over && this.state.turn === player ? this.msSinceTurnStart() : 0;
+    return Math.max(0, banked - spent);
+  }
+
+  /** True once the current mover's total clock has run out (blitz only). */
+  flagFallen(): boolean {
+    if (!this._clock || this.state.over) return false;
+    return (this.clockRemainingMs(this.state.turn as 0 | 1) ?? Infinity) <= 0;
   }
 
   /** Houses (0..5) the current player may legally play. */
@@ -113,6 +136,10 @@ export class Match {
 
     // engine validates legality and reverts otherwise — no illegal move is kept
     const next = applyMove(this.state, house);
+    if (this._clock) {
+      // bank the thinking time this move consumed before handing the turn over
+      this._clock[player] = Math.max(0, this._clock[player] - this.msSinceTurnStart());
+    }
     this.state = next;
     this._moves.push(house);
     this._sigs.push(signature);

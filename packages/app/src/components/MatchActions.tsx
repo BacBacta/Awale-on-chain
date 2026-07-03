@@ -16,12 +16,15 @@ import { faucetAbi } from "../lib/league.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
 
 const TOKENS = stakeTokens();
-const QUICK_STAKES = ["1", "5", "10"];
+// Micro-stakes by design: the average MiniPay transaction is ~$1 and most of
+// the target audience budgets under $10/month for betting (GeoPoll 2025) —
+// a $5 default was asking for their whole month in one game.
+const QUICK_STAKES = ["0.25", "0.5", "1"];
 
 type Step = "idle" | "approving" | "staking" | "done" | "error";
 
 export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; account: Address; cfg: EscrowConfig }) {
-  const [stake, setStake] = useState("1");
+  const [stake, setStake] = useState("0.5");
   const [joinId, setJoinId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [tx, setTx] = useState<string | null>(null);

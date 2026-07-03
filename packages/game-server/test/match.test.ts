@@ -182,6 +182,45 @@ describe("Match orchestration", () => {
     });
   });
 
+  describe("blitz clock", () => {
+    function timedMatch(clockMs: number) {
+      let now = 1_000_000;
+      const m = new Match({ ...config(0), clockMs }, () => now);
+      return { m, advance: (ms: number) => (now += ms) };
+    }
+
+    it("banks thinking time per move and reports live remaining for the mover", async () => {
+      const { m, advance } = timedMatch(180_000);
+      expect(m.clockRemainingMs(0)).toBe(180_000);
+      expect(m.clockRemainingMs(1)).toBe(180_000); // not on move — bank untouched
+
+      advance(30_000); // player 0 thinks for 30s
+      expect(m.clockRemainingMs(0)).toBe(150_000); // live: bank minus running turn
+      expect(m.clockRemainingMs(1)).toBe(180_000);
+
+      const house = m.legalMoves()[0];
+      await m.submitMove(0, house, await signFor(0, m.cfg.matchId, m.ply, house));
+      expect(m.clockRemainingMs(0)).toBe(150_000); // banked
+      advance(10_000); // now player 1 is burning time
+      expect(m.clockRemainingMs(1)).toBe(170_000);
+      expect(m.clockRemainingMs(0)).toBe(150_000); // frozen while waiting
+    });
+
+    it("flagFallen once the mover's total time is gone, never for untimed play", () => {
+      const { m, advance } = timedMatch(60_000);
+      expect(m.flagFallen()).toBe(false);
+      advance(59_999);
+      expect(m.flagFallen()).toBe(false);
+      advance(1);
+      expect(m.flagFallen()).toBe(true);
+      expect(m.clockRemainingMs(0)).toBe(0);
+
+      const untimed = new Match(config(0));
+      expect(untimed.flagFallen()).toBe(false);
+      expect(untimed.clockRemainingMs(0)).toBeNull();
+    });
+  });
+
   describe("resign/draw survive a snapshot/rehydrate round-trip", () => {
     it("resign", async () => {
       const m = new Match(config(0));

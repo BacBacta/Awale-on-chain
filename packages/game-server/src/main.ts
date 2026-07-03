@@ -64,6 +64,10 @@ const ASYNC_TURN_CLOCK_MS = Number(process.env.ASYNC_TURN_CLOCK_MS ?? String(3 *
 // A tournament is a live event — a host who never creates their bracket game
 // gets a much shorter leash than an ordinary correspondence match.
 const TOURNAMENT_WALKOVER_MS = Number(process.env.TOURNAMENT_WALKOVER_MS ?? String(15 * 60_000));
+// Blitz: total thinking time per player for live matches (casual + staked).
+// A full Awalé game can run 10-20 minutes; this audience plays in seconds-long
+// rounds — 3 min/player bounds every live game to ~6 minutes.
+const BLITZ_CLOCK_MS = Number(process.env.BLITZ_CLOCK_MS ?? String(3 * 60_000));
 
 // Match ids the server has seen join, polled by the keeper for time-based
 // actions (finalize proposed results, void expired matches). Terminal matches
@@ -519,6 +523,7 @@ attachSocketIO(io, {
   coordinator,
   personhood: selfVerifier ? personhood : undefined,
   casualCtx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER },
+  blitzClockMs: BLITZ_CLOCK_MS,
   onGameOver: (matchId, winner) => {
     console.log(`[match ${matchId}] over, winner=${winner} — awaiting result signatures`);
   },
@@ -661,7 +666,7 @@ if (TOURNAMENT) {
 }
 watchStartFinalized(
   publicClient as unknown as EventWatcher,
-  { escrow: ESCROW, ctx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER }, readMatch },
+  { escrow: ESCROW, ctx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER, clockMs: BLITZ_CLOCK_MS }, readMatch },
   hub,
 );
 

@@ -23,6 +23,8 @@ export interface ChainMatch {
 export interface MatchContext {
   chainId: bigint;
   verifier: Address;
+  /** Blitz: total thinking time per player (see MatchConfig.clockMs). */
+  clockMs?: number;
 }
 
 /** Open a match in the hub from its on-chain record. Returns the room id. */
@@ -33,6 +35,7 @@ export function openMatchFromChain(hub: GameHub, m: ChainMatch, ctx: MatchContex
     verifier: ctx.verifier,
     sessions: [m.session0, m.session1],
     startTurn: m.startTurn === 1 ? 1 : 0,
+    clockMs: ctx.clockMs,
   });
 }
 

@@ -57,6 +57,9 @@ export interface ServerDeps {
   casualCtx?: { chainId: bigint; verifier: Address };
   /** Per-turn move-clock for live play (default 2 minutes). */
   turnClockMs?: number;
+  /** Blitz: total thinking time per player for live matches (default 3 min) —
+   *  bounds a game to ~6 minutes, matching the audience's short-round rhythm. */
+  blitzClockMs?: number;
   /** How long to wait for the two-signature fast path before telling a staked
    *  winner to self-claim on-chain (default 45s). */
   unsettledWatchdogMs?: number;
@@ -80,11 +83,13 @@ function isCasualMatch(matchId: bigint): boolean {
 }
 
 const DEFAULT_TURN_CLOCK_MS = 2 * 60_000;
+const DEFAULT_BLITZ_CLOCK_MS = 3 * 60_000;
 const DEFAULT_UNSETTLED_WATCHDOG_MS = 45_000;
 
 export function attachSocketIO(io: Server, deps: ServerDeps): void {
   const { hub } = deps;
   const TURN_CLOCK_MS = deps.turnClockMs ?? DEFAULT_TURN_CLOCK_MS;
+  const BLITZ_CLOCK_MS = deps.blitzClockMs ?? DEFAULT_BLITZ_CLOCK_MS;
   const UNSETTLED_WATCHDOG_MS = deps.unsettledWatchdogMs ?? DEFAULT_UNSETTLED_WATCHDOG_MS;
 
   // One move-clock timer per live match, keyed by room id (matchId.toString()).
@@ -103,10 +108,17 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
     }
   }
 
+  /** ms until the current mover times out: the per-move window or their total
+   *  blitz bank, whichever runs dry first. */
+  function msUntilExpiry(m: Match): number {
+    const perMove = TURN_CLOCK_MS - m.msSinceTurnStart();
+    const total = m.clockRemainingMs(m.turn as 0 | 1);
+    return Math.max(0, total === null ? perMove : Math.min(perMove, total));
+  }
+
   /** (Re)schedule the clock against however much time the current mover has left. */
   function scheduleTurnClock(matchId: bigint, roomId: string, m: Match): void {
-    const remaining = Math.max(0, TURN_CLOCK_MS - m.msSinceTurnStart());
-    const timer = setTimeout(() => onTurnClockExpired(matchId, roomId), remaining);
+    const timer = setTimeout(() => onTurnClockExpired(matchId, roomId), msUntilExpiry(m));
     if ("unref" in timer) timer.unref?.();
     turnClockTimers.set(roomId, timer);
   }
@@ -132,7 +144,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
     turnClockTimers.delete(roomId);
     const m = hub.get(matchId);
     if (!m || m.over) return;
-    if (m.msSinceTurnStart() < TURN_CLOCK_MS) {
+    if (msUntilExpiry(m) > 0) {
       // a race with a move that landed just as this fired — reschedule defensively
       scheduleTurnClock(matchId, roomId, m);
       return;
@@ -155,6 +167,13 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
     return { ...t, matchId: t.matchId.toString() };
   }
 
+  /** Live blitz clocks for the state payloads (null for untimed matches). */
+  function clocksOf(m: Match): [number, number] | null {
+    const c0 = m.clockRemainingMs(0);
+    const c1 = m.clockRemainingMs(1);
+    return c0 === null || c1 === null ? null : [c0, c1];
+  }
+
   function emitClaimEligible(roomId: string, winner: 0 | 1 | 2, transcript: Transcript): void {
     io.to(roomId).emit("claim-eligible", { matchId: roomId, winner, transcript: serializeTranscript(transcript) });
   }
@@ -167,7 +186,8 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
   // match within UNSETTLED_WATCHDOG_MS, tell the room to self-claim.
   function announceGameOver(matchId: bigint, roomId: string, state: GameState): void {
     clearTurnClock(roomId);
-    io.to(roomId).emit("state", { matchId: roomId, state, ply: hub.get(matchId)?.ply ?? 0 });
+    const gm = hub.get(matchId);
+    io.to(roomId).emit("state", { matchId: roomId, state, ply: gm?.ply ?? 0, clocks: gm ? clocksOf(gm) : null });
     io.to(roomId).emit("gameover", { matchId: roomId, winner: state.winner });
     deps.onGameOver?.(matchId, state.winner);
 
@@ -220,6 +240,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
             verifier: deps.casualCtx.verifier,
             sessions: [pairing.a.sessionPubKey, pairing.b.sessionPubKey],
             startTurn,
+            clockMs: BLITZ_CLOCK_MS,
           });
           const m = hub.get(matchId)!;
           const id = matchId.toString();
@@ -227,8 +248,8 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
           armTurnClockIfNeeded(matchId, id);
           io.to(pairing.a.id).emit("matched", { matchId: id, role: 0, opponent: pairing.b.address, casual: true });
           io.to(pairing.b.id).emit("matched", { matchId: id, role: 1, opponent: pairing.a.address, casual: true });
-          io.to(pairing.a.id).emit("state", { matchId: id, state: m.state, ply: 0 });
-          io.to(pairing.b.id).emit("state", { matchId: id, state: m.state, ply: 0 });
+          io.to(pairing.a.id).emit("state", { matchId: id, state: m.state, ply: 0, clocks: clocksOf(m) });
+          io.to(pairing.b.id).emit("state", { matchId: id, state: m.state, ply: 0, clocks: clocksOf(m) });
           return;
         }
 
@@ -244,7 +265,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
       socket.join(msg.matchId);
       const matchId = BigInt(msg.matchId);
       const m = hub.get(matchId);
-      if (m) socket.emit("state", { matchId: msg.matchId, state: m.state, ply: m.ply });
+      if (m) socket.emit("state", { matchId: msg.matchId, state: m.state, ply: m.ply, clocks: clocksOf(m) });
       armTurnClockIfNeeded(matchId, msg.matchId);
     });
 
@@ -267,7 +288,8 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
           if (state.over) {
             announceGameOver(matchId, msg.matchId, state);
           } else {
-            io.to(msg.matchId).emit("state", { matchId: msg.matchId, state, ply: hub.get(matchId)?.ply ?? 0 });
+            const mm = hub.get(matchId);
+            io.to(msg.matchId).emit("state", { matchId: msg.matchId, state, ply: mm?.ply ?? 0, clocks: mm ? clocksOf(mm) : null });
             rearmTurnClock(matchId, msg.matchId);
           }
         } catch (err) {
