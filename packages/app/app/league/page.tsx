@@ -217,10 +217,13 @@ export default function League() {
           )}
         </div>
         <span className="muted">
-          Deposit {SYMBOL} for the season, climb the ladder, and share the season’s prize pool. Your deposit is
-          always returned in full — you can only win.
+          {depositsOpen
+            ? `Deposit ${SYMBOL} for the season, climb the ladder, and share the season’s prize pool. Your deposit is always returned in full — you can only win.`
+            : "A no-loss savings league: deposit during the entry window, play the season, and share the prize pool. Your deposit always comes back in full."}
         </span>
-        {season && (
+        {/* the numbers row earns its place only when there's a number to show —
+            "Pool 0 · Your stake 0" reads as a dead feature */}
+        {season && (mine > 0n || season.totalPrincipal > 0n) && (
           <div className="card flat row" style={{ padding: "10px 12px" }}>
             <span className="muted">
               Pool <b style={{ color: "var(--text)" }}>{fmt(season.totalPrincipal, STAKE_DECIMALS)}</b> {SYMBOL}
@@ -264,18 +267,33 @@ export default function League() {
           </span>
         </div>
       ) : !depositsOpen ? (
-        // A disabled form is a dead end — say what's happening and what to do instead.
-        <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
-          <span className="h2">Deposits are closed for this season</span>
-          <span className="muted">
-            {mine > 0n
-              ? "Your deposit is riding the season — keep winning games to climb the ladder before it ends."
-              : "The season is in play. Games you win now count on the ladder; deposits reopen next season."}
-          </span>
-          <Link className="btn block" href="/?play=1" style={{ marginTop: 4 }}>
-            <Icon name="play" size={17} /> Play a game
-          </Link>
-        </div>
+        mine > 0n ? (
+          // depositor mid-season: their money is riding — the action is to play
+          <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
+            <span className="h2">Your deposit is in play</span>
+            <span className="muted">
+              Keep winning games to climb the standings before the season ends — your{" "}
+              {fmt(mine, STAKE_DECIMALS)} {SYMBOL} comes back in full either way.
+            </span>
+            <Link className="btn block" href="/?play=1" style={{ marginTop: 4 }}>
+              <Icon name="play" size={17} /> Play a game
+            </Link>
+          </div>
+        ) : (
+          // not in this season and can't join it — don't fake an action (games
+          // won here earn a non-depositor nothing); hand them the money event
+          // that IS live for them instead
+          <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
+            <span className="h2">This season started without you</span>
+            <span className="muted">
+              Deposits reopen when the next season starts. Meanwhile, the weekly league pays out every Monday — no
+              deposit needed, every money game counts.
+            </span>
+            <Link className="btn block" href="/compete" style={{ marginTop: 4 }}>
+              <Icon name="trophy" size={17} /> Join this week&apos;s race
+            </Link>
+          </div>
+        )
       ) : (
         <div className="card stack" style={{ gap: 12 }}>
           <div className="row">

@@ -126,7 +126,7 @@ export default function Compete() {
         <>
           <span className="section-label">More ways to compete</span>
           <div className="stack" style={{ gap: 8 }}>
-            <Row href="/league" icon="trophy" title="Season" sub="Deposit for the season — top of the ladder shares the prize" />
+            <Row href="/league" icon="trophy" title="Season" sub="No-loss league — your deposit always comes back in full" />
           </div>
         </>
       )}

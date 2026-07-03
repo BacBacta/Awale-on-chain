@@ -72,9 +72,7 @@ export function WeeklyLeague() {
           </div>
         ) : (
           // a bare "0" pot reads as "dead app" — sell the mechanic instead
-          <span className="muted">
-            The pot grows with every money game played this week — top 5 share it Monday. Be first on the board.
-          </span>
+          <span className="muted">The pot grows with every money game this week — top 5 share it Monday.</span>
         )}
 
         {entered && data.me ? (
@@ -84,12 +82,13 @@ export function WeeklyLeague() {
               : `${data.me.points} pts so far — keep winning to enter the top 5.`}
           </span>
         ) : (
+          // one sentence, not two overlapping paragraphs; secondary button —
+          // Compete keeps a single primary green (the new player's first game)
           <div className="stack" style={{ gap: 8 }}>
             <span className="muted">
-              Play {data.minGames} money games this week to enter ({played}/{data.minGames} so far). Every game counts
-              automatically.
+              Play {data.minGames} money games to enter — {played}/{data.minGames} so far, counted automatically.
             </span>
-            <Link className="btn block" href="/?money=1">
+            <Link className="btn secondary block" href="/?money=1">
               Play for money
             </Link>
           </div>
