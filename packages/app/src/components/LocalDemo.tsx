@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { initialState, applyMove, legalMovesMask, DRAW, type GameState } from "../../../engine/src/awale.js";
 import { chooseMove, wouldAcceptDraw, type Difficulty } from "../../../engine/src/ai.js";
@@ -28,6 +28,11 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
 
+// Same blitz clock as live matches (3 min per player) so Practice teaches the
+// exact rhythm of a real game — and so the clock is testable without a second
+// player. It only starts running once the first move is played.
+const BLITZ_CLOCK_MS = 3 * 60_000;
+
 /** Self-contained game vs a real Awalé AI — no server or chain needed. */
 export function LocalDemo() {
   const [state, setState] = useState<GameState>(() => initialState());
@@ -38,8 +43,29 @@ export function LocalDemo() {
   const [showOverlay, setShowOverlay] = useState(false);
   const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
   const [drawDeclined, setDrawDeclined] = useState(false);
+  const clockRef = useRef<[number, number]>([BLITZ_CLOCK_MS, BLITZ_CLOCK_MS]); // banked time
+  const turnStartRef = useRef(Date.now());
+  const [, setTick] = useState(0); // re-render pulse for the countdown
 
   useEffect(() => setSkin(getEquipped()), []);
+
+  /** Live remaining time: the bank, minus the running turn for the mover. */
+  function liveClock(player: 0 | 1): number {
+    const banked = clockRef.current[player];
+    if (ply === 0 || state.over || state.turn !== player) return banked;
+    return Math.max(0, banked - (Date.now() - turnStartRef.current));
+  }
+
+  // Tick the display and flag whoever runs out of time.
+  useEffect(() => {
+    if (state.over || ply === 0) return;
+    const iv = setInterval(() => {
+      setTick((t) => t + 1);
+      if (liveClock(0) <= 0) concede(1); // human out of time — AI wins
+      else if (liveClock(1) <= 0) concede(0); // (practically never)
+    }, 500);
+    return () => clearInterval(iv);
+  }, [state.over, ply === 0]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sessions = useMemo<[SessionKey, SessionKey]>(() => [createSessionKey(), createSessionKey()], []);
 
@@ -70,6 +96,9 @@ export function LocalDemo() {
     if (busy || state.over || state.turn !== 0) return;
     setBusy(true);
     try {
+      // bank the human's thinking time (the clock starts on the first move)
+      if (ply > 0) clockRef.current[0] = Math.max(0, clockRef.current[0] - (Date.now() - turnStartRef.current));
+      turnStartRef.current = Date.now();
       await signMove(sessions[0], DEMO_MATCH_ID, BigInt(ply), house, DEMO_CTX);
       let next = applyMove(state, house);
       let p = ply + 1;
@@ -87,6 +116,8 @@ export function LocalDemo() {
         const botDur = moveDurationMs(seedsOf(next, 6 + botHouse));
         setThinking(false);
         await signMove(sessions[1], DEMO_MATCH_ID, BigInt(p), botHouse, DEMO_CTX);
+        clockRef.current[1] = Math.max(0, clockRef.current[1] - (Date.now() - turnStartRef.current));
+        turnStartRef.current = Date.now();
         next = applyMove(next, botHouse);
         p += 1;
         setState(next);
@@ -96,6 +127,7 @@ export function LocalDemo() {
     } finally {
       setThinking(false);
       setBusy(false);
+      turnStartRef.current = Date.now(); // the human's turn starts clean, after animations
     }
   }
 
@@ -103,6 +135,8 @@ export function LocalDemo() {
     setShowOverlay(false);
     setState(initialState());
     setPly(0);
+    clockRef.current = [BLITZ_CLOCK_MS, BLITZ_CLOCK_MS];
+    turnStartRef.current = Date.now();
   }
 
   // A stuck game (an endless cyclic position, or just not fun anymore)
@@ -170,9 +204,10 @@ export function LocalDemo() {
           score={state.store1}
           active={state.turn === 1 && !state.over}
           thinking={thinking}
+          clockMs={liveClock(1)}
         />
         <Board state={state} onPlay={play} playable={playable} skin={skin} />
-        <PlayerPanel name="You" you score={state.store0} active={state.turn === 0 && !state.over} />
+        <PlayerPanel name="You" you score={state.store0} active={state.turn === 0 && !state.over} clockMs={liveClock(0)} />
       </div>
       <div className="spacer" />
 
