@@ -34,6 +34,12 @@ export interface TournamentState extends TournamentMeta {
 /** Called when a bracket completes, to report standings to TournamentEscrow.finalize. */
 export type FinalizeHook = (id: string, winners: Address[]) => Promise<void>;
 
+export interface TournamentHooks {
+  /** A bracket just went live (field filled or force-started) — the moment to
+   *  rotate: spin up the next table so the lobby is never empty. */
+  onStart?: (meta: TournamentMeta) => void;
+}
+
 /** A player's current obligation in a running tournament. */
 export interface Assignment {
   round: number;
@@ -55,7 +61,10 @@ interface Entry {
 
 export class TournamentService {
   private byId = new Map<string, Entry>();
-  constructor(private readonly finalizeHook?: FinalizeHook) {}
+  constructor(
+    private readonly finalizeHook?: FinalizeHook,
+    private readonly hooks: TournamentHooks = {},
+  ) {}
 
   /** Register a tournament the operator just created on-chain. */
   register(meta: TournamentMeta): void {
@@ -82,6 +91,7 @@ export class TournamentService {
     e.bracket = createBracket(e.entrants);
     e.phase = "running";
     this.stampNewPendings(e);
+    this.hooks.onStart?.(e.meta);
   }
 
   /** Timestamp any pairing that just became playable (both seats filled),

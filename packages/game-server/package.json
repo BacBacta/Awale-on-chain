@@ -8,7 +8,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "start": "tsx src/main.ts",
-    "dev": "tsx watch src/main.ts"
+    "dev": "tsx watch src/main.ts",
+    "finalize-league": "tsx src/scripts/finalize-league.ts"
   },
   "dependencies": {
     "@selfxyz/core": "^1.2.0-beta.1",

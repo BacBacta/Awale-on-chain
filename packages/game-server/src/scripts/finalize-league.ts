@@ -1,14 +1,17 @@
 // Finalize a no-loss league season.
 //
-// Computes the final standings from on-chain data (league depositors ranked by
-// their MatchEscrow wins), splits the realised yield, builds the prize Merkle
-// tree, writes the published proofs file the mini-app reads, and — with
-// --broadcast — commits the root via HarvestVault.finalize.
+// Computes the final standings for the season's depositors from the SAME
+// ladder the app shows: the game-server player profile (Elo + games won
+// across casual and async ranked play), plus on-chain cash-match wins. The
+// yield is split proportionally to total wins (ties broken by Elo), the prize
+// Merkle tree is built, the proofs file the mini-app reads is written, and —
+// with --broadcast — the root is committed via HarvestVault.finalize.
 //
 //   tsx src/scripts/finalize-league.ts            # dry run: writes the JSON
 //   tsx src/scripts/finalize-league.ts --broadcast # also calls finalize()
 //
 // Env: RPC_URL, CHAIN_ID, HARVEST_ADDRESS, ESCROW_ADDRESS, SEASON_ID,
+//      SERVER_URL (game-server, for the Elo ladder; default the fly deployment),
 //      OWNER_KEY (vault owner; required for --broadcast),
 //      OUT (default ../app/public/league).
 
@@ -31,6 +34,7 @@ const CHAIN_ID = Number(process.env.CHAIN_ID ?? "11142220");
 const HARVEST = req("HARVEST_ADDRESS") as Address;
 const ESCROW = req("ESCROW_ADDRESS") as Address;
 const SEASON = BigInt(req("SEASON_ID"));
+const SERVER_URL = process.env.SERVER_URL ?? "https://awale-game-server.fly.dev";
 const OUT = process.env.OUT ?? resolve(import.meta.dirname, "../../../app/public/league");
 const BROADCAST = process.argv.includes("--broadcast");
 
@@ -75,7 +79,7 @@ async function main() {
   }
   if (principal.size === 0) throw new Error("no depositors for this season");
 
-  // 2. wins per depositor, from settled matches
+  // 2a. cash-match wins per depositor, from settled matches
   const settled = await client.getLogs({ address: ESCROW, event: SETTLED, fromBlock: 0n });
   const wins = new Map<string, number>();
   for (const l of settled) {
@@ -87,6 +91,22 @@ async function main() {
     };
     const winner = (Number(a.winner) === 0 ? m.player0 : m.player1).toLowerCase();
     if (principal.has(winner)) wins.set(winner, (wins.get(winner) ?? 0) + 1);
+  }
+
+  // 2b. ladder wins + Elo from the game-server profile (casual + async ranked
+  // play) — the same ladder the app's Compete tab shows. Best-effort per
+  // player: an unreachable profile just contributes 0 ladder wins.
+  const elo = new Map<string, number>();
+  for (const account of principal.keys()) {
+    try {
+      const res = await fetch(`${SERVER_URL}/profile?address=${account}`);
+      if (!res.ok) continue;
+      const { profile } = (await res.json()) as { profile: { elo: number; gamesWon: number } };
+      elo.set(account, profile.elo);
+      wins.set(account, (wins.get(account) ?? 0) + (profile.gamesWon ?? 0));
+    } catch {
+      /* server unreachable — on-chain wins alone still rank this player */
+    }
   }
 
   // 3. realised yield estimate (aToken balance of the vault − principal)
@@ -106,7 +126,13 @@ async function main() {
     wins: wins.get(account) ?? 0,
     principal: p,
   }));
-  standings.sort((a, b) => b.wins - a.wins || (b.principal > a.principal ? 1 : -1));
+  // display order: total wins, ties broken by ladder Elo, then by principal
+  standings.sort(
+    (a, b) =>
+      b.wins - a.wins ||
+      (elo.get(b.account.toLowerCase()) ?? 0) - (elo.get(a.account.toLowerCase()) ?? 0) ||
+      (b.principal > a.principal ? 1 : -1),
+  );
 
   const tree = buildPrizeTree(splitPrizes(standings, yieldPot));
   const claims: Record<string, { amount: string; proof: Hex[] }> = {};
@@ -117,7 +143,11 @@ async function main() {
   writeFileSync(file, JSON.stringify({ season: SEASON.toString(), token: season.token, root: tree.root, yieldPot: yieldPot.toString(), generatedAt: new Date().toISOString(), claims }, null, 2));
   console.log(`standings: ${standings.length} players · yield ${yieldPot} · root ${tree.root}`);
   console.log(`wrote ${file}`);
-  standings.forEach((s, i) => console.log(`  #${i + 1} ${s.account} — ${s.wins} wins, ${s.principal} principal`));
+  standings.forEach((s, i) =>
+    console.log(
+      `  #${i + 1} ${s.account} — ${s.wins} wins · elo ${elo.get(s.account.toLowerCase()) ?? "?"} · ${s.principal} principal`,
+    ),
+  );
 
   if (BROADCAST) {
     const account = privateKeyToAccount(req("OWNER_KEY") as Hex);

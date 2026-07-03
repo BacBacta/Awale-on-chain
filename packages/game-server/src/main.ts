@@ -200,7 +200,44 @@ const tournamentFinalize =
     : async (id: string, winners: Address[]) => {
         console.log(`[tournament] (no signer) would finalize ${id} → ${winners.join(", ")}`);
       };
-const tournaments = new TournamentService(tournamentFinalize);
+
+// Auto-rotation: the moment a bracket goes live, open an identical table so
+// the lobby is never empty — unless one is already waiting. Join/refund
+// windows are durations (seconds from creation), mirroring createTournament.
+const TOURNAMENT_JOIN_WINDOW_S = Number(process.env.TOURNAMENT_JOIN_WINDOW_S ?? String(7 * 24 * 3600));
+const TOURNAMENT_REFUND_WINDOW_S = Number(process.env.TOURNAMENT_REFUND_WINDOW_S ?? String(30 * 24 * 3600));
+function rotateTournament(meta: TournamentMeta): void {
+  if (!(SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66 && TOURNAMENT)) return;
+  void (async () => {
+    if (tournaments.openLobbies().length > 0) return; // a table is already waiting
+    const wallet = createWalletClient({
+      chain: chainFor(CHAIN_ID),
+      transport: http(RPC_URL),
+      account: privateKeyToAccount(SIGNER as Hex),
+    });
+    const hash = await wallet.writeContract({
+      address: TOURNAMENT,
+      abi: tournamentEscrowAbi,
+      functionName: "createTournament",
+      args: [
+        meta.token,
+        BigInt(meta.entryFee),
+        meta.maxPlayers,
+        meta.cutBps,
+        BigInt(TOURNAMENT_JOIN_WINDOW_S),
+        BigInt(TOURNAMENT_REFUND_WINDOW_S),
+        meta.payoutBps,
+      ],
+      ...(FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {}),
+    } as Parameters<typeof wallet.writeContract>[0]);
+    console.log(`[tournament] rotation: new table cloned from #${meta.id} (${hash})`);
+    await publicClient.waitForTransactionReceipt({ hash });
+    lastTournamentSync = 0; // let the next lobby request pick it up immediately
+    await syncTournaments();
+  })().catch((e) => console.warn(`[tournament] rotation failed: ${(e as Error).message}`));
+}
+
+const tournaments = new TournamentService(tournamentFinalize, { onStart: rotateTournament });
 console.log(TOURNAMENT ? `tournaments: on-chain @ ${TOURNAMENT}` : "tournaments: off-chain (set TOURNAMENT_ADDRESS)");
 
 function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {

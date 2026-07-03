@@ -107,6 +107,29 @@ describe("TournamentService", () => {
     expect(s.state("1").phase).toBe("running");
   });
 
+  describe("rotation hook", () => {
+    it("fires onStart with the tournament's meta the moment the field fills", () => {
+      const started: string[] = [];
+      const s = new TournamentService(undefined, { onStart: (m) => started.push(m.id) });
+      s.register(meta({ id: "7", maxPlayers: 2 }));
+      s.join("7", P(1));
+      expect(started).toEqual([]); // not full yet
+      s.join("7", P(2)); // fills → running
+      expect(started).toEqual(["7"]);
+    });
+
+    it("fires on a force-start too, and never twice", () => {
+      const started: string[] = [];
+      const s = new TournamentService(undefined, { onStart: (m) => started.push(m.id) });
+      s.register(meta({ id: "8", maxPlayers: 8 }));
+      s.join("8", P(1));
+      s.join("8", P(2));
+      s.start("8"); // deadline force-start with a partial field
+      s.start("8"); // idempotent — already running
+      expect(started).toEqual(["8"]);
+    });
+  });
+
   describe("claimWalkover", () => {
     function pairedService(): TournamentService {
       const s = new TournamentService();
