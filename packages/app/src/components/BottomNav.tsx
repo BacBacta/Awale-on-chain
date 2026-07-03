@@ -6,14 +6,14 @@ import { Icon, type IconName } from "./Icon.js";
 
 // Persistent bottom navigation — three tabs, one per player question:
 //   Play    → "I want to play"        (all game modes funnel from here)
-//   Compete → "how am I doing?"       (rank, quests, ladder, tournaments, season)
+//   Compete → "how am I doing?"       (rank, weekly race, quests, ladder, season)
 //   Me      → "my stuff"              (profile, money, style, history)
-// Deep routes that fell out of the nav (/matches, /tournaments, /league,
-// /shop, /stats) still exist; they highlight their owning tab.
+// Deep routes that fell out of the nav (/matches, /league, /shop, /stats)
+// still exist; they highlight their owning tab.
 type Tab = { href: string; label: string; icon: IconName; owns: string[] };
 const TABS: Tab[] = [
   { href: "/", label: "Play", icon: "play", owns: ["/matches"] },
-  { href: "/compete", label: "Compete", icon: "trophy", owns: ["/tournaments", "/league"] },
+  { href: "/compete", label: "Compete", icon: "trophy", owns: ["/league"] },
   { href: "/profile", label: "Me", icon: "seed", owns: ["/shop", "/stats"] },
 ];
 

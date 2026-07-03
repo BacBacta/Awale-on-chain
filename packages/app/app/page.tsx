@@ -10,6 +10,7 @@ import { escrowConfig, type WriteClient, type EscrowConfig } from "../src/lib/es
 import { MatchActions } from "../src/components/MatchActions.js";
 import { PersonhoodVerify } from "../src/components/PersonhoodVerify.js";
 import { QuickMatch } from "../src/components/QuickMatch.js";
+import { InboxCard } from "../src/components/InboxCard.js";
 import { Icon, type IconName } from "../src/components/Icon.js";
 import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
@@ -123,6 +124,9 @@ export default function Lobby() {
           )}
         </span>
       </div>
+
+      {/* what happened while you were away — push's guaranteed fallback */}
+      <InboxCard address={address} />
 
       {/* hero — tight: the headline earns ~2 lines, not a quarter of the screen */}
       <div className="card animate-in" style={{ position: "relative", overflow: "hidden", padding: "16px 18px" }}>

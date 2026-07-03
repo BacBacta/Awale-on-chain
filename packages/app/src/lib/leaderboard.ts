@@ -1,7 +1,11 @@
-// On-chain leaderboard: rank players by settled-match wins (and net winnings),
-// derived from MatchSettled events + getMatch. Persistent and cross-player with
-// no backend — the natural skill ladder for cash play. (Server ELO becomes the
-// source of truth for casual/async ladders once persistence is wired.)
+// Money leaderboard: settled-match wins + net winnings per player.
+//
+// Served by the game server, which folds every MatchSettled event into a
+// durable board as it happens (see settled-ledger.ts there). The old approach
+// — scanning every log since block 0 and calling getMatch per match, from the
+// phone, on every visit — is kept only as a fallback for when the server is
+// unreachable: it still works, it's just O(matches) RPC calls on a metered
+// connection.
 
 import { readContract, getLogs } from "viem/actions";
 import { parseAbiItem, type Address } from "viem";
@@ -9,6 +13,7 @@ import { publicClient } from "./minipay.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 import type { EscrowConfig } from "./escrow.js";
 
+const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
 const SETTLED = parseAbiItem("event MatchSettled(uint256 indexed matchId, uint8 winner, uint256 prize)");
 
 export interface LeaderRow {
@@ -18,6 +23,21 @@ export interface LeaderRow {
 }
 
 export async function loadLeaderboard(cfg: EscrowConfig, limit = 25): Promise<LeaderRow[]> {
+  if (SERVER_URL) {
+    try {
+      const res = await fetch(`${SERVER_URL}/money-leaderboard?n=${limit}`);
+      if (res.ok) {
+        const { leaders } = (await res.json()) as { leaders: { address: Address; wins: number; netWei: string }[] };
+        return leaders.map((l) => ({ address: l.address, wins: l.wins, net: BigInt(l.netWei) }));
+      }
+    } catch {
+      /* server unreachable — fall back to scanning the chain directly */
+    }
+  }
+  return loadLeaderboardFromChain(cfg, limit);
+}
+
+async function loadLeaderboardFromChain(cfg: EscrowConfig, limit: number): Promise<LeaderRow[]> {
   const client = publicClient(cfg.rpcUrl, cfg.chainId);
   const logs = await getLogs(client, { address: cfg.escrow, event: SETTLED, fromBlock: 0n, toBlock: "latest" });
 

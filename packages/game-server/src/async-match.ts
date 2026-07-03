@@ -51,8 +51,11 @@ export class AsyncMatchService {
     private readonly hooks: AsyncMatchHooks = {},
   ) {}
 
-  private reportResult(players: [Address, Address], winner: number): void {
+  private reportResult(players: [Address, Address], winner: number, mode: "casual" | "cash"): void {
     if (players[1] === ZERO) return; // never finished pairing — nothing to rate
+    // Cash games are rated from the chain's MatchSettled event (main.ts) — the
+    // only authoritative settlement; reporting here too would double-count.
+    if (mode !== "casual") return;
     this.hooks.onResult?.(players, winner);
   }
 
@@ -173,7 +176,7 @@ export class AsyncMatchService {
       const opponent = rec.players[1 - player];
       await this.notifier.notifyTurn(opponent, matchId);
     } else {
-      this.reportResult(rec.players, m.state.winner);
+      this.reportResult(rec.players, m.state.winner, rec.mode);
     }
     return next;
   }
@@ -221,7 +224,7 @@ export class AsyncMatchService {
       updatedAt: Date.now(),
       turnClockMs: rec.turnClockMs,
     });
-    this.reportResult(rec.players, state.winner);
+    this.reportResult(rec.players, state.winner, rec.mode);
     return state;
   }
 

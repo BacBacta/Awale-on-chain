@@ -7,7 +7,7 @@
 
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import { createPublicClient, createWalletClient, http, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, http, parseAbiItem, type Address, type Hex } from "viem";
 import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { GameHub } from "./hub.js";
@@ -51,9 +51,11 @@ import {
   type LeagueStore,
   type LeagueWinner,
 } from "./weekly-league.js";
+import { SettledLedger, InMemoryLedgerStore, RedisLedgerStore, type LedgerStore } from "./settled-ledger.js";
+import { InboxNotifier, InMemoryInboxStore, RedisInboxStore, inboxSnapshot, type InboxStore } from "./notifications/inbox.js";
 import { erc20Abi, matchEscrowAbi, tournamentEscrowAbi } from "../../protocol/src/abis.js";
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
-import { InMemoryPersonhoodRegistry } from "./personhood/registry.js";
+import { InMemoryPersonhoodRegistry, RedisPersonhoodRegistry } from "./personhood/registry.js";
 import { verifyAndRegister } from "./personhood/gate.js";
 import type { PersonhoodRegistry } from "./personhood/types.js";
 
@@ -130,7 +132,7 @@ if (SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66) {
 // optional: Self proof-of-personhood gating for ranked/cash play
 const SELF_SCOPE = process.env.SELF_SCOPE;
 const SELF_ENDPOINT = process.env.SELF_ENDPOINT;
-const personhood: PersonhoodRegistry = new InMemoryPersonhoodRegistry();
+let personhood: PersonhoodRegistry = new InMemoryPersonhoodRegistry(); // Redis-backed below when REDIS_URL is set
 const selfVerifier = SELF_SCOPE && SELF_ENDPOINT
   ? new SelfPersonhoodVerifier({
       scope: SELF_SCOPE,
@@ -149,6 +151,8 @@ let socialStore: SocialStore = new InMemorySocialStore();
 let subStore: SubscriptionStore = new InMemorySubscriptionStore();
 let profiles: ProfileStore = new InMemoryProfileStore();
 let leagueStore: LeagueStore = new InMemoryLeagueStore();
+let ledgerStore: LedgerStore = new InMemoryLedgerStore();
+let inboxStore: InboxStore = new InMemoryInboxStore();
 if (process.env.REDIS_URL) {
   const redis = new IORedis(process.env.REDIS_URL, { family: 6, maxRetriesPerRequest: 5, lazyConnect: true });
   redis.on("error", (e) => console.warn(`[redis] ${e.message}`));
@@ -159,18 +163,26 @@ if (process.env.REDIS_URL) {
   subStore = new RedisSubscriptionStore(redis);
   profiles = new RedisProfileStore(redis);
   leagueStore = new RedisLeagueStore(redis);
-  console.log("stores: redis (async, social, push subscriptions, profiles, league)");
+  ledgerStore = new RedisLedgerStore(redis);
+  inboxStore = new RedisInboxStore(redis);
+  personhood = new RedisPersonhoodRegistry(redis);
+  console.log("stores: redis (async, social, push subscriptions, profiles, league, ledger, inbox, personhood)");
 } else {
   console.log("stores: in-memory (set REDIS_URL for durability + scaling)");
 }
+const ledger = new SettledLedger(ledgerStore);
 
 const VAPID_PUBLIC = process.env.VAPID_PUBLIC_KEY;
 const VAPID_PRIVATE = process.env.VAPID_PRIVATE_KEY;
-const notifier: Notifier =
+// Every notification is recorded in the in-app inbox first (the guaranteed
+// channel — MiniPay's webview may not support Web Push at all), then sent on
+// the push channel when configured.
+const pushNotifier: Notifier =
   VAPID_PUBLIC && VAPID_PRIVATE
     ? new WebPushNotifier(subStore, { publicKey: VAPID_PUBLIC, privateKey: VAPID_PRIVATE, subject: process.env.VAPID_SUBJECT ?? "mailto:ops@awale.app" })
     : new LogNotifier();
-console.log(`push: ${VAPID_PUBLIC && VAPID_PRIVATE ? "web-push enabled" : "log-only (set VAPID keys)"}`);
+const notifier: Notifier = new InboxNotifier(inboxStore, pushNotifier);
+console.log(`push: ${VAPID_PUBLIC && VAPID_PRIVATE ? "web-push enabled" : "log-only (set VAPID keys)"} + in-app inbox`);
 // Every finished two-player game (casual quick-match or async, by play or by
 // forfeit) lands here: Elo transfer + played/won counters on both profiles.
 // Fire-and-forget — a profile hiccup must never affect the game itself.
@@ -223,44 +235,12 @@ const tournamentFinalize =
         console.log(`[tournament] (no signer) would finalize ${id} → ${winners.join(", ")}`);
       };
 
-// Auto-rotation: the moment a bracket goes live, open an identical table so
-// the lobby is never empty — unless one is already waiting. Join/refund
-// windows are durations (seconds from creation), mirroring createTournament.
-const TOURNAMENT_JOIN_WINDOW_S = Number(process.env.TOURNAMENT_JOIN_WINDOW_S ?? String(7 * 24 * 3600));
-const TOURNAMENT_REFUND_WINDOW_S = Number(process.env.TOURNAMENT_REFUND_WINDOW_S ?? String(30 * 24 * 3600));
-function rotateTournament(meta: TournamentMeta): void {
-  if (!(SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66 && TOURNAMENT)) return;
-  void (async () => {
-    if (tournaments.openLobbies().length > 0) return; // a table is already waiting
-    const wallet = createWalletClient({
-      chain: chainFor(CHAIN_ID),
-      transport: http(RPC_URL),
-      account: privateKeyToAccount(SIGNER as Hex),
-    });
-    const hash = await wallet.writeContract({
-      address: TOURNAMENT,
-      abi: tournamentEscrowAbi,
-      functionName: "createTournament",
-      args: [
-        meta.token,
-        BigInt(meta.entryFee),
-        meta.maxPlayers,
-        meta.cutBps,
-        BigInt(TOURNAMENT_JOIN_WINDOW_S),
-        BigInt(TOURNAMENT_REFUND_WINDOW_S),
-        meta.payoutBps,
-      ],
-      ...(FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {}),
-    } as Parameters<typeof wallet.writeContract>[0]);
-    console.log(`[tournament] rotation: new table cloned from #${meta.id} (${hash})`);
-    await publicClient.waitForTransactionReceipt({ hash });
-    lastTournamentSync = 0; // let the next lobby request pick it up immediately
-    await syncTournaments();
-  })().catch((e) => console.warn(`[tournament] rotation failed: ${(e as Error).message}`));
-}
-
-const tournaments = new TournamentService(tournamentFinalize, { onStart: rotateTournament });
-console.log(TOURNAMENT ? `tournaments: on-chain @ ${TOURNAMENT}` : "tournaments: off-chain (set TOURNAMENT_ADDRESS)");
+// Tournaments were replaced by the weekly league as the recurring money event
+// (a bracket needs N players on the same clock; a leaderboard works at any
+// concurrency). The service + endpoints stay so an already-started bracket can
+// finish and settle, but nothing recruits: no UI entry, no auto-rotation.
+const tournaments = new TournamentService(tournamentFinalize);
+console.log(TOURNAMENT ? `tournaments: legacy settle-only @ ${TOURNAMENT}` : "tournaments: off (replaced by weekly league)");
 
 function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -388,6 +368,36 @@ const httpServer = createServer((req, res) => {
       .snapshot(address ?? undefined)
       .then((s) => json(200, s))
       .catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  // --- all-time money leaderboard, fed from MatchSettled (was a client-side
+  //     scan of every log since block 0 on each visit) ---
+  if (req.method === "GET" && url.pathname === "/money-leaderboard") {
+    const n = Math.min(50, Math.max(1, Number(url.searchParams.get("n") ?? "25")));
+    ledger
+      .top(n)
+      .then((leaders) => json(200, { leaders }))
+      .catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  // --- in-app notification inbox: the push fallback ---
+  if (req.method === "GET" && url.pathname === "/inbox") {
+    const address = url.searchParams.get("address") as Address | null;
+    if (!address) return json(400, { error: "address required" });
+    inboxSnapshot(inboxStore, address)
+      .then((s) => json(200, s))
+      .catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/inbox/seen") {
+    readJson(req)
+      .then((b) => {
+        const { address } = b as { address: Address };
+        if (!address) throw new Error("address required");
+        return inboxStore.setLastSeen(address, Date.now());
+      })
+      .then(() => json(200, { ok: true }))
+      .catch((e) => json(400, { error: (e as Error).message }));
     return;
   }
   if (req.method === "POST" && url.pathname === "/profile/daily-solved") {
@@ -741,35 +751,84 @@ watchStartFinalized(
   hub,
 );
 
-// League feed: MatchSettled is emitted by every staked settlement path
-// (settleSigned, finalize after the challenge window, a successful challenge,
-// draws included) — so the league credits exactly the games where money
-// actually moved, never a server-side opinion of who won.
-const leagueSeen = new Set<string>();
+// Settled-match pipeline: MatchSettled is emitted by every staked settlement
+// path (settleSigned, finalize after the challenge window, a successful
+// challenge, draws included) — the only authoritative "money actually moved"
+// signal. One event feeds three things, all gated by the durable ledger so
+// watcher + backfill + restarts stay exactly-once:
+//   1. the weekly league (points + pool),
+//   2. the all-time money leaderboard,
+//   3. the player profiles (Elo, played/won, quests) — a cash game must count
+//      for progression at least as much as a casual one does.
+async function onSettled(matchId: bigint, winner: number, prizeWei: bigint, at: Date): Promise<void> {
+  const key = matchId.toString();
+  if (!(await ledger.claim(key))) return;
+  const m = (await publicClient.readContract({
+    address: ESCROW,
+    abi: matchEscrowAbi,
+    functionName: "getMatch",
+    args: [matchId],
+  })) as { token: Address; stake: bigint; player0: Address; player1: Address; rakeBps: number };
+  await league.recordGame([m.player0, m.player1], winner, BigInt(m.stake) * 2n, Number(m.rakeBps), m.token, at);
+  if (winner === 0 || winner === 1) await ledger.recordWin(winner === 0 ? m.player0 : m.player1, prizeWei);
+  recordGameResult([m.player0, m.player1], winner);
+  console.log(`[settled] counted match ${key} (winner=${winner})`);
+}
+
 publicClient.watchContractEvent({
   address: ESCROW,
   abi: matchEscrowAbi,
   eventName: "MatchSettled",
   onLogs: (logs) => {
     for (const log of logs) {
-      const { matchId, winner } = (log as unknown as { args: { matchId?: bigint; winner?: number } }).args;
-      if (matchId === undefined || winner === undefined) continue;
-      const key = matchId.toString();
-      if (leagueSeen.has(key)) continue;
-      leagueSeen.add(key);
-      void (async () => {
-        const m = (await publicClient.readContract({
-          address: ESCROW,
-          abi: matchEscrowAbi,
-          functionName: "getMatch",
-          args: [matchId],
-        })) as { token: Address; stake: bigint; player0: Address; player1: Address; rakeBps: number };
-        await league.recordGame([m.player0, m.player1], Number(winner), BigInt(m.stake) * 2n, Number(m.rakeBps), m.token);
-        console.log(`[league] counted match ${key} (winner=${winner})`);
-      })().catch((e) => console.warn(`[league] match ${key} not recorded: ${(e as Error).message}`));
+      const { args, blockNumber } = log as unknown as {
+        args: { matchId?: bigint; winner?: number; prize?: bigint };
+        blockNumber?: bigint;
+      };
+      if (args.matchId === undefined || args.winner === undefined) continue;
+      void onSettled(args.matchId, Number(args.winner), args.prize ?? 0n, new Date())
+        .then(() => (blockNumber !== undefined ? ledger.setLastBlock(blockNumber) : undefined))
+        .catch((e) => console.warn(`[settled] match ${args.matchId} not recorded: ${(e as Error).message}`));
     }
   },
 });
+
+// Backfill the deploy gap: events emitted while the server was down were
+// invisible to the watcher, silently under-counting the league on every
+// deploy. Resume from the last processed block (capped to a lookback window
+// so a long-dead ledger doesn't trigger a full-chain scan); the ledger's
+// claim() makes overlap harmless. League credits use the block's timestamp so
+// a game settled Sunday 23:59 lands in the right week even if the server only
+// reads it Monday.
+const SETTLED_EVENT = parseAbiItem("event MatchSettled(uint256 indexed matchId, uint8 winner, uint256 prize)");
+const BACKFILL_BLOCKS = BigInt(process.env.LEAGUE_BACKFILL_BLOCKS ?? "100000");
+const BACKFILL_STEP = 5_000n;
+async function backfillSettled(): Promise<void> {
+  const latest = await publicClient.getBlockNumber();
+  const floor = latest > BACKFILL_BLOCKS ? latest - BACKFILL_BLOCKS : 0n;
+  const last = await ledger.lastBlock();
+  let from = last !== null && last + 1n > floor ? last + 1n : floor;
+  if (from > latest) return;
+  const blockTimes = new Map<bigint, Date>();
+  for (let b = from; b <= latest; b += BACKFILL_STEP) {
+    const to = b + BACKFILL_STEP - 1n < latest ? b + BACKFILL_STEP - 1n : latest;
+    const logs = await publicClient.getLogs({ address: ESCROW, event: SETTLED_EVENT, fromBlock: b, toBlock: to });
+    for (const log of logs) {
+      const { matchId, winner, prize } = log.args;
+      if (matchId === undefined || winner === undefined) continue;
+      let at = blockTimes.get(log.blockNumber);
+      if (!at) {
+        const block = await publicClient.getBlock({ blockNumber: log.blockNumber });
+        at = new Date(Number(block.timestamp) * 1000);
+        blockTimes.set(log.blockNumber, at);
+      }
+      await onSettled(matchId, Number(winner), prize ?? 0n, at);
+    }
+    await ledger.setLastBlock(to);
+  }
+  console.log(`[settled] backfill caught up: blocks ${from} → ${latest}`);
+}
+void backfillSettled().catch((e) => console.warn(`[settled] backfill failed: ${(e as Error).message}`));
 
 // League prizes are paid from the operator wallet (the rake itself accrues in
 // the Treasury; ops keeps the operator funded to cover the pool share).
@@ -786,6 +845,21 @@ async function leaguePayout(token: Address, winners: LeagueWinner[]): Promise<Le
   });
   const paid: LeagueWinner[] = [];
   for (const w of winners) {
+    // Anti-sybil: once Self verification is configured, a wallet must belong
+    // to a verified human to be *paid* (playing stays ungated — no funnel
+    // friction; sniping the pot with throwaway wallets stops working).
+    if (selfVerifier && !(await personhood.isVerified(w.address))) {
+      console.log(`[league] prize for ${w.address} withheld — not verified; carried over`);
+      void notifier
+        .notify(w.address, {
+          title: "Verify to claim league prizes",
+          body: "You placed in the weekly league, but prizes need a one-time identity check. Verify in the app to be paid next time.",
+          url: "/compete",
+          tag: "awale-league-verify",
+        })
+        .catch(() => {});
+      continue;
+    }
     try {
       const hash = await wallet.writeContract({
         address: token,

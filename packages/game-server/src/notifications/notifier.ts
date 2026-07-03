@@ -75,7 +75,7 @@ export interface Notifier {
   notifyTurn(address: Address, matchId: string): Promise<void>;
 }
 
-function turnNotification(matchId: string): Notification {
+export function turnNotification(matchId: string): Notification {
   return {
     title: "Your turn — Awalé",
     body: "Your opponent has played. Your move!",

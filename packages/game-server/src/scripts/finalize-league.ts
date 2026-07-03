@@ -1,8 +1,8 @@
 // Finalize a no-loss league season.
 //
 // Computes the final standings for the season's depositors from the SAME
-// ladder the app shows: the game-server player profile (Elo + games won
-// across casual and async ranked play), plus on-chain cash-match wins. The
+// ladder the app shows: the game-server player profile (Elo + games won —
+// casual, async AND cash, since profiles are fed from MatchSettled). The
 // yield is split proportionally to total wins (ties broken by Elo), the prize
 // Merkle tree is built, the proofs file the mini-app reads is written, and —
 // with --broadcast — the root is committed via HarvestVault.finalize.
@@ -10,7 +10,7 @@
 //   tsx src/scripts/finalize-league.ts            # dry run: writes the JSON
 //   tsx src/scripts/finalize-league.ts --broadcast # also calls finalize()
 //
-// Env: RPC_URL, CHAIN_ID, HARVEST_ADDRESS, ESCROW_ADDRESS, SEASON_ID,
+// Env: RPC_URL, CHAIN_ID, HARVEST_ADDRESS, SEASON_ID,
 //      SERVER_URL (game-server, for the Elo ladder; default the fly deployment),
 //      OWNER_KEY (vault owner; required for --broadcast),
 //      OUT (default ../app/public/league).
@@ -32,7 +32,6 @@ import { buildPrizeTree, splitPrizes } from "../league.js";
 const RPC_URL = req("RPC_URL");
 const CHAIN_ID = Number(process.env.CHAIN_ID ?? "11142220");
 const HARVEST = req("HARVEST_ADDRESS") as Address;
-const ESCROW = req("ESCROW_ADDRESS") as Address;
 const SEASON = BigInt(req("SEASON_ID"));
 const SERVER_URL = process.env.SERVER_URL ?? "https://awale-game-server.fly.dev";
 const OUT = process.env.OUT ?? resolve(import.meta.dirname, "../../../app/public/league");
@@ -48,12 +47,8 @@ function chainFor(id: number) {
 }
 
 const DEPOSITED = parseAbiItem("event Deposited(uint256 indexed seasonId, address indexed player, uint256 amount)");
-const SETTLED = parseAbiItem("event MatchSettled(uint256 indexed matchId, uint8 winner, uint256 prize)");
 const getSeasonAbi = parseAbiItem(
   "function getSeason(uint256) view returns ((address token,address pool,uint64 depositDeadline,uint64 seasonEnd,uint8 status,uint256 totalPrincipal,uint256 redeemed,uint256 yieldPot,uint256 prizeDistributed,bytes32 prizeMerkleRoot))",
-);
-const getMatchAbi = parseAbiItem(
-  "function getMatch(uint256) view returns ((address token,uint128 stake,address player0,address player1,address session0,address session1,uint8 status,uint8 startTurn,uint8 proposedWinner,uint16 rakeBps,uint64 challengeDeadline,uint64 activeDeadline,uint64 revealBlock))",
 );
 const aTokenAbi = parseAbiItem("function aToken() view returns (address)");
 const balanceOfAbi = parseAbiItem("function balanceOf(address) view returns (uint256)");
@@ -79,23 +74,11 @@ async function main() {
   }
   if (principal.size === 0) throw new Error("no depositors for this season");
 
-  // 2a. cash-match wins per depositor, from settled matches
-  const settled = await client.getLogs({ address: ESCROW, event: SETTLED, fromBlock: 0n });
+  // 2. wins + Elo from the game-server profile — the same ladder the app's
+  // Compete tab shows. Profiles are fed from casual play AND the chain's
+  // MatchSettled events (main.ts settled pipeline), so cash wins are already
+  // in gamesWon; adding a settled-log count on top would double-count them.
   const wins = new Map<string, number>();
-  for (const l of settled) {
-    const a = l.args as { matchId?: bigint; winner?: number };
-    if (a.matchId == null || a.winner == null || a.winner === 2) continue;
-    const m = (await client.readContract({ address: ESCROW, abi: [getMatchAbi], functionName: "getMatch", args: [a.matchId] })) as {
-      player0: Address;
-      player1: Address;
-    };
-    const winner = (Number(a.winner) === 0 ? m.player0 : m.player1).toLowerCase();
-    if (principal.has(winner)) wins.set(winner, (wins.get(winner) ?? 0) + 1);
-  }
-
-  // 2b. ladder wins + Elo from the game-server profile (casual + async ranked
-  // play) — the same ladder the app's Compete tab shows. Best-effort per
-  // player: an unreachable profile just contributes 0 ladder wins.
   const elo = new Map<string, number>();
   for (const account of principal.keys()) {
     try {
@@ -103,9 +86,9 @@ async function main() {
       if (!res.ok) continue;
       const { profile } = (await res.json()) as { profile: { elo: number; gamesWon: number } };
       elo.set(account, profile.elo);
-      wins.set(account, (wins.get(account) ?? 0) + (profile.gamesWon ?? 0));
+      wins.set(account, profile.gamesWon ?? 0);
     } catch {
-      /* server unreachable — on-chain wins alone still rank this player */
+      /* server unreachable — this player ranks by principal alone */
     }
   }
 
