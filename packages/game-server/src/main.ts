@@ -414,6 +414,9 @@ const httpServer = createServer((req, res) => {
           // resolved for today, not the raw counters; brand-new players get
           // the gentler beginner quest set
           quests: questStates(progress, isBeginner(p, progress)),
+          // personhood status so the app can drop the "verify" prompt once done
+          // (false whenever Self isn't configured — the gate is simply off)
+          verified: selfVerifier ? await personhood.isVerified(address) : false,
         },
       });
     })().catch((e) => json(500, { error: (e as Error).message }));
@@ -705,7 +708,10 @@ const httpServer = createServer((req, res) => {
     req.on("end", async () => {
       try {
         if (!selfVerifier) throw new Error("personhood verification not configured");
-        const { address, ...proof } = JSON.parse(body) as { address: Address };
+        // the Self mobile app POSTs the proof with no top-level address — the
+        // identity is disclosed by the proof itself and derived server-side;
+        // any `address` here is only a fallback (dev tools / the mock path)
+        const { address, ...proof } = JSON.parse(body) as { address?: Address };
         const out = await verifyAndRegister(selfVerifier, personhood, address, proof);
         res.writeHead(out.verified ? 200 : 400, { "content-type": "application/json" });
         res.end(JSON.stringify(out));

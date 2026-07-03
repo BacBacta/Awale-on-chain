@@ -74,10 +74,31 @@ export class SelfPersonhoodVerifier implements PersonhoodVerifier {
       proof.userContextData,
     );
 
+    // all three must hold: the proof is valid, the human is 18+, and they pass
+    // the OFAC screen. (The OFAC line was inverted — it rejected clean users
+    // and, in mock mode where the check always passes, blocked everyone.)
     if (!result.isValidDetails.isValid) return { ok: false };
-    if (result.isValidDetails.isOfacValid) return { ok: false };
     if (!result.isValidDetails.isMinimumAgeValid) return { ok: false };
+    if (!result.isValidDetails.isOfacValid) return { ok: false };
 
-    return { ok: true, nullifier: result.discloseOutput.nullifier };
+    // the account is disclosed by the proof itself (userIdType "hex"), so
+    // registration keys on a cryptographically-bound identity rather than any
+    // address the request body might also carry
+    return {
+      ok: true,
+      nullifier: result.discloseOutput.nullifier,
+      userIdentifier: normalizeHexId(result.userData.userIdentifier),
+    };
+  }
+}
+
+/** Self returns the hex userId as either a 0x string or a decimal bigint —
+ *  normalize both to a lowercase 0x address. */
+function normalizeHexId(id: string): Address | undefined {
+  try {
+    if (id.startsWith("0x")) return `0x${id.slice(2).toLowerCase().padStart(40, "0")}` as Address;
+    return `0x${BigInt(id).toString(16).padStart(40, "0")}` as Address;
+  } catch {
+    return undefined;
   }
 }

@@ -25,6 +25,8 @@ export interface PlayerProfile {
   /** Today's quests, already resolved (labels, targets, progress). */
   quests: QuestState[];
   perfectDays: number;
+  /** Self proof-of-personhood done for this wallet (false when Self is off). */
+  verified?: boolean;
 }
 
 export interface LeaderRow {

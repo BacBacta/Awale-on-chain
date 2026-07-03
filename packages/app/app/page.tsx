@@ -97,6 +97,8 @@ export default function Lobby() {
         const p = await getProfile(address);
         if (p && p.streak > 0) setStreak((s) => Math.max(s, p.streak));
         if (p && p.gamesPlayed > 0) setTierIcon(rankFor(p.elo).icon);
+        if (SELF_CONFIGURED && p?.verified) setVerified(true); // don't re-prompt
+
       })
       .catch(() => {});
   }, []);
@@ -198,15 +200,20 @@ export default function Lobby() {
         </div>
       </div>
 
-      {/* stake-a-match — revealed only when asked for, with its help alongside */}
+      {/* stake-a-match — revealed only when asked for, with its help alongside.
+          Self verification never blocks the stake (that would be exactly the
+          funnel friction we designed away): playing for money is open, and the
+          verify prompt sits ABOVE the panel only to unlock *league prize
+          eligibility*. The real payout gate lives server-side. */}
       {showMoney && (
         <div className="stack animate-in" style={{ gap: 10 }}>
           {staking ? (
-            verified ? (
+            <>
+              {SELF_CONFIGURED && !verified && (
+                <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
+              )}
               <MatchActions wallet={wallet} account={address} cfg={cfg} />
-            ) : (
-              <PersonhoodVerify account={address} onVerified={() => setVerified(true)} />
-            )
+            </>
           ) : (
             <div className="card muted">Open in MiniPay to play for money.</div>
           )}

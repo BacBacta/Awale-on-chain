@@ -55,9 +55,13 @@ export function PersonhoodVerify({
 
   return (
     <div className="card" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      <span className="muted">Verify you&apos;re human (required to play for money)</span>
-      {status === "verified" && <span>✓ Verified</span>}
-      {status === "error" && <span className="muted">Verification failed — try again.</span>}
+      <span style={{ fontWeight: 700, fontSize: 14 }}>Verify once to win league prizes 🏆</span>
+      <span className="muted" style={{ fontSize: 12.5 }}>
+        You can play for money right away. A quick one-time identity check (18+, takes a minute) makes you eligible for
+        the weekly prize pool.
+      </span>
+      {status === "verified" && <span className="chip positive" style={{ alignSelf: "flex-start" }}>✓ Verified — you&apos;re eligible</span>}
+      {status === "error" && <span className="muted">Verification didn&apos;t complete — you can try again anytime.</span>}
       {status !== "verified" && selfApp && (
         <SelfQRcodeWrapper
           selfApp={selfApp}

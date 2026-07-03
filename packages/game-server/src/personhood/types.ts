@@ -14,6 +14,11 @@ export interface VerifyResult {
   ok: boolean;
   /** stable per-human identifier, present when ok */
   nullifier?: string;
+  /** the account the proof is cryptographically bound to (Self discloses this
+   *  from the proof itself). The account to register — never trust a
+   *  client-supplied address alongside the proof. Absent for the test/mock
+   *  verifier, where the caller-passed address is authoritative. */
+  userIdentifier?: Address;
 }
 
 export interface PersonhoodVerifier {

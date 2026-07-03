@@ -45,6 +45,23 @@ describe("verifyAndRegister", () => {
     const again = await verifyAndRegister(verifier, reg, A, "human-1");
     expect(again.verified).toBe(true);
   });
+
+  it("registers the proof-bound account, ignoring any address sent alongside", async () => {
+    // a real Self proof discloses its own account (userIdentifier). Even if the
+    // request also carries a *different* address, the proof's identity wins —
+    // a client can't verify someone else's wallet.
+    const boundVerifier: PersonhoodVerifier = {
+      async verify() {
+        return { ok: true, nullifier: "human-1", userIdentifier: A };
+      },
+    };
+    const reg = new InMemoryPersonhoodRegistry();
+    const out = await verifyAndRegister(boundVerifier, reg, B, "proof"); // body claims B
+    expect(out.verified).toBe(true);
+    expect(out.address).toBe(A); // but the proof bound A
+    expect(await reg.isVerified(A)).toBe(true);
+    expect(await reg.isVerified(B)).toBe(false);
+  });
 });
 
 describe("assertPersonhood policy", () => {
