@@ -275,12 +275,19 @@ export function Board({ state, perspective = 0, onPlay, playable = [], skin = DE
   }
 
   return (
+    // The shadow lives on a rounded wrapper (box-shadow), NOT as a CSS
+    // filter:drop-shadow on the SVG: Chrome rasterizes large filtered SVG
+    // layers in tiles, and on some desktop GPUs tiles go missing — the board
+    // rendered torn apart with black rectangles. box-shadow composites
+    // without a filter layer, so it can't tear. Radii ≈ the board's rx=26
+    // corners (26/360 ≈ 7.2% of width, 26/300 ≈ 8.7% of height).
+    <div style={{ borderRadius: "7.2% / 8.7%", boxShadow: "0 16px 34px rgba(0,0,0,0.55)" }}>
     <svg
       viewBox={`0 0 ${W} ${H}`}
       width="100%"
       role="img"
       aria-label="Awalé board"
-      style={{ filter: "drop-shadow(0 16px 34px rgba(0,0,0,0.55))", display: "block" }}
+      style={{ display: "block" }}
     >
       <defs>
         <clipPath id="boardClip">
@@ -389,5 +396,6 @@ export function Board({ state, perspective = 0, onPlay, playable = [], skin = DE
         );
       })}
     </svg>
+    </div>
   );
 }
