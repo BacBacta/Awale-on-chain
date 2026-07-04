@@ -780,28 +780,45 @@ async function openFromChain(matchId: bigint): Promise<void> {
         functionName: "getMatch",
         args: [matchId],
       })) as { session0: Address; session1: Address; status: number; startTurn: number };
-    let m = await read();
-    if (Number(m.status) !== EscrowStatus.Active) return; // nothing to open (or already settled)
-    tracked.add(key); // keeper takes over the lifecycle (finalize retries, TTL void)
-    if (Number(m.startTurn) === START_UNSET) {
-      if (!settlement) return;
+    // The RPC's stale windows last 30-90s, not seconds: one polite attempt
+    // per watch never caught up (the keeper beat it by a minute). Be
+    // patient INSIDE one hydration instead — poll, skip stale reads, and
+    // push finalizeStart until the board can open.
+    for (let attempt = 0; attempt < 20; attempt++) {
+      if (hub.get(matchId)) return; // opened meanwhile (event watcher / us)
+      let m: Awaited<ReturnType<typeof read>>;
       try {
-        const hash = await settlement.finalizeStart(matchId);
-        await publicClient.waitForTransactionReceipt({ hash });
+        m = await read();
       } catch {
-        /* too early, raced by the other player's watch, or already fixed */
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
       }
-      m = await read();
-      if (Number(m.startTurn) === START_UNSET) return; // reveal re-rolled — next watch finishes
+      if (Number(m.status) !== EscrowStatus.Active) return; // settled/refunded — nothing to open
+      tracked.add(key); // keeper takes over the lifecycle (finalize retries, TTL void)
+      if (m.session0 === ZERO_ADDRESS || m.session1 === ZERO_ADDRESS) {
+        await new Promise((r) => setTimeout(r, 3000)); // stale node — try another
+        continue;
+      }
+      if (Number(m.startTurn) === START_UNSET) {
+        if (!settlement) return;
+        try {
+          const hash = await settlement.finalizeStart(matchId);
+          await publicClient.waitForTransactionReceipt({ hash });
+        } catch {
+          /* too early, raced, already fixed, or receipt flake — loop re-reads */
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+        continue;
+      }
+      openMatchFromChain(
+        hub,
+        { matchId, session0: m.session0, session1: m.session1, startTurn: Number(m.startTurn) },
+        { chainId: BigInt(CHAIN_ID), verifier: VERIFIER, clockMs: BLITZ_CLOCK_MS },
+      );
+      console.log(`[hydrate] match ${key} rebuilt from chain (startTurn=${m.startTurn}, attempt ${attempt + 1})`);
+      return;
     }
-    if (m.session0 === ZERO_ADDRESS || m.session1 === ZERO_ADDRESS) return; // stale node — next watch retries
-    if (hub.get(matchId)) return; // raced by the event watcher — already open
-    openMatchFromChain(
-      hub,
-      { matchId, session0: m.session0, session1: m.session1, startTurn: Number(m.startTurn) },
-      { chainId: BigInt(CHAIN_ID), verifier: VERIFIER, clockMs: BLITZ_CLOCK_MS },
-    );
-    console.log(`[hydrate] match ${key} rebuilt from chain (startTurn=${m.startTurn})`);
+    console.warn(`[hydrate] match ${key}: gave up after 20 attempts (~60s) — next watch retries`);
   } finally {
     hydrating.delete(key);
   }

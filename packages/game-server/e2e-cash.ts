@@ -154,8 +154,8 @@ async function main() {
 
   // --- 4. both watch until the board opens (StartFinalized / hydration) ---
   type StateMsg = { state: { turn: number; over: boolean; pits: number[] }; ply: number };
-  const boardA = until<StateMsg>("board for A", 90_000, (done) => sa.on("state", (m: StateMsg) => done(m)));
-  const boardB = until<StateMsg>("board for B", 90_000, (done) => sb.on("state", (m: StateMsg) => done(m)));
+  const boardA = until<StateMsg>("board for A", 150_000, (done) => sa.on("state", (m: StateMsg) => done(m)));
+  const boardB = until<StateMsg>("board for B", 150_000, (done) => sb.on("state", (m: StateMsg) => done(m)));
   const rewatch = setInterval(() => {
     sa.emit("watch", { matchId: matchId.toString(), player: 0 });
     sb.emit("watch", { matchId: matchId.toString(), player: 1 });

@@ -360,11 +360,10 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
           io.to(creator).emit("cash-ready", { matchId: pair.matchId ?? "" });
           if (pair.matchId && deps.openFromChain) {
             const id = BigInt(pair.matchId);
-            // first call usually finalizes the flip; a couple of spaced
-            // retries cover the reveal-block wait and stale-node reads
+            // one patient hydration (it polls through the RPC's stale window
+            // internally); a late second pass as a safety net
             void deps.openFromChain(id).catch(() => {});
-            setTimeout(() => void deps.openFromChain?.(id).catch(() => {}), 4000);
-            setTimeout(() => void deps.openFromChain?.(id).catch(() => {}), 10_000);
+            setTimeout(() => void deps.openFromChain?.(id).catch(() => {}), 75_000);
           }
           return;
         }
