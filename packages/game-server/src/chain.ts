@@ -18,8 +18,19 @@ import {
   type Address,
   type Hex,
 } from "viem";
-import { celo } from "viem/chains";
+import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import type { Transcript } from "./match.js";
+
+/** Resolve the viem chain for a deployment's chain id — the wallet client
+ *  signs the chain id into every transaction, so a mismatch (e.g. mainnet
+ *  hardcoded while deployed on Sepolia) gets every server write rejected
+ *  with "invalid chain ID". The return type stays a union of Celo chains so
+ *  viem keeps the Celo tx formatters (feeCurrency support). */
+function chainFor(id: number): typeof celo | typeof celoSepolia | typeof celoAlfajores {
+  if (id === celoSepolia.id) return celoSepolia;
+  if (id === celoAlfajores.id) return celoAlfajores;
+  return celo;
+}
 
 const escrowAbi = [
   {
@@ -95,6 +106,9 @@ export interface SettlementClientOptions {
   account: Account;
   /** feeCurrency adapter address paid for the network fee (CIP-64). */
   feeCurrency?: Address;
+  /** Deployment chain id (defaults to Celo mainnet). MUST match the RPC —
+   *  the signed transaction carries it. */
+  chainId?: number;
 }
 
 export class SettlementClient {
@@ -106,8 +120,9 @@ export class SettlementClient {
   constructor(opts: SettlementClientOptions) {
     this.escrow = opts.escrow;
     this.feeCurrency = opts.feeCurrency;
-    this.wallet = createWalletClient({ account: opts.account, chain: celo, transport: http(opts.rpcUrl) });
-    this.publicClient = createPublicClient({ chain: celo, transport: http(opts.rpcUrl) });
+    const chain = chainFor(opts.chainId ?? celo.id);
+    this.wallet = createWalletClient({ account: opts.account, chain, transport: http(opts.rpcUrl) });
+    this.publicClient = createPublicClient({ chain, transport: http(opts.rpcUrl) });
   }
 
   /** Happy path: both session keys signed the result. */

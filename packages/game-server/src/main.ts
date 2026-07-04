@@ -126,6 +126,8 @@ if (SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66) {
     escrow: ESCROW,
     account: privateKeyToAccount(SIGNER as Hex),
     feeCurrency: FEE_CURRENCY,
+    chainId: CHAIN_ID, // was hardcoded to mainnet inside the client — every
+    // server write on Sepolia bounced with "invalid chain ID"
   });
 }
 
