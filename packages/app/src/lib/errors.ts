@@ -29,6 +29,10 @@ const RULES: Rule[] = [
 ];
 
 export function humanizeError(e: unknown): string {
+  // messages crafted by our own tx layer are already human — pass them through
+  const own =
+    e && typeof e === "object" && "message" in e ? String((e as { message: unknown }).message) : typeof e === "string" ? e : "";
+  if (/taking unusually long|came back automatically|rejected by the network|check Your matches/i.test(own)) return own;
   const raw =
     typeof e === "string"
       ? e

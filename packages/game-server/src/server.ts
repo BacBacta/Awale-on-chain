@@ -342,7 +342,10 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
       const pair = cashPairs.get(socket.id);
       if (!pair || !msg?.matchId) return;
       pair.matchId = msg.matchId;
-      io.to(pair.joinerSocket).emit("cash-join", { matchId: msg.matchId });
+      // include token + stake so the joiner never has to READ the fresh match
+      // from a possibly-stale RPC node before staking
+      const [token, stakeWei] = pair.stakeKey.split(":");
+      io.to(pair.joinerSocket).emit("cash-join", { matchId: msg.matchId, token, stakeWei });
     });
 
     // the joiner's stake landed too — table is fully set, release both.

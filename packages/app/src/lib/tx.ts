@@ -37,17 +37,21 @@ export async function confirmTx(client: Client, hash: Hex, label: string): Promi
  *  approve not yet visible where the wallet estimated the tx). */
 export async function sendWithStaleRetry(label: string, send: () => Promise<Hex>): Promise<Hex> {
   let lastErr: unknown;
-  for (let attempt = 0; attempt < 6; attempt++) {
+  for (let attempt = 0; attempt < 8; attempt++) {
     try {
       return await send();
     } catch (e) {
       lastErr = e;
       const text = String(e);
-      // user said no in the wallet — don't hammer them with 5 more popups
+      // user said no in the wallet — don't hammer them with more popups
       if (/user rejected|denied|4001/i.test(text)) throw e;
-      // stale allowance/balance view — the next node will know better
-      if (/allowance|transfer amount exceeds|insufficient/i.test(text)) {
-        await sleep(3500);
+      // Anything that smells like a stale node view gets retried: unseen
+      // approve (allowance), unseen match (not open / no such), unseen
+      // balance, or an opaque estimation revert against old state. Real
+      // reverts fail all 8 tries and surface after ~30s — a slower true
+      // error beats an instant FALSE one on a money button.
+      if (/allowance|transfer amount exceeds|insufficient|not open|not active|no such|execution reverted|0xfb8f41b2/i.test(text)) {
+        await sleep(4000);
         continue;
       }
       throw e;

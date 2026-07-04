@@ -13,7 +13,7 @@ import { computePayout, fmt, rakePct } from "../lib/money.js";
 import { humanizeError } from "../lib/errors.js";
 import { recordLocalMatch, listLocalMatches } from "../lib/matches.js";
 import { stakeTokens, preferredIndex } from "../lib/stakeTokens.js";
-import { listOpenMatches, joinOpenMatch, type OpenMatch } from "../lib/lobby.js";
+import { listOpenMatches, joinOpenMatch, joinCashMatch, type OpenMatch } from "../lib/lobby.js";
 import { CrossMatchOffer } from "./CrossMatchOffer.js";
 import { friendlyName } from "../lib/names.js";
 import { faucetAbi } from "../lib/league.js";
@@ -323,7 +323,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         const id = createdId;
         createdId = null;
         try {
-          const ch = await cancelMatch(wallet, { account, escrow: cfg.escrow, matchId: id, feeCurrency });
+          const ch = await sendWithStaleRetry("refund", () =>
+            cancelMatch(wallet, { account, escrow: cfg.escrow, matchId: id, feeCurrency }),
+          );
           await confirmTx(client, ch, "Refund");
           bail(`${m.reason} Your stake came back automatically.`);
         } catch {
@@ -353,11 +355,17 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     sock.on("cash-ready", (m: { matchId: string }) => {
       window.location.href = `/play?match=${m.matchId || createdId?.toString()}`;
     });
-    sock.on("cash-join", async (m: { matchId: string }) => {
+    sock.on("cash-join", async (m: { matchId: string; token?: Address; stakeWei?: string }) => {
       try {
         await allowanceReady; // warmed during the search
         setStep("staking");
-        await joinOpenMatch({ wallet, account, cfg, matchId: BigInt(m.matchId), feeCurrency });
+        // token+stake come from the server — never read the seconds-old match
+        // from a node that may not have seen it yet
+        if (m.token && m.stakeWei) {
+          await joinCashMatch({ wallet, account, cfg, matchId: BigInt(m.matchId), token: m.token, stake: BigInt(m.stakeWei), feeCurrency });
+        } else {
+          await joinOpenMatch({ wallet, account, cfg, matchId: BigInt(m.matchId), feeCurrency });
+        }
         sock.emit("cash-joined", {});
         track("match_joined");
         window.location.href = `/play?match=${m.matchId}`;

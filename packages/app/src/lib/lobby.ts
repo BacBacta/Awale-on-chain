@@ -59,6 +59,50 @@ export async function listOpenMatches(cfg: EscrowConfig, account?: Address, limi
   return out;
 }
 
+/** Join a match whose token+stake we already KNOW (the cash matchmaking
+ *  flow: the server relays them) — no read of the freshly-created match from
+ *  a possibly-stale node. That read was where the joiner's "Something went
+ *  wrong" came from: half the nodes hadn't seen the creation yet. */
+export async function joinCashMatch(opts: {
+  wallet: WriteClient;
+  account: Address;
+  cfg: EscrowConfig;
+  matchId: bigint;
+  token: Address;
+  stake: bigint;
+  feeCurrency?: Address;
+}): Promise<void> {
+  const { wallet, account, cfg, matchId, token, stake, feeCurrency } = opts;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const client = publicClient(cfg.rpcUrl, cfg.chainId) as any;
+  await approveIfNeeded(client, wallet, account, cfg, token, stake, feeCurrency);
+  const session = createSessionKey();
+  persistSession(matchId, session);
+  recordLocalMatch(matchId);
+  const jh = await sendWithStaleRetry("stake", () =>
+    joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, feeCurrency }),
+  );
+  await confirmTx(client, jh, "Your stake");
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function approveIfNeeded(client: any, wallet: WriteClient, account: Address, cfg: EscrowConfig, token: Address, stake: bigint, feeCurrency?: Address): Promise<void> {
+  const allowance = (await readContract(client, {
+    address: token,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: [account, cfg.escrow],
+  })) as bigint;
+  if (allowance >= stake) return;
+  const ah = await approve(wallet, { account, token, spender: cfg.escrow, amount: stake * 100n, feeCurrency });
+  await confirmTx(client, ah, "Approval");
+  for (let i = 0; i < 8; i++) {
+    const seen = (await readContract(client, { address: token, abi: erc20Abi, functionName: "allowance", args: [account, cfg.escrow] })) as bigint;
+    if (seen >= stake) break;
+    await new Promise((r) => setTimeout(r, 1500));
+  }
+}
+
 /** Join an existing open match: approve the stake if needed, then joinMatch. */
 export async function joinOpenMatch(opts: {
   wallet: WriteClient;
@@ -70,12 +114,22 @@ export async function joinOpenMatch(opts: {
   const { wallet, account, cfg, matchId, feeCurrency } = opts;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = publicClient(cfg.rpcUrl, cfg.chainId) as any;
-  const m = (await readContract(client, {
-    address: cfg.escrow,
-    abi: matchEscrowAbi,
-    functionName: "getMatch",
-    args: [matchId],
-  })) as { token: Address; stake: bigint };
+  // the match may be seconds old — poll until a node actually shows it
+  let m: { token: Address; stake: bigint } | null = null;
+  for (let i = 0; i < 15; i++) {
+    const read = (await readContract(client, {
+      address: cfg.escrow,
+      abi: matchEscrowAbi,
+      functionName: "getMatch",
+      args: [matchId],
+    })) as { token: Address; stake: bigint };
+    if (read.token !== "0x0000000000000000000000000000000000000000" && read.stake > 0n) {
+      m = read;
+      break;
+    }
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  if (!m) throw new Error("This match isn't visible on the network yet — try again in a moment.");
 
   const session = createSessionKey();
   persistSession(matchId, session);
