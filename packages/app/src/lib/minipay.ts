@@ -24,6 +24,15 @@ export function isMiniPay(provider?: { isMiniPay?: boolean } | null): boolean {
   return provider?.isMiniPay === true;
 }
 
+/** CIP-64 gate. `feeCurrency` (gas paid in stablecoin) is a Celo-specific
+ *  transaction type: MiniPay expects it — its users hold no CELO — while
+ *  browser wallets like MetaMask reject the unknown tx type outright. Attach
+ *  it only when actually running inside MiniPay; everywhere else the wallet
+ *  pays native gas as usual. */
+export function effectiveFeeCurrency(feeCurrency?: Address): Address | undefined {
+  return isMiniPay(getInjectedProvider()) ? feeCurrency : undefined;
+}
+
 /** The injected EIP-1193 provider, if any (undefined during SSR). */
 export function getInjectedProvider(): InjectedProvider | undefined {
   if (typeof window === "undefined") return undefined;

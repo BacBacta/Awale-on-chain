@@ -1,7 +1,11 @@
-// MatchEscrow interactions from the mini-app. Every write sets `feeCurrency` so
-// the network fee is paid in the user's stablecoin (CIP-64) — never CELO.
+// MatchEscrow interactions from the mini-app. Inside MiniPay every write sets
+// `feeCurrency` so the network fee is paid in the user's stablecoin (CIP-64 —
+// MiniPay users hold no CELO). Outside MiniPay (e.g. MetaMask on desktop) the
+// field is stripped: browser wallets reject the Celo-specific tx type, and
+// they pay native gas anyway. See effectiveFeeCurrency in minipay.ts.
 
 import { parseUnits, encodeAbiParameters, keccak256, type Address, type Hex } from "viem";
+import { effectiveFeeCurrency } from "./minipay.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
 
 /** Narrow write surface satisfied by a viem WalletClient (cast at the call site). */
@@ -48,7 +52,7 @@ export function approve(
     functionName: "approve",
     args: [p.spender, p.amount],
     account: p.account,
-    feeCurrency: p.feeCurrency,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });
 }
 
@@ -62,7 +66,7 @@ export function createMatch(
     functionName: "createMatch",
     args: [p.token, p.stake, p.session],
     account: p.account,
-    feeCurrency: p.feeCurrency,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });
 }
 
@@ -76,7 +80,7 @@ export function joinMatch(
     functionName: "joinMatch",
     args: [p.matchId, p.session],
     account: p.account,
-    feeCurrency: p.feeCurrency,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });
 }
 
@@ -93,7 +97,7 @@ export function cancelMatch(
     functionName: "cancelMatch",
     args: [p.matchId],
     account: p.account,
-    feeCurrency: p.feeCurrency,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });
 }
 
@@ -120,7 +124,7 @@ export function proposeResult(
     functionName: "proposeResult",
     args: [p.matchId, p.winner, transcriptCommitment(p.matchId, p.startTurn, p.moves)],
     account: p.account,
-    feeCurrency: p.feeCurrency,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });
 }
 
@@ -149,7 +153,7 @@ export function challengeResult(
       { matchId: p.matchId, session0: p.session0, session1: p.session1, startTurn: p.startTurn, moves: p.moves, sigs: p.sigs },
     ],
     account: p.account,
-    feeCurrency: p.feeCurrency,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });
 }
 
@@ -165,6 +169,6 @@ export function finalizeResult(
     functionName: "finalize",
     args: [p.matchId],
     account: p.account,
-    feeCurrency: p.feeCurrency,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });
 }

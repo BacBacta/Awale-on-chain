@@ -5,6 +5,7 @@
 import { readContract } from "viem/actions";
 import type { Address } from "viem";
 import { publicClient } from "./minipay.js";
+import { effectiveFeeCurrency } from "./minipay.js";
 import { approve, type WriteClient } from "./escrow.js";
 import { tournamentEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
 
@@ -89,7 +90,7 @@ export async function joinTournament(opts: {
     functionName: "join",
     args: [BigInt(t.id)],
     account,
-    feeCurrency,
+    feeCurrency: effectiveFeeCurrency(feeCurrency),
   });
   await client.waitForTransactionReceipt({ hash: jh });
 

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { readContract } from "viem/actions";
 import { parseEventLogs, type Address } from "viem";
-import { publicClient } from "../lib/minipay.js";
+import { publicClient, effectiveFeeCurrency } from "../lib/minipay.js";
 import { createMatch, joinMatch, approve, parseStake, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
 import { createSessionKey, persistSession } from "../lib/session.js";
 import { receiptDeeplink } from "../lib/deeplinks.js";
@@ -140,7 +140,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         functionName: "mint",
         args: [account, parseStake("100", dec)],
         account,
-        feeCurrency,
+        feeCurrency: effectiveFeeCurrency(feeCurrency),
       });
       await client.waitForTransactionReceipt({ hash });
       const b = (await readContract(client, { address: token, abi: erc20Abi, functionName: "balanceOf", args: [account] })) as bigint;
