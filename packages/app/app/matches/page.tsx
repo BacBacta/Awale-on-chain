@@ -74,10 +74,27 @@ export default function Matches() {
 
   async function joinOpen(matchId: bigint) {
     const cfg = escrowConfig();
-    if (!cfg || !wallet || !account || joining !== null) return;
+    if (!cfg || joining !== null) return;
+    // tapping Join is explicit intent — if a desktop wallet hasn't approved
+    // the site yet, ask now instead of leaving the button dead
+    let w = wallet;
+    let a = account;
+    if (!w || !a) {
+      const provider = getInjectedProvider();
+      if (!provider) return;
+      try {
+        const c = await connect(provider, cfg.chainId, { interactive: true });
+        w = c.wallet as unknown as WriteClient;
+        a = c.address;
+        setWallet(w);
+        setAccount(a);
+      } catch {
+        return; // user declined
+      }
+    }
     setJoining(matchId);
     try {
-      await joinOpenMatch({ wallet, account, cfg, matchId, feeCurrency: FEE_CURRENCY });
+      await joinOpenMatch({ wallet: w, account: a, cfg, matchId, feeCurrency: FEE_CURRENCY });
       window.location.href = `/play?match=${matchId.toString()}`;
     } catch (e) {
       setError(humanizeError(e));
@@ -211,7 +228,7 @@ export default function Matches() {
                     Stake {fmt(o.stake, STAKE_DECIMALS)} · winner takes {fmt(prize, STAKE_DECIMALS)} {STAKE_SYMBOL}
                   </span>
                 </span>
-                <button className="btn secondary" style={{ padding: "8px 14px" }} onClick={() => joinOpen(o.id)} disabled={!wallet || joining !== null}>
+                <button className="btn secondary" style={{ padding: "8px 14px" }} onClick={() => joinOpen(o.id)} disabled={joining !== null}>
                   {joining === o.id ? "Joining…" : "Join"}
                 </button>
               </div>

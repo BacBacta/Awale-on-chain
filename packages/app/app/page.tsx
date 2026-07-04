@@ -63,6 +63,9 @@ export default function Lobby() {
   const [address, setAddress] = useState<Address | null>(null);
   const [wallet, setWallet] = useState<WriteClient | null>(null);
   const [inMiniPay, setInMiniPay] = useState(false);
+  // a wallet extension exists (e.g. MetaMask on desktop) but hasn't approved
+  // the site yet — we can offer an explicit connect instead of "open MiniPay"
+  const [hasProvider, setHasProvider] = useState(false);
   const [verified, setVerified] = useState(!SELF_CONFIGURED);
   const [showLearnHint, setShowLearnHint] = useState(false);
   const [streak, setStreak] = useState(0);
@@ -105,6 +108,7 @@ export default function Lobby() {
   useEffect(() => {
     const provider = getInjectedProvider();
     setInMiniPay(isMiniPay(provider));
+    setHasProvider(!!provider);
     if (!provider) return;
     connect(provider, cfg?.chainId)
       .then(async ({ wallet, address }) => {
@@ -232,6 +236,29 @@ export default function Lobby() {
               )}
               <MatchActions wallet={wallet} account={address} cfg={cfg} />
             </>
+          ) : hasProvider && cfg ? (
+            // a desktop wallet (MetaMask & co) is installed but hasn't
+            // approved the site — an explicit connect makes money play
+            // testable outside MiniPay
+            <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
+              <span className="muted">A wallet is installed — connect it to play for money.</span>
+              <button
+                className="btn block"
+                onClick={async () => {
+                  const provider = getInjectedProvider();
+                  if (!provider) return;
+                  try {
+                    const c = await connect(provider, cfg.chainId, { interactive: true });
+                    setWallet(c.wallet as unknown as WriteClient);
+                    setAddress(c.address);
+                  } catch {
+                    /* user declined */
+                  }
+                }}
+              >
+                <Icon name="wallet" size={17} /> Connect wallet
+              </button>
+            </div>
           ) : (
             <div className="card muted">Open in MiniPay to play for money.</div>
           )}

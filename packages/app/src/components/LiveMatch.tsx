@@ -128,7 +128,10 @@ export function LiveMatch({
           setStatus("Open in MiniPay to play");
           return;
         }
-        const { wallet: w, address } = await connect(provider, cfg.chainId);
+        // interactive: reaching a money match IS user intent (created it, or
+        // followed an invite link) — desktop wallets prompt for access here;
+        // MiniPay connects silently as always
+        const { wallet: w, address } = await connect(provider, cfg.chainId, { interactive: true });
         wallet.current = w as unknown as WriteClient;
         myAddress.current = address;
         const client = publicClient(cfg.rpcUrl, cfg.chainId);

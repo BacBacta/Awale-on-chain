@@ -30,14 +30,38 @@ export function getInjectedProvider(): InjectedProvider | undefined {
   return (window as unknown as { ethereum?: InjectedProvider }).ethereum;
 }
 
-/** Zero-click connect: read the address straight from the injected wallet.
- *  `chainId` must match the deployment so writes carry the right chainId. */
+/** Connect to the injected wallet. Zero-click inside MiniPay (eth_accounts
+ *  already returns the address). Desktop wallets (MetaMask & co) return
+ *  nothing until the user approves the site — pass `interactive: true` from
+ *  a user-intent path (a button, an invite link) to prompt for access and
+ *  steer the wallet onto the right Celo network. Passive mounts stay silent:
+ *  no popups on page load. */
 export async function connect(
   provider: InjectedProvider,
   chainId: number = celo.id,
+  opts: { interactive?: boolean } = {},
 ): Promise<{ wallet: WalletClient; address: Address }> {
-  const wallet = createWalletClient({ chain: chainById(chainId), transport: custom(provider) });
-  const [address] = await wallet.getAddresses();
+  const chain = chainById(chainId);
+  const wallet = createWalletClient({ chain, transport: custom(provider) });
+  let [address] = await wallet.getAddresses();
+  if (!address && opts.interactive) {
+    [address] = await wallet.requestAddresses();
+    // a desktop wallet may sit on another network — switch, adding the chain
+    // if it's unknown. MiniPay never reaches this branch.
+    try {
+      if ((await wallet.getChainId()) !== chainId) {
+        try {
+          await wallet.switchChain({ id: chainId });
+        } catch {
+          await wallet.addChain({ chain });
+          await wallet.switchChain({ id: chainId });
+        }
+      }
+    } catch {
+      /* best-effort — the write path will surface a chain mismatch clearly */
+    }
+  }
+  if (!address) throw new Error("wallet not connected");
   return { wallet, address };
 }
 
