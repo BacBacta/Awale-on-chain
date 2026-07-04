@@ -86,6 +86,9 @@ const BLITZ_CLOCK_MS = Number(process.env.BLITZ_CLOCK_MS ?? String(3 * 60_000));
 // actions (finalize proposed results, void expired matches). Terminal matches
 // are pruned.
 const tracked = new Set<string>();
+// wallet pairs per tracked match (filled by the keeper's reads) — needed to
+// notify refunds when a match is voided
+const keeperPlayers = new Map<string, [Address, Address]>();
 
 function required(name: string): string {
   const v = process.env[name];
@@ -833,12 +836,13 @@ async function keeperTick(): Promise<void> {
         abi: matchEscrowAbi,
         functionName: "getMatch",
         args: [BigInt(idStr)],
-      })) as { status: number; startTurn: number; challengeDeadline: bigint; activeDeadline: bigint; revealBlock: bigint };
+      })) as { status: number; startTurn: number; challengeDeadline: bigint; activeDeadline: bigint; revealBlock: bigint; player0: Address; player1: Address };
       const status = Number(m.status);
       if (status === EscrowStatus.Resolved || status === EscrowStatus.Voided || status === EscrowStatus.Cancelled) {
         tracked.delete(idStr); // terminal — stop watching
         continue;
       }
+      keeperPlayers.set(idStr, [m.player0, m.player1]);
       matches.push({
         matchId: BigInt(idStr),
         status,
@@ -855,7 +859,24 @@ async function keeperTick(): Promise<void> {
   if (actions.length === 0) return;
   try {
     await runKeeper(settlement, actions);
-    for (const a of actions) console.log(`[keeper] ${a.action} match ${a.matchId}`);
+    for (const a of actions) {
+      console.log(`[keeper] ${a.action} match ${a.matchId}`);
+      if (a.action === "voidExpired") {
+        // an expired match just refunded both stakes — a silent refund reads
+        // as lost money to whoever forgot the match existed
+        const players = keeperPlayers.get(a.matchId.toString());
+        for (const p of players ?? []) {
+          void notifier
+            .notify(p, {
+              title: "Match expired — stake refunded",
+              body: `Match #${a.matchId} was never finished. Your full stake is back in your wallet.`,
+              url: "/matches",
+              tag: `awale-refund-${a.matchId}`,
+            })
+            .catch(() => {});
+        }
+      }
+    }
   } catch (err) {
     console.warn(`[keeper] action failed: ${(err as Error).message}`);
   }
@@ -945,8 +966,32 @@ async function onSettled(matchId: bigint, winner: number, prizeWei: bigint, at: 
     args: [matchId],
   })) as { token: Address; stake: bigint; player0: Address; player1: Address; rakeBps: number };
   await league.recordGame([m.player0, m.player1], winner, BigInt(m.stake) * 2n, Number(m.rakeBps), m.token, at);
+  const human = (wei: bigint) => (Number(wei) / 1e18).toFixed(2).replace(/\.00$/, ""); // test token: 18 decimals
+  if (winner === 2) {
+    // draw: both stakes came back in full — say so, or the refund is silent
+    for (const p of [m.player0, m.player1]) {
+      void notifier
+        .notify(p, {
+          title: "Draw — stake returned",
+          body: `Match #${key} ended in a draw. Your full stake is back in your wallet.`,
+          url: "/matches",
+          tag: `awale-paid-${key}`,
+        })
+        .catch(() => {});
+    }
+  }
   if (winner === 0 || winner === 1) {
     await ledger.recordWin(winner === 0 ? m.player0 : m.player1, prizeWei);
+    // THE notification: money arrived. The single best re-engagement hook a
+    // money game has — it was silent until now.
+    void notifier
+      .notify(winner === 0 ? m.player0 : m.player1, {
+        title: `💰 You won ${human(prizeWei)} — paid out`,
+        body: `Your winnings from match #${key} are in your wallet. You also scored league points.`,
+        url: "/compete",
+        tag: `awale-paid-${key}`,
+      })
+      .catch(() => {});
     // rake was actually paid on this game — it can convert a pending referral
     // (draws refund without rake and must not, or referrals become free)
     await convertReferral(m.player0).catch(() => {});

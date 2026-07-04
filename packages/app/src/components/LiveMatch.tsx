@@ -99,6 +99,12 @@ export function LiveMatch({
   const [theirClaim, setTheirClaim] = useState<{ winner: 0 | 1 | 2; transcript: WireTranscript } | null>(null);
   const [timedOut, setTimedOut] = useState(false);
   const [claimStatus, setClaimStatus] = useState<string | null>(null);
+  // Once a claim is in flight (ours or theirs) or a flag fell, watch the
+  // chain until the money actually moves — then close the loop with a real
+  // game-over instead of leaving the loser staring at a frozen board forever
+  // and paying the winner in silence.
+  const [settleWatch, setSettleWatch] = useState(false);
+  const [chainEnded, setChainEnded] = useState<"won" | "lost" | "refunded" | null>(null);
 
   useEffect(() => {
     setSkin(getEquipped());
@@ -304,6 +310,7 @@ export function LiveMatch({
         feeCurrency: feeCurrency.current,
       });
       setClaimStatus("Claim submitted — payout in ~10 min unless disputed.");
+      setSettleWatch(true);
     } catch (e) {
       setClaimStatus(`Claim failed: ${humanizeError(e)}`);
     }
@@ -331,6 +338,7 @@ export function LiveMatch({
       });
       setClaimStatus("Dispute submitted.");
       setTheirClaim(null);
+      setSettleWatch(true);
     } catch (e) {
       setClaimStatus(`Dispute failed: ${humanizeError(e)}`);
     }
@@ -445,7 +453,49 @@ export function LiveMatch({
       });
   }
 
-  const myTurn = state !== null && role !== null && !state.over && state.turn === role;
+  // Poll the chain while an on-chain ending is pending: flag fell (opponent
+  // may claim), our claim/dispute is in flight, or a real claim exists. Ends
+  // in a proper resolution screen for BOTH sides.
+  useEffect(() => {
+    if (casualRole != null || chainEnded || !(timedOut || settleWatch || theirClaim)) return;
+    const cfg = escrowConfig();
+    if (!cfg) return;
+    const iv = setInterval(async () => {
+      try {
+        const client = publicClient(cfg.rpcUrl, cfg.chainId);
+        const m = (await readContract(client, {
+          address: cfg.escrow,
+          abi: matchEscrowAbi,
+          functionName: "getMatch",
+          args: [matchId],
+        })) as { status: number; proposedWinner: number };
+        const st = Number(m.status);
+        if (st === 4) {
+          // Resolved — the pot has been paid out
+          const won = Number(m.proposedWinner) === roleRef.current;
+          setChainEnded(won ? "won" : "lost");
+          setOutcome(won ? 0 : 1);
+          setTimedOut(false);
+          setTheirClaim(null);
+          setClaimStatus(won ? "Paid ✓ — your winnings are in your wallet." : null);
+          setStatus(won ? "You win — paid out ✅" : "You lose — out of time");
+        } else if (st >= 5) {
+          // Cancelled/Voided — both stakes went back in full
+          setChainEnded("refunded");
+          setTimedOut(false);
+          setTheirClaim(null);
+          setClaimStatus(null);
+          setStatus("Match expired — stakes refunded");
+        }
+      } catch {
+        /* transient read failure — next tick */
+      }
+    }, 10_000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timedOut, settleWatch, theirClaim !== null, chainEnded, casualRole, matchId]);
+
+  const myTurn = state !== null && role !== null && !state.over && state.turn === role && !timedOut && !chainEnded;
   const playable = myTurn ? legalHouses(state) : [];
 
   const myScore = role === 1 ? state?.store1 : state?.store0;
@@ -517,11 +567,11 @@ export function LiveMatch({
         </div>
       )}
 
-      {timedOut && state && !state.over && (
+      {timedOut && state && !state.over && !chainEnded && (
         <div className="card stack animate-in" style={{ gap: 6, textAlign: "center" }}>
-          <span className="muted">
-            Your move timer ran out — your opponent can now claim the pot. If they don&apos;t, both stakes are
-            refunded automatically within 24h.
+          <span className="muted">⏱ Your time ran out — {displayName(oppAddr)} can take the pot.</span>
+          <span className="faint" style={{ fontSize: 12 }}>
+            <span className="dot pulse" /> Waiting for the result…
           </span>
         </div>
       )}
@@ -622,7 +672,17 @@ export function LiveMatch({
         </div>
       )}
 
-      {outcome !== null && state?.over && (
+      {chainEnded === "refunded" && (
+        <div className="card stack animate-in" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
+          <span className="h2">Match expired</span>
+          <span className="muted">Nobody claimed the result in time — both stakes were refunded in full.</span>
+          <Link className="btn block" href="/?play=1">
+            <Icon name="play" size={17} /> Play again
+          </Link>
+        </div>
+      )}
+
+      {outcome !== null && (state?.over || chainEnded === "won" || chainEnded === "lost") && (
         <GameOverlay
           result={outcome}
           stats={{ mine: myScore ?? 0, opp: oppScore ?? 0, moves: ply }}

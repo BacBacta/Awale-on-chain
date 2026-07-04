@@ -319,6 +319,14 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
       async (msg: { matchId: string; player: 0 | 1; house: number; signature: Hex }) => {
         try {
           const matchId = BigInt(msg.matchId);
+          // a fallen flag ends the mover's right to play: accepting moves
+          // after claim-eligible was broadcast lets the transcript diverge
+          // from the claim already in flight
+          const pre = hub.get(matchId);
+          if (pre && !pre.over && pre.turn === msg.player && pre.flagFallen()) {
+            socket.emit("error", { message: "Time is up — this game can now be claimed." });
+            return;
+          }
           const state = await hub.move(matchId, msg.player, msg.house, msg.signature);
           if (state.over) {
             announceGameOver(matchId, msg.matchId, state);
