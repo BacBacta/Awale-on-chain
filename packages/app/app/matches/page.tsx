@@ -196,11 +196,22 @@ export default function Matches() {
     try {
       await cancelMatch(wallet, { account, escrow: cfg.escrow, matchId: id, feeCurrency: FEE_CURRENCY });
       setRows((r) => (r ? r.filter((x) => x.id !== id) : r));
+      setOpenMatches((o) => o.filter((x) => x.id !== id)); // it may be a chain-discovered row
     } catch (e) {
       setError(humanizeError(e));
     }
     setCancelling(null);
   }
+
+  // Safety net: my open matches found by the CHAIN scan that the device's
+  // local list doesn't know about (the pre-receipt id prediction could record
+  // the wrong number) — surfaced so the stake is always visible & cancellable.
+  const chainMine: Row[] = account
+    ? openMatches
+        .filter((o) => o.mine && !(rows ?? []).some((r) => r.id === o.id))
+        .map((o) => ({ id: o.id, status: 1, stake: o.stake, rakeBps: o.rakeBps, player0: o.creator }))
+    : [];
+  const myRows = rows === null ? null : [...rows, ...chainMine];
 
   return (
     <main className="pad stack" style={{ flex: 1, gap: 12 }}>
@@ -212,10 +223,10 @@ export default function Matches() {
         </button>
       )}
 
-      {openMatches.length > 0 && (
+      {openMatches.some((o) => !o.mine) && (
         <>
           <span className="section-label">Money matches — open to join</span>
-          {openMatches.map((o) => {
+          {openMatches.filter((o) => !o.mine).map((o) => {
             const { prize } = computePayout(o.stake, o.rakeBps);
             return (
               <div className="list-row" key={o.id.toString()} style={{ cursor: "default" }}>
@@ -268,14 +279,14 @@ export default function Matches() {
         </>
       )}
 
-      {rows === null ? (
+      {myRows === null ? (
         <div className="card">
           <span className="chip">
             <span className="dot pulse" />
             Loading…
           </span>
         </div>
-      ) : rows.length === 0 && error ? (
+      ) : myRows.length === 0 && error ? (
         // a failed read is not "no matches" — say what happened, offer a retry
         <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
           <span className="h2">Couldn&apos;t check your matches</span>
@@ -284,7 +295,7 @@ export default function Matches() {
             Try again
           </button>
         </div>
-      ) : rows.length === 0 ? (
+      ) : myRows.length === 0 ? (
         <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
           <span className="lead" style={{ width: 52, height: 52, borderRadius: 16 }}>
             <Icon name="target" size={26} />
@@ -298,7 +309,7 @@ export default function Matches() {
       ) : (
         <>
           <span className="section-label">Your money matches</span>
-          {rows.map((r) => {
+          {myRows.map((r) => {
             const sv = statusView(r.status);
             const { prize } = computePayout(r.stake, r.rakeBps);
             const mineOpen =

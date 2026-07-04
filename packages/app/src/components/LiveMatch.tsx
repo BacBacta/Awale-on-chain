@@ -6,11 +6,13 @@ import { io, type Socket } from "socket.io-client";
 import { readContract } from "viem/actions";
 import type { Address, Hex } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
-import { loadSession, signMove, signResult, signResign, signDrawOffer, type SessionKey } from "../lib/session.js";
-import { escrowConfig, proposeResult, challengeResult, cancelMatch, type WriteClient } from "../lib/escrow.js";
+import { loadSession, createSessionKey, persistSession, signMove, signResult, signResign, signDrawOffer, type SessionKey } from "../lib/session.js";
+import { escrowConfig, proposeResult, challengeResult, cancelMatch, approve, joinMatch, type WriteClient } from "../lib/escrow.js";
 import { humanizeError } from "../lib/errors.js";
 import { stakeTokens } from "../lib/stakeTokens.js";
-import { matchEscrowAbi } from "../../../protocol/src/abis.js";
+import { recordLocalMatch } from "../lib/matches.js";
+import { track } from "../lib/analytics.js";
+import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
 import { legalMovesMask, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
@@ -77,6 +79,12 @@ export function LiveMatch({
   const [copied, setCopied] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
+  // A visitor who followed the invite link to an Open match isn't a player
+  // YET — the link's whole point is that they can become one right here.
+  // (This screen used to just say "not a player", a dead end for every guest.)
+  const [joinOffer, setJoinOffer] = useState<{ token: Address; stake: bigint; rakeBps: number } | null>(null);
+  const [joiningNow, setJoiningNow] = useState(false);
+  const [joinError, setJoinError] = useState<string | null>(null);
   // Mobile data blinks constantly for this audience — say so the moment it
   // happens (the server grants the mover one reconnection grace, but the
   // player must see WHY the board went quiet or they'll assume the app died).
@@ -150,7 +158,13 @@ export function LiveMatch({
               ? 1
               : null;
         if (r === null) {
-          setStatus("This wallet is not a player in this match");
+          if (Number(m.status) === 1) {
+            // Open match, visitor isn't the creator: this is an invitee —
+            // offer the seat instead of a dead end
+            setJoinOffer({ token: m.token, stake: m.stake, rakeBps: Number(m.rakeBps) });
+          } else {
+            setStatus("This match already has two players.");
+          }
           return;
         }
         myRole = r;
@@ -350,6 +364,50 @@ export function LiveMatch({
     return () => clearInterval(iv);
   }, [casualRole, state === null, role === null, waitingOpen, matchId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The invitee takes their seat: approve if needed, stake the same amount,
+  // then reload — the mount flow reruns and finds them as player 1.
+  async function joinThisMatch() {
+    const cfg = escrowConfig();
+    if (!cfg || !wallet.current || !myAddress.current || !joinOffer || joiningNow) return;
+    setJoiningNow(true);
+    setJoinError(null);
+    try {
+      const client = publicClient(cfg.rpcUrl, cfg.chainId);
+      const allowance = (await readContract(client, {
+        address: joinOffer.token,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [myAddress.current, cfg.escrow],
+      })) as bigint;
+      if (allowance < joinOffer.stake) {
+        const ah = await approve(wallet.current, {
+          account: myAddress.current,
+          token: joinOffer.token,
+          spender: cfg.escrow,
+          amount: joinOffer.stake,
+          feeCurrency: feeCurrency.current,
+        });
+        await client.waitForTransactionReceipt({ hash: ah });
+      }
+      const sk = createSessionKey();
+      persistSession(matchId, sk);
+      recordLocalMatch(matchId);
+      const jh = await joinMatch(wallet.current, {
+        account: myAddress.current,
+        escrow: cfg.escrow,
+        matchId,
+        session: sk.address,
+        feeCurrency: feeCurrency.current,
+      });
+      await client.waitForTransactionReceipt({ hash: jh });
+      track("match_joined");
+      window.location.reload();
+    } catch (e) {
+      setJoinError(humanizeError(e));
+      setJoiningNow(false);
+    }
+  }
+
   // Staking must feel reversible: an open match nobody joined refunds in full.
   async function cancelOpenMatch() {
     const cfg = escrowConfig();
@@ -491,6 +549,28 @@ export function LiveMatch({
                 {status}
               </span>
             </div>
+          )}
+        </div>
+      ) : joinOffer ? (
+        // the invite link's landing: take the empty seat right here
+        <div className="card stack animate-in" style={{ gap: 12, alignItems: "center", textAlign: "center" }}>
+          <span className="chip gold">Match #{matchId.toString()}</span>
+          <span className="h2">You&apos;re invited to a money match</span>
+          <span className="muted">
+            You each stake {fmt(joinOffer.stake, STAKE_DECIMALS)} · winner takes{" "}
+            {fmt(computePayout(joinOffer.stake, joinOffer.rakeBps).prize, STAKE_DECIMALS)} {STAKE_SYMBOL}. Stakes are
+            held by the match contract until the game settles.
+          </span>
+          <button className="btn block" onClick={joinThisMatch} disabled={joiningNow}>
+            {joiningNow ? "Joining…" : `Stake ${fmt(joinOffer.stake, STAKE_DECIMALS)} ${STAKE_SYMBOL} & play`}
+          </button>
+          <span className="faint" style={{ fontSize: 11.5 }}>
+            18+ · only stake what you can afford to lose
+          </span>
+          {joinError && (
+            <span className="muted" style={{ color: "var(--danger)" }}>
+              {joinError}
+            </span>
           )}
         </div>
       ) : waitingOpen ? (

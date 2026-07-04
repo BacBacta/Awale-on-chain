@@ -186,6 +186,16 @@ export const matchEscrowAbi = [
   },
   {
     type: "event",
+    name: "MatchCreated",
+    inputs: [
+      { name: "matchId", type: "uint256", indexed: true },
+      { name: "player0", type: "address", indexed: true },
+      { name: "token", type: "address", indexed: false },
+      { name: "stake", type: "uint128", indexed: false },
+    ],
+  },
+  {
+    type: "event",
     name: "MatchJoined",
     inputs: [
       { name: "matchId", type: "uint256", indexed: true },

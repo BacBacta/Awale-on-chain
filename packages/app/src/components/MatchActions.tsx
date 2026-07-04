@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { readContract } from "viem/actions";
-import type { Address } from "viem";
+import { parseEventLogs, type Address } from "viem";
 import { publicClient } from "../lib/minipay.js";
 import { createMatch, joinMatch, approve, parseStake, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
 import { createSessionKey, persistSession } from "../lib/session.js";
@@ -179,16 +179,8 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       if (minStake > 0n && amount < minStake) return setError(`Minimum is ${fmt(minStake, dec)} ${sym}.`);
       if (balance !== null && amount > balance) return setError(`Not enough ${sym} — add money to MiniPay first.`);
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
-      const matchId = (await readContract(client, {
-        address: cfg.escrow,
-        abi: matchEscrowAbi,
-        functionName: "nextMatchId",
-      })) as bigint;
 
       const session = createSessionKey();
-      persistSession(matchId, session);
-      recordLocalMatch(matchId);
-
       await ensureAllowance(client, token, amount);
       setStep("staking");
       const hash = await createMatch(wallet, {
@@ -199,6 +191,17 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         session: session.address,
         feeCurrency: feeCurrency,
       });
+      // The REAL match id comes from the receipt's MatchCreated event. It used
+      // to be predicted by reading nextMatchId before sending — two creations
+      // racing meant the number on screen (and in the shared invite!) could be
+      // someone else's match, greeting both players with "not a player".
+      const receipt = await client.waitForTransactionReceipt({ hash });
+      const created = parseEventLogs({ abi: matchEscrowAbi, logs: receipt.logs, eventName: "MatchCreated" });
+      const matchId = (created[0]?.args as { matchId?: bigint } | undefined)?.matchId;
+      if (matchId === undefined) throw new Error("match created but its id couldn't be read — check Your matches");
+      persistSession(matchId, session);
+      recordLocalMatch(matchId);
+
       setTx(hash);
       setOpenId(matchId);
       setStep("done");

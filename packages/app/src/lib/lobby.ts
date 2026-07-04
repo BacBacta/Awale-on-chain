@@ -19,6 +19,10 @@ export interface OpenMatch {
   token: Address;
   creator: Address;
   rakeBps: number;
+  /** created by the viewer — not joinable by them, but cancellable. Chain-
+   *  discovered, so it surfaces even if the device recorded a wrong local id
+   *  (the pre-receipt id prediction could be off by one under races). */
+  mine: boolean;
 }
 
 interface RawMatch {
@@ -45,8 +49,8 @@ export async function listOpenMatches(cfg: EscrowConfig, account?: Address, limi
         args: [id],
       })) as RawMatch;
       if (Number(m.status) !== STATUS_OPEN || m.player1 !== ZERO) continue;
-      if (account && m.player0.toLowerCase() === account.toLowerCase()) continue; // can't join your own
-      out.push({ id, stake: m.stake, token: m.token, creator: m.player0, rakeBps: Number(m.rakeBps) });
+      const mine = !!account && m.player0.toLowerCase() === account.toLowerCase();
+      out.push({ id, stake: m.stake, token: m.token, creator: m.player0, rakeBps: Number(m.rakeBps), mine });
     } catch {
       /* skip unreadable id */
     }
