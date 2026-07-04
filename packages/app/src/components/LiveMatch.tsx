@@ -13,7 +13,7 @@ import { stakeTokens } from "../lib/stakeTokens.js";
 import { recordLocalMatch } from "../lib/matches.js";
 import { track } from "../lib/analytics.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
-import { legalMovesMask, applyMove, type GameState } from "../../../engine/src/awale.js";
+import { legalMovesMask, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
@@ -102,13 +102,12 @@ export function LiveMatch({
   // and paying the winner in silence.
   const [settleWatch, setSettleWatch] = useState(false);
   const [chainEnded, setChainEnded] = useState<"won" | "lost" | "refunded" | null>(null);
-  // Per-move 10s rhythm (Ludo-style): a fresh 10s clock every turn. When it
-  // runs out on YOUR turn, the app auto-plays a sensible legal move so you
-  // never lose your stake to the clock and the game always reaches a real
-  // result (which settles instantly). turnStartedAt marks when the current
-  // turn began — set from the last state broadcast, so both clients agree.
+  // Per-move clock: a fresh window every turn. Miss it and you forfeit —
+  // the app never plays your money for you. Settles instantly when the loser
+  // is present (their client signs the forfeit result). turnStartedAt marks
+  // when the current turn began — set from the last state broadcast so both
+  // clients agree on the countdown.
   const [turnStartedAt, setTurnStartedAt] = useState(0);
-  const autoPlayedPly = useRef(-1);
 
   useEffect(() => {
     setSkin(getEquipped());
@@ -267,23 +266,6 @@ export function LiveMatch({
     socket.current?.emit("move", { matchId: matchId.toString(), player: role, house, signature: sig as Hex });
   }
 
-  /** Pick a decent legal move to auto-play when the 10s runs out: the one that
-   *  captures the most right now; ties broken toward keeping seeds on my side.
-   *  Not a strong AI — just "don't throw the game, don't stall it". */
-  function autoMove(s: GameState, me: 0 | 1): number {
-    const houses = legalHouses(s);
-    let best = houses[0];
-    let bestGain = -1;
-    for (const h of houses) {
-      const after = applyMove(s, h);
-      const gain = (me === 0 ? after.store0 - s.store0 : after.store1 - s.store1);
-      if (gain > bestGain) {
-        bestGain = gain;
-        best = h;
-      }
-    }
-    return best;
-  }
 
   // A stuck or hopeless game shouldn't trap the money: either player can
   // concede outright (opponent wins), or both can agree to split it as a draw.
@@ -530,7 +512,7 @@ export function LiveMatch({
     return () => clearInterval(iv);
   }, [state === null, state?.over]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const PER_MOVE_MS = 10_000;
+  const PER_MOVE_MS = 25_000; // displayed budget; server forfeits at 30s (latency grace)
 
   /** Remaining ms in the current turn for `player` (null if it's not their
    *  move or the game is over). Same 10s window on both clients. */
@@ -539,15 +521,6 @@ export function LiveMatch({
     return Math.max(0, PER_MOVE_MS - (Date.now() - turnStartedAt));
   }
 
-  // Auto-play my move when my 10s runs out (once per ply). Guarded so it never
-  // fires on the opponent's turn, after game-over, or mid-settlement.
-  useEffect(() => {
-    if (!myTurn || role === null || autoPlayedPly.current === ply) return;
-    if (perMoveRemaining(role) !== 0) return;
-    autoPlayedPly.current = ply;
-    void play(autoMove(state!, role));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  });
 
   return (
     <main className="stack" style={{ flex: 1, gap: 14, position: "relative", padding: "12px 8px" }}>
@@ -581,6 +554,16 @@ export function LiveMatch({
         <div className="row animate-in" style={{ justifyContent: "center" }}>
           <span className="chip" style={{ boxShadow: "inset 0 0 0 1px rgba(255,122,118,0.45)" }}>
             <span className="dot pulse" /> Connection lost — reconnecting… your clock keeps running
+          </span>
+        </div>
+      )}
+
+      {/* hurry warning: your move-clock is about to run out and there's no
+          auto-play on a money game — if it hits zero you forfeit */}
+      {myTurn && role !== null && (perMoveRemaining(role) ?? 99_000) <= 8_000 && (
+        <div className="row animate-in" style={{ justifyContent: "center" }}>
+          <span className="chip" style={{ color: "#ff7a76", boxShadow: "inset 0 0 0 1px rgba(255,122,118,0.6)" }}>
+            ⏰ {Math.ceil((perMoveRemaining(role) ?? 0) / 1000)}s to move — play now or you forfeit
           </span>
         </div>
       )}
