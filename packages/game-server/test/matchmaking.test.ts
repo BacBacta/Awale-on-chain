@@ -69,4 +69,69 @@ describe("Matchmaker", () => {
     expect(mm.remove("a")).toBe(false);
     expect(mm.queueSize).toBe(0);
   });
+
+  describe("sweep (P0-1: pair already-waiting players as windows widen)", () => {
+    it("pairs two waiters once their widened windows overlap, with no third arrival", () => {
+      let clock = 0;
+      const mm = new Matchmaker({ baseWindow: 100, windowGrowthPerSec: 10, now: () => clock });
+      // A(1000) and B(1300) both enqueue: gap 300 > base window 100, no match
+      expect(mm.enqueue({ id: "a", address: addr(1), elo: 1000 })).toBeNull();
+      expect(mm.enqueue({ id: "b", address: addr(2), elo: 1300 })).toBeNull();
+      expect(mm.queueSize).toBe(2);
+      // nothing yet at t=0
+      expect(mm.sweep()).toEqual([]);
+      // after 20s each window is 100 + 200 = 300 >= gap 300 → they pair
+      clock = 20_000;
+      const pairs = mm.sweep();
+      expect(pairs).toHaveLength(1);
+      expect(new Set([pairs[0].a.id, pairs[0].b.id])).toEqual(new Set(["a", "b"]));
+      expect(mm.queueSize).toBe(0);
+      // idempotent: an empty queue sweeps to nothing
+      expect(mm.sweep()).toEqual([]);
+    });
+
+    it("is deterministic on equal gaps: address tie-break, stable across runs", () => {
+      // Three players 150 apart (A<B<C by elo AND by address). At base window
+      // 100 all three wait; at t=5s the window is 150 so A-B and B-C are both
+      // eligible (gap 150) and share B. Same enqueuedAt (0), so the address key
+      // decides: A-B (smallest addresses) wins, C is left waiting — every run.
+      const mk = () => {
+        let clock = 0;
+        const mm = new Matchmaker({ baseWindow: 100, windowGrowthPerSec: 10, now: () => clock });
+        mm.enqueue({ id: "A", address: addr(0x1), elo: 1000 });
+        mm.enqueue({ id: "B", address: addr(0x2), elo: 1150 });
+        mm.enqueue({ id: "C", address: addr(0x3), elo: 1300 });
+        clock = 5000;
+        return mm.sweep();
+      };
+      const a = mk();
+      const b = mk();
+      expect(a.map((p) => [p.a.id, p.b.id].sort())).toEqual(b.map((p) => [p.a.id, p.b.id].sort()));
+      expect(a).toHaveLength(1);
+      expect(new Set([a[0].a.id, a[0].b.id])).toEqual(new Set(["A", "B"]));
+    });
+
+    it("puts the earlier waiter first (a) — the cash creator is whoever waited longest", () => {
+      // A enqueues at t=0, B at t=1s; both out of window until the sweep at
+      // t=30s. `a` must be the earlier waiter (A) regardless of address order.
+      let clock = 0;
+      const mm = new Matchmaker({ baseWindow: 100, windowGrowthPerSec: 10, now: () => clock });
+      mm.enqueue({ id: "first", address: addr(0x99), elo: 1000 }); // enqueuedAt 0, big address
+      clock = 1000;
+      mm.enqueue({ id: "second", address: addr(0x01), elo: 1300 }); // enqueuedAt 1000, small address
+      clock = 30_000;
+      const [pair] = mm.sweep();
+      expect(pair.a.id).toBe("first"); // earlier enqueuedAt beats smaller address
+      expect(pair.b.id).toBe("second");
+    });
+
+    it("never self-matches and leaves an unpairable waiter in the queue", () => {
+      const mm = new Matchmaker({ baseWindow: 100, windowGrowthPerSec: 0 });
+      mm.enqueue({ id: "tab1", address: addr(1), elo: 1000 });
+      mm.enqueue({ id: "tab2", address: addr(1), elo: 1000 }); // same wallet
+      mm.enqueue({ id: "lonely", address: addr(2), elo: 5000 }); // far out of window
+      expect(mm.sweep()).toEqual([]);
+      expect(mm.queueSize).toBe(3);
+    });
+  });
 });

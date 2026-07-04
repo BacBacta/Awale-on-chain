@@ -39,6 +39,7 @@
 import type { Server, Socket } from "socket.io";
 import type { Address, Hex } from "viem";
 import { GameHub } from "./hub.js";
+import type { Pairing } from "./matchmaking.js";
 import type { Match, Transcript } from "./match.js";
 import type { SettlementCoordinator } from "./settlement-coordinator.js";
 import { assertPersonhood } from "./personhood/gate.js";
@@ -104,7 +105,16 @@ const DEFAULT_TURN_CLOCK_MS = 30_000; // per-move backstop: the client auto-play
 const DEFAULT_UNSETTLED_WATCHDOG_MS = 45_000;
 const DEFAULT_RECONNECT_GRACE_MS = 45_000;
 
-export function attachSocketIO(io: Server, deps: ServerDeps): void {
+/** What `attachSocketIO` hands back so the runtime can drive periodic work.
+ *  Additive: existing callers that ignore the return value still compile. */
+export interface SocketHandle {
+  /** Pair every currently-compatible pair of waiting players (P0-1). Called on
+   *  an interval from main.ts so two people already in the queue match once
+   *  their windows overlap, without needing a third arrival. */
+  sweepQueues(): void;
+}
+
+export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
   const { hub } = deps;
   const TURN_CLOCK_MS = deps.turnClockMs ?? DEFAULT_TURN_CLOCK_MS;
   const BLITZ_CLOCK_MS = deps.blitzClockMs; // undefined = untimed total (per-move clock governs)
@@ -264,6 +274,39 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
     if ("unref" in timer) timer.unref?.();
   }
 
+  // Turn a pairing into a live table + client notifications. Extracted so the
+  // periodic sweep (which pairs two ALREADY-waiting players) drives exactly the
+  // same path as an enqueue-time match — the only reason two queued sockets now
+  // get "matched" without a third joiner.
+  function completePairing(pairing: Pairing): void {
+    // Casual quick-match: open an off-chain match and tell each player their
+    // role so both clients can join and play immediately (no stake/settle).
+    if (deps.casualCtx && pairing.a.sessionPubKey && pairing.b.sessionPubKey) {
+      const matchId = casualMatchId();
+      const startTurn = (Math.random() < 0.5 ? 0 : 1) as 0 | 1;
+      hub.open({
+        matchId,
+        chainId: deps.casualCtx.chainId,
+        verifier: deps.casualCtx.verifier,
+        sessions: [pairing.a.sessionPubKey, pairing.b.sessionPubKey],
+        startTurn,
+        clockMs: BLITZ_CLOCK_MS,
+      });
+      const m = hub.get(matchId)!;
+      const id = matchId.toString();
+      casualPlayers.set(id, [pairing.a.address, pairing.b.address]); // role 0 = a, role 1 = b
+      armTurnClockIfNeeded(matchId, id);
+      io.to(pairing.a.id).emit("matched", { matchId: id, role: 0, opponent: pairing.b.address, casual: true });
+      io.to(pairing.b.id).emit("matched", { matchId: id, role: 1, opponent: pairing.a.address, casual: true });
+      io.to(pairing.a.id).emit("state", { matchId: id, state: m.state, ply: 0, clocks: clocksOf(m) });
+      io.to(pairing.b.id).emit("state", { matchId: id, state: m.state, ply: 0, clocks: clocksOf(m) });
+      return;
+    }
+
+    io.to(pairing.a.id).emit("matched", { opponent: pairing.b.address });
+    io.to(pairing.b.id).emit("matched", { opponent: pairing.a.address });
+  }
+
   io.on("connection", (socket: Socket) => {
     socket.on(
       "queue",
@@ -285,34 +328,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
           elo: serverElo ?? msg.elo,
           sessionPubKey: msg.sessionPubKey,
         });
-        if (!pairing) return;
-
-        // Casual quick-match: open an off-chain match and tell each player their
-        // role so both clients can join and play immediately (no stake/settle).
-        if (deps.casualCtx && pairing.a.sessionPubKey && pairing.b.sessionPubKey) {
-          const matchId = casualMatchId();
-          const startTurn = (Math.random() < 0.5 ? 0 : 1) as 0 | 1;
-          hub.open({
-            matchId,
-            chainId: deps.casualCtx.chainId,
-            verifier: deps.casualCtx.verifier,
-            sessions: [pairing.a.sessionPubKey, pairing.b.sessionPubKey],
-            startTurn,
-            clockMs: BLITZ_CLOCK_MS,
-          });
-          const m = hub.get(matchId)!;
-          const id = matchId.toString();
-          casualPlayers.set(id, [pairing.a.address, pairing.b.address]); // role 0 = a, role 1 = b
-          armTurnClockIfNeeded(matchId, id);
-          io.to(pairing.a.id).emit("matched", { matchId: id, role: 0, opponent: pairing.b.address, casual: true });
-          io.to(pairing.b.id).emit("matched", { matchId: id, role: 1, opponent: pairing.a.address, casual: true });
-          io.to(pairing.a.id).emit("state", { matchId: id, state: m.state, ply: 0, clocks: clocksOf(m) });
-          io.to(pairing.b.id).emit("state", { matchId: id, state: m.state, ply: 0, clocks: clocksOf(m) });
-          return;
-        }
-
-        io.to(pairing.a.id).emit("matched", { opponent: pairing.b.address });
-        io.to(pairing.b.id).emit("matched", { opponent: pairing.a.address });
+        if (pairing) completePairing(pairing);
       },
     );
 
@@ -525,4 +541,10 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
       turnClockTimers.set(seat.roomId, timer);
     });
   });
+
+  return {
+    sweepQueues() {
+      for (const pairing of hub.matchmaker.sweep()) completePairing(pairing);
+    },
+  };
 }

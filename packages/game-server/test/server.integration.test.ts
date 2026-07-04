@@ -5,7 +5,8 @@ import { io as ioClient, type Socket } from "socket.io-client";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Address } from "viem";
 import { GameHub } from "../src/hub.js";
-import { attachSocketIO, type ServerDeps } from "../src/server.js";
+import { Matchmaker } from "../src/matchmaking.js";
+import { attachSocketIO, type ServerDeps, type SocketHandle } from "../src/server.js";
 import { moveDigest } from "../src/eip712.js";
 
 const VERIFIER: Address = "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3";
@@ -23,11 +24,12 @@ afterEach(() => {
   http?.close();
 });
 
+let lastHandle: SocketHandle;
 function start(hub: GameHub, extra: Partial<ServerDeps> = {}): Promise<number> {
   return new Promise((resolve) => {
     http = createServer();
     const server = new Server(http);
-    attachSocketIO(server, { hub, ...extra });
+    lastHandle = attachSocketIO(server, { hub, ...extra });
     http.listen(0, () => resolve((http.address() as { port: number }).port));
   });
 }
@@ -107,6 +109,40 @@ describe("Socket.IO transport (integration)", () => {
       const [ma, mb, sa] = await Promise.all([matchedA, matchedB, stateA]);
       return { a, b, matchId: ma.matchId, roleA: ma.role, roleB: mb.role, turn: sa.state.turn };
     }
+
+    it("P0-1: two queued sockets get matched by the periodic sweep — no third joiner", async () => {
+      // Injected clock so the window widens on demand, not on wall time.
+      let clock = 0;
+      const mm = new Matchmaker({ baseWindow: 100, windowGrowthPerSec: 10, now: () => clock });
+      const hub = new GameHub(mm);
+      const port = await start(hub, { casualCtx: { chainId: CHAIN_ID, verifier: VERIFIER } });
+
+      const a = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+      const b = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+      client = a;
+      client2 = b;
+
+      const matchedA = new Promise<{ matchId: string; role: 0 | 1 }>((resolve) => a.once("matched", resolve));
+      const matchedB = new Promise<{ matchId: string; role: 0 | 1 }>((resolve) => b.once("matched", resolve));
+
+      // both enqueue 300 Elo apart: gap 300 > base window 100, so neither
+      // pairs on enqueue — they sit in the queue (the exact bug P0-1 fixes)
+      await new Promise<void>((resolve) => a.on("connect", () => resolve()));
+      await new Promise<void>((resolve) => b.on("connect", () => resolve()));
+      a.emit("queue", { address: acct0.address, elo: 1000, mode: "casual", sessionPubKey: acct0.address });
+      b.emit("queue", { address: acct1.address, elo: 1300, mode: "casual", sessionPubKey: acct1.address });
+      await new Promise((r) => setTimeout(r, 50)); // let both enqueues land
+      expect(hub.matchmaker.queueSize).toBe(2); // nobody matched yet
+
+      // 30s later the windows overlap; the sweep the runner would fire pairs them
+      clock = 30_000;
+      lastHandle.sweepQueues();
+
+      const [ma, mb] = await Promise.all([matchedA, matchedB]);
+      expect(ma.matchId).toBe(mb.matchId); // same off-chain match, roles assigned
+      expect(new Set([ma.role, mb.role])).toEqual(new Set([0, 1]));
+      expect(hub.matchmaker.queueSize).toBe(0);
+    });
 
     it("casual: forfeits whoever's turn-clock expires, opponent wins, result reaches the profile hook", async () => {
       const hub = new GameHub();

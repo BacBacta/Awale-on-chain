@@ -830,7 +830,7 @@ async function openFromChain(matchId: bigint): Promise<void> {
   }
 }
 
-attachSocketIO(io, {
+const socketHandle = attachSocketIO(io, {
   hub,
   coordinator,
   personhood: selfVerifier ? personhood : undefined,
@@ -846,6 +846,14 @@ attachSocketIO(io, {
   eloOf: async (address) => (await profiles.get(address))?.elo ?? null,
   openFromChain,
 });
+
+// Periodic matchmaking sweep (P0-1): pairing was previously evaluated ONLY when
+// a player enqueued, so two people already waiting never matched as their
+// windows widened — a third arrival was needed. Sweep on an interval so a
+// compatible pair unsticks on its own. Same runner pattern as the keeper.
+const MATCHMAKE_SWEEP_MS = Number(process.env.MATCHMAKE_SWEEP_MS ?? "2000");
+const st = setInterval(() => socketHandle.sweepQueues(), MATCHMAKE_SWEEP_MS);
+if ("unref" in st) st.unref?.();
 
 // First-move randomness lifecycle:
 //  - on MatchJoined, fix the deferred flip by calling finalizeStart (needs a
