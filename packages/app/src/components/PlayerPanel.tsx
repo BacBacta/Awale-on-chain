@@ -31,7 +31,7 @@ export function PlayerPanel({
   clockMs?: number | null;
 }) {
   const initial = (name.trim()[0] ?? "?").toUpperCase();
-  const lowTime = clockMs != null && clockMs < 30_000;
+  const lowTime = clockMs != null && clockMs < 5_000;
   return (
     <div
       className="row"

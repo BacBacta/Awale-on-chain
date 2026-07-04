@@ -165,28 +165,25 @@ describe("Socket.IO transport (integration)", () => {
       expect(msg.winner).toBe(moverRole);
     });
 
-    it("staked: signals claim-eligible instead of an unsigned forfeit", async () => {
+    it("staked timeout: forfeits into game-over (two-signature fast path), with claim-eligible only as the watchdog fallback", async () => {
       const hub = new GameHub();
       // a real (non-casual) matchId — no bit-200 flag, exactly like an on-chain escrow id
       hub.open({ matchId: 42n, chainId: CHAIN_ID, verifier: VERIFIER, sessions: [acct0.address, acct1.address], startTurn: 0 });
-      const port = await start(hub, { turnClockMs: 50 });
+      // short move-clock, but a long watchdog so we can prove game-over comes
+      // FIRST (the instant settle path) and claim-eligible is only the fallback
+      const port = await start(hub, { turnClockMs: 50, unsettledWatchdogMs: 5000 });
       client = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
 
-      const claim = new Promise<{ matchId: string; winner: number; transcript: unknown }>((resolve) =>
-        client.once("claim-eligible", resolve),
-      );
+      const gameover = new Promise<{ winner: number }>((resolve) => client.once("gameover", resolve));
+      let claimFired = false;
+      client.on("claim-eligible", () => (claimFired = true));
       client.on("connect", () => client.emit("watch", { matchId: "42" }));
-      const noGameover = new Promise<void>((resolve) => {
-        client.once("gameover", () => resolve());
-        setTimeout(resolve, 200);
-      });
 
-      const msg = await claim;
-      expect(msg.winner).toBe(1); // player 0 (turn 0) never moved — player 1 wins the claim
-      expect(msg.transcript).toBeDefined();
-      await noGameover;
-      // the hub never unilaterally decided the outcome — no signature was ever given
-      expect(hub.get(42n)?.over).toBe(false);
+      const msg = await gameover;
+      expect(msg.winner).toBe(1); // player 0 (turn 0) never moved — player 1 wins
+      expect(hub.get(42n)?.over).toBe(true); // forfeited — a real, settleable result
+      // game-over fired well before the 5s watchdog: no premature claim-eligible
+      expect(claimFired).toBe(false);
     });
   });
 });

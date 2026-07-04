@@ -96,15 +96,18 @@ function isCasualMatch(matchId: bigint): boolean {
   return matchId >= CASUAL_ID_FLOOR;
 }
 
-const DEFAULT_TURN_CLOCK_MS = 2 * 60_000;
-const DEFAULT_BLITZ_CLOCK_MS = 3 * 60_000;
+const DEFAULT_TURN_CLOCK_MS = 30_000; // per-move backstop: the client auto-plays at 10s, this only fires for a truly-gone client
+// The total per-player "blitz" clock is retired for money/live play: games now
+// run on a 10s-per-move rhythm with client auto-play, so there is no total-time
+// flag-fall (which was what produced the 10-minute frozen settlement screen).
+// undefined = no total clock.
 const DEFAULT_UNSETTLED_WATCHDOG_MS = 45_000;
 const DEFAULT_RECONNECT_GRACE_MS = 45_000;
 
 export function attachSocketIO(io: Server, deps: ServerDeps): void {
   const { hub } = deps;
   const TURN_CLOCK_MS = deps.turnClockMs ?? DEFAULT_TURN_CLOCK_MS;
-  const BLITZ_CLOCK_MS = deps.blitzClockMs ?? DEFAULT_BLITZ_CLOCK_MS;
+  const BLITZ_CLOCK_MS = deps.blitzClockMs; // undefined = untimed total (per-move clock governs)
   const UNSETTLED_WATCHDOG_MS = deps.unsettledWatchdogMs ?? DEFAULT_UNSETTLED_WATCHDOG_MS;
   const RECONNECT_GRACE_MS = deps.reconnectGraceMs ?? DEFAULT_RECONNECT_GRACE_MS;
 
@@ -197,15 +200,19 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
       return;
     }
     const timedOutPlayer = m.turn as 0 | 1;
-    if (isCasualMatch(matchId)) {
-      try {
-        const state = hub.forfeit(matchId, timedOutPlayer);
-        announceGameOver(matchId, roomId, state);
-      } catch {
-        /* already resolved some other way between the check and the call */
-      }
-    } else {
-      emitClaimEligible(roomId, (1 - timedOutPlayer) as 0 | 1, m.transcript());
+    // Same path for casual AND staked now: forfeit the timed-out player and
+    // announce game-over. For a staked match this drives the two-signature
+    // fast path (settleSigned, instant) — the opponent is normally still
+    // here to co-sign — with the challenge-window claim only as the watchdog
+    // fallback when they've truly disconnected. This is what killed the
+    // 10-minute frozen screen after a timeout. In practice the client's own
+    // 10s-per-move auto-play means the game usually reaches a natural end
+    // and this server backstop only fires on a genuinely abandoned game.
+    try {
+      const state = hub.forfeit(matchId, timedOutPlayer);
+      announceGameOver(matchId, roomId, state);
+    } catch {
+      /* already resolved some other way between the check and the call */
     }
   }
 

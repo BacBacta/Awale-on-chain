@@ -81,7 +81,13 @@ const TOURNAMENT_TURN_CLOCK_MS = Number(process.env.TOURNAMENT_TURN_CLOCK_MS ?? 
 // Blitz: total thinking time per player for live matches (casual + staked).
 // A full Awalé game can run 10-20 minutes; this audience plays in seconds-long
 // rounds — 3 min/player bounds every live game to ~6 minutes.
-const BLITZ_CLOCK_MS = Number(process.env.BLITZ_CLOCK_MS ?? String(3 * 60_000));
+// Total per-player clock, DISABLED by default (0): live play uses a
+// 10s-per-move rhythm with client auto-play instead of a total blitz clock —
+// no total-time flag-fall, no frozen settlement. Set BLITZ_CLOCK_MS>0 to
+// re-enable a total clock. TURN_CLOCK_MS is the server's per-move backstop
+// (default 30s; the client auto-plays well before it at 10s).
+const BLITZ_CLOCK_MS = Number(process.env.BLITZ_CLOCK_MS ?? "0") || undefined;
+const TURN_CLOCK_MS = Number(process.env.TURN_CLOCK_MS ?? "30000");
 
 // Match ids the server has seen join, polled by the keeper for time-based
 // actions (finalize proposed results, void expired matches). Terminal matches
@@ -830,6 +836,7 @@ attachSocketIO(io, {
   personhood: selfVerifier ? personhood : undefined,
   casualCtx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER },
   blitzClockMs: BLITZ_CLOCK_MS,
+  turnClockMs: TURN_CLOCK_MS,
   onGameOver: (matchId, winner) => {
     console.log(`[match ${matchId}] over, winner=${winner} — awaiting result signatures`);
   },

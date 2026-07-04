@@ -13,7 +13,7 @@ import { stakeTokens } from "../lib/stakeTokens.js";
 import { recordLocalMatch } from "../lib/matches.js";
 import { track } from "../lib/analytics.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
-import { legalMovesMask, type GameState } from "../../../engine/src/awale.js";
+import { legalMovesMask, applyMove, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
@@ -69,11 +69,7 @@ export function LiveMatch({
   const [oppAddr, setOppAddr] = useState<Address | null>(opponentAddress ?? null);
   const [drawOffered, setDrawOffered] = useState(false); // opponent offered a draw, awaiting our reply
   const [conceding, setConceding] = useState(false);
-  // Blitz clocks as last reported by the server, plus when we heard them — the
-  // active player's display ticks down locally between server updates.
-  const [clocks, setClocks] = useState<[number, number] | null>(null);
-  const [clocksAt, setClocksAt] = useState(0);
-  const [, setTick] = useState(0); // re-render pulse for the countdown
+  const [, setTick] = useState(0); // re-render pulse for the per-move countdown
   // On-chain status 1 = Open: created but nobody has joined yet. Without this
   // the match screen is a blank "Connected" — say so, and hand out the invite.
   const [waitingOpen, setWaitingOpen] = useState(false);
@@ -106,6 +102,13 @@ export function LiveMatch({
   // and paying the winner in silence.
   const [settleWatch, setSettleWatch] = useState(false);
   const [chainEnded, setChainEnded] = useState<"won" | "lost" | "refunded" | null>(null);
+  // Per-move 10s rhythm (Ludo-style): a fresh 10s clock every turn. When it
+  // runs out on YOUR turn, the app auto-plays a sensible legal move so you
+  // never lose your stake to the clock and the game always reaches a real
+  // result (which settles instantly). turnStartedAt marks when the current
+  // turn began — set from the last state broadcast, so both clients agree.
+  const [turnStartedAt, setTurnStartedAt] = useState(0);
+  const autoPlayedPly = useRef(-1);
 
   useEffect(() => {
     setSkin(getEquipped());
@@ -214,10 +217,7 @@ export function LiveMatch({
         setState(msg.state);
         setPly(msg.ply);
         setTimedOut(false); // the game moved on — the eligibility notice is stale
-        if (msg.clocks !== undefined) {
-          setClocks(msg.clocks);
-          setClocksAt(Date.now());
-        }
+        if (!msg.state.over) setTurnStartedAt(Date.now()); // fresh 10s for this turn
       });
       sock.on("gameover", async (msg: { winner: number }) => {
         setStatus(msg.winner === myRole ? "You win 🎉" : msg.winner === 2 ? "Draw" : "You lose");
@@ -267,6 +267,24 @@ export function LiveMatch({
     socket.current?.emit("move", { matchId: matchId.toString(), player: role, house, signature: sig as Hex });
   }
 
+  /** Pick a decent legal move to auto-play when the 10s runs out: the one that
+   *  captures the most right now; ties broken toward keeping seeds on my side.
+   *  Not a strong AI — just "don't throw the game, don't stall it". */
+  function autoMove(s: GameState, me: 0 | 1): number {
+    const houses = legalHouses(s);
+    let best = houses[0];
+    let bestGain = -1;
+    for (const h of houses) {
+      const after = applyMove(s, h);
+      const gain = (me === 0 ? after.store0 - s.store0 : after.store1 - s.store1);
+      if (gain > bestGain) {
+        bestGain = gain;
+        best = h;
+      }
+    }
+    return best;
+  }
+
   // A stuck or hopeless game shouldn't trap the money: either player can
   // concede outright (opponent wins), or both can agree to split it as a draw.
   async function resign() {
@@ -310,7 +328,9 @@ export function LiveMatch({
         moves: transcript.moves,
         feeCurrency: feeCurrency.current,
       });
-      setClaimStatus("Claim submitted — payout in ~10 min unless disputed.");
+      setOutcome(0); // show the victory screen immediately, not a frozen board
+      setStatus("You win 🎉");
+      setClaimStatus("Opponent left — paying out. It lands in your wallet shortly.");
       setSettleWatch(true);
     } catch (e) {
       setClaimStatus(`Claim failed: ${humanizeError(e)}`);
@@ -502,21 +522,32 @@ export function LiveMatch({
   const myScore = role === 1 ? state?.store1 : state?.store0;
   const oppScore = role === 1 ? state?.store0 : state?.store1;
 
-  // Tick the countdown display twice a second while a timed game is live.
+  // Tick 4×/s while a live game is on — drives both the per-move countdown
+  // display and the auto-play trigger.
   useEffect(() => {
-    if (!clocks || !state || state.over) return;
-    const iv = setInterval(() => setTick((t) => t + 1), 500);
+    if (!state || state.over) return;
+    const iv = setInterval(() => setTick((t) => t + 1), 250);
     return () => clearInterval(iv);
-  }, [clocks !== null, state?.over]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state === null, state?.over]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** Live remaining time for a seat: the server's snapshot, minus local elapsed
-   *  time if that seat is currently on the move. */
-  function liveClock(player: 0 | 1): number | null {
-    if (!clocks || !state) return null;
-    const base = clocks[player];
-    if (state.over || state.turn !== player) return base;
-    return Math.max(0, base - (Date.now() - clocksAt));
+  const PER_MOVE_MS = 10_000;
+
+  /** Remaining ms in the current turn for `player` (null if it's not their
+   *  move or the game is over). Same 10s window on both clients. */
+  function perMoveRemaining(player: 0 | 1): number | null {
+    if (!state || state.over || state.turn !== player || !turnStartedAt) return null;
+    return Math.max(0, PER_MOVE_MS - (Date.now() - turnStartedAt));
   }
+
+  // Auto-play my move when my 10s runs out (once per ply). Guarded so it never
+  // fires on the opponent's turn, after game-over, or mid-settlement.
+  useEffect(() => {
+    if (!myTurn || role === null || autoPlayedPly.current === ply) return;
+    if (perMoveRemaining(role) !== 0) return;
+    autoPlayedPly.current = ply;
+    void play(autoMove(state!, role));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  });
 
   return (
     <main className="stack" style={{ flex: 1, gap: 14, position: "relative", padding: "12px 8px" }}>
@@ -604,10 +635,10 @@ export function LiveMatch({
             name={displayName(oppAddr)}
             score={oppScore ?? 0}
             active={!state.over && role !== null && state.turn !== role}
-            clockMs={role !== null ? liveClock((1 - role) as 0 | 1) : null}
+            clockMs={role !== null ? perMoveRemaining((1 - role) as 0 | 1) : null}
           />
           <Board state={state} perspective={role ?? 0} onPlay={play} playable={playable} skin={skin} />
-          <PlayerPanel name="You" you score={myScore ?? 0} active={myTurn} clockMs={role !== null ? liveClock(role) : null} />
+          <PlayerPanel name="You" you score={myScore ?? 0} active={myTurn} clockMs={role !== null ? perMoveRemaining(role) : null} />
           {state.over && (
             <div className="row" style={{ justifyContent: "center" }}>
               <span className="chip">
