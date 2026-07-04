@@ -90,9 +90,14 @@ export function LiveMatch({
   // player must see WHY the board went quiet or they'll assume the app died).
   const [connLost, setConnLost] = useState(false);
   // A staked match's move-clock ran out (or a natural ending never settled)
-  // and *someone* is eligible to claim on-chain. `theirClaim` is set only
-  // when the opponent is the one claiming, so we can offer to dispute it.
+  // and *someone* is eligible to claim on-chain. `theirClaim` is set ONLY for
+  // a claim that actually exists on-chain (the transcript catch-up path) —
+  // that's when "dispute" is real. The mere eligibility broadcast sets
+  // `timedOut` instead: telling a player "your opponent claimed victory
+  // on-chain" before anything was on-chain (with a Dispute button that had
+  // nothing to dispute) was a lie the tests caught.
   const [theirClaim, setTheirClaim] = useState<{ winner: 0 | 1 | 2; transcript: WireTranscript } | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
   const [claimStatus, setClaimStatus] = useState<string | null>(null);
 
   useEffect(() => {
@@ -201,6 +206,7 @@ export function LiveMatch({
       sock.on("state", (msg: { state: GameState; ply: number; clocks?: [number, number] | null }) => {
         setState(msg.state);
         setPly(msg.ply);
+        setTimedOut(false); // the game moved on — the eligibility notice is stale
         if (msg.clocks !== undefined) {
           setClocks(msg.clocks);
           setClocksAt(Date.now());
@@ -231,7 +237,7 @@ export function LiveMatch({
       sock.on("claim-eligible", (msg: { winner: 0 | 1 | 2; transcript: WireTranscript }) => {
         if (casualRole != null) return; // no on-chain settlement for casual play
         if (msg.winner === roleRef.current) void selfClaim(msg.winner, msg.transcript);
-        else setTheirClaim({ winner: msg.winner, transcript: msg.transcript });
+        else setTimedOut(true); // eligibility only — nothing on-chain to dispute yet
       });
       // Reply to our own catch-up "get-transcript" request (a claim existed
       // from before we reconnected) — same handling as a live claim-eligible.
@@ -507,6 +513,15 @@ export function LiveMatch({
             <button className="btn" style={{ padding: "6px 12px" }} onClick={() => replyToDraw(true)}>
               Accept
             </button>
+          </span>
+        </div>
+      )}
+
+      {timedOut && state && !state.over && (
+        <div className="card stack animate-in" style={{ gap: 6, textAlign: "center" }}>
+          <span className="muted">
+            Your move timer ran out — your opponent can now claim the pot. If they don&apos;t, both stakes are
+            refunded automatically within 24h.
           </span>
         </div>
       )}
