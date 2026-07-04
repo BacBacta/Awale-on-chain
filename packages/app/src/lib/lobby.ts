@@ -90,5 +90,9 @@ export async function joinOpenMatch(opts: {
     const ah = await approve(wallet, { account, token: m.token, spender: cfg.escrow, amount: m.stake, feeCurrency });
     await client.waitForTransactionReceipt({ hash: ah });
   }
-  await joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, feeCurrency });
+  const jh = await joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, feeCurrency });
+  // wait until the join is MINED: callers redirect to the match screen next,
+  // and reading the match pre-confirmation shows the old state — the joiner
+  // was greeted with "this wallet is not a player in this match"
+  await client.waitForTransactionReceipt({ hash: jh });
 }

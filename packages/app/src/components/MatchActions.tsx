@@ -237,10 +237,12 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         session: session.address,
         feeCurrency: feeCurrency,
       });
-      setTx(hash);
-      setOpenId(matchId);
-      setStep("done");
+      // wait until mined, then go straight into the game: the joiner fills
+      // the match — showing them the creator's "waiting for an opponent"
+      // room (or reading the match pre-confirmation) was pure confusion
+      await client.waitForTransactionReceipt({ hash });
       track("match_joined");
+      window.location.href = `/play?match=${matchId.toString()}`;
     } catch (e) {
       fail(e);
     }
