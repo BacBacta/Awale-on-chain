@@ -179,7 +179,7 @@ export default function Profile() {
           </span>
           <span className="col" style={{ flex: 1, gap: 1 }}>
             <span style={{ fontWeight: 700, fontSize: 14.5 }}>Stats</span>
-            <span className="faint">Your record & the global numbers</span>
+            <span className="faint">Your record & the money leaderboard</span>
           </span>
           <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
         </Link>

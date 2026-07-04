@@ -2,6 +2,7 @@ import { getStats } from "../../src/lib/stats.js";
 import { CELO_MAINNET_TOKENS, formatAmount } from "../../../protocol/src/tokens.js";
 import { PlayerStats } from "../../src/components/PlayerStats.js";
 import { Leaderboard } from "../../src/components/Leaderboard.js";
+import { OperatorOnly } from "../../src/components/OperatorOnly.js";
 
 // Public stats page — a MiniPay listing requirement. Metrics come from the
 // indexer (chunked eth_getLogs over the settlement events). Network fees paid
@@ -47,38 +48,44 @@ export default async function Stats() {
       </span>
       <Leaderboard />
 
-      <span className="h2" style={{ marginTop: 8 }}>
-        Global
-      </span>
-      {rows.map((m) => (
-        <div className="card row" key={m.label}>
-          <span className="muted">{m.label}</span>
-          <span style={{ fontWeight: 700 }}>{m.value}</span>
-        </div>
-      ))}
+      {/* operator dashboard (DAU/MAU, retention, volume, fees) — visible only
+          to the operator wallet. Players get their record + the leaderboard;
+          the ops numbers were noise to them and, at cold start, read as a
+          dead app. */}
+      <OperatorOnly>
+        <span className="h2" style={{ marginTop: 8 }}>
+          Global
+        </span>
+        {rows.map((m) => (
+          <div className="card row" key={m.label}>
+            <span className="muted">{m.label}</span>
+            <span style={{ fontWeight: 700 }}>{m.value}</span>
+          </div>
+        ))}
 
-      <span className="muted">Volume &amp; fees per currency</span>
-      {s.perToken.length === 0 ? (
-        <div className="card muted">No settled matches yet.</div>
-      ) : (
-        s.perToken.map((t) => {
-          const d = decimalsForSymbol(t.symbol);
-          return (
-            <div className="card row" key={t.token}>
-              <span className="muted">{t.symbol ?? `${t.token.slice(0, 6)}…`}</span>
-              <span style={{ fontWeight: 700 }}>
-                {formatAmount(BigInt(t.volume), d)} vol · {formatAmount(BigInt(t.revenue), d)} rev
-              </span>
-            </div>
-          );
-        })
-      )}
+        <span className="muted">Volume &amp; fees per currency</span>
+        {s.perToken.length === 0 ? (
+          <div className="card muted">No settled matches yet.</div>
+        ) : (
+          s.perToken.map((t) => {
+            const d = decimalsForSymbol(t.symbol);
+            return (
+              <div className="card row" key={t.token}>
+                <span className="muted">{t.symbol ?? `${t.token.slice(0, 6)}…`}</span>
+                <span style={{ fontWeight: 700 }}>
+                  {formatAmount(BigInt(t.volume), d)} vol · {formatAmount(BigInt(t.revenue), d)} rev
+                </span>
+              </div>
+            );
+          })
+        )}
 
-      <span className="muted" style={{ textAlign: "center" }}>
-        {empty
-          ? "Early days — these numbers fill in as games settle on-chain."
-          : "Computed from public match results · updated every minute."}
-      </span>
+        <span className="muted" style={{ textAlign: "center" }}>
+          {empty
+            ? "Early days — these numbers fill in as games settle on-chain."
+            : "Computed from public match results · updated every minute."}
+        </span>
+      </OperatorOnly>
     </main>
   );
 }
