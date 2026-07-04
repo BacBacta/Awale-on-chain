@@ -90,6 +90,17 @@ export async function joinOpenMatch(opts: {
     // generous headroom: one approval covers ~100 games at this stake
     const ah = await approve(wallet, { account, token: m.token, spender: cfg.escrow, amount: m.stake * 100n, feeCurrency });
     await client.waitForTransactionReceipt({ hash: ah });
+    // load-balanced RPC: wait until the allowance is visible before joining
+    for (let i = 0; i < 12; i++) {
+      const seen = (await readContract(client, {
+        address: m.token,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [account, cfg.escrow],
+      })) as bigint;
+      if (seen >= m.stake) break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
   }
   const jh = await joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, feeCurrency });
   // wait until the join is MINED: callers redirect to the match screen next,

@@ -316,11 +316,12 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
       const waiting = cashQueues.get(key);
       if (waiting && waiting.socketId !== socket.id && waiting.address.toLowerCase() !== msg.address.toLowerCase()) {
         cashQueues.delete(key);
-        // give the pair 2 minutes to get both stakes on-chain (two wallet
-        // confirmations on mobile take a while) before releasing them
+        // give the pair 4 minutes to get both stakes on-chain: the e2e run
+        // measured ~50s per player on forno for approve+stake — with human
+        // wallet confirmations on top, 120s was provably too tight
         const timer = setTimeout(
           () => abortCashPair(waiting.socketId, "Setup took too long — try again."),
-          120_000,
+          240_000,
         );
         cashPairs.set(waiting.socketId, { joinerSocket: socket.id, stakeKey: key, timer });
         io.to(waiting.socketId).emit("cash-matched", { role: "create", opponent: msg.address, stakeWei: msg.stakeWei });

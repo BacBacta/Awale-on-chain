@@ -10,6 +10,7 @@ import { Server } from "socket.io";
 import { createPublicClient, createWalletClient, http, parseAbiItem, type Address, type Hex } from "viem";
 import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
+import { createNonceManager, jsonRpc } from "viem/nonce";
 import { GameHub } from "./hub.js";
 import { attachSocketIO } from "./server.js";
 import { watchMatchJoined, watchStartFinalized, openMatchFromChain, type ChainMatch, type EventWatcher } from "./listener.js";
@@ -110,24 +111,47 @@ const publicClient = createPublicClient({
 });
 const hub = new GameHub();
 
-/** Read an on-chain match into the hub's ChainMatch shape. */
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/** Read an on-chain match into the hub's ChainMatch shape.
+ *
+ *  The RPC is load-balanced and its nodes lag each other: right after
+ *  StartFinalized, a stale node can still serve the PRE-JOIN state — with
+ *  session1 = 0x0. Opening the hub with a zero session bricks the match:
+ *  every one of player 1's signatures fails "bad signature" forever (caught
+ *  red-handed by the two-player e2e). Retry until the joined state is
+ *  actually visible. */
 async function readMatch(matchId: bigint): Promise<ChainMatch> {
-  const m = (await publicClient.readContract({
-    address: ESCROW,
-    abi: matchEscrowAbi,
-    functionName: "getMatch",
-    args: [matchId],
-  })) as { session0: Address; session1: Address; startTurn: number };
-  return { matchId, session0: m.session0, session1: m.session1, startTurn: Number(m.startTurn) };
+  for (let i = 0; ; i++) {
+    const m = (await publicClient.readContract({
+      address: ESCROW,
+      abi: matchEscrowAbi,
+      functionName: "getMatch",
+      args: [matchId],
+    })) as { session0: Address; session1: Address; startTurn: number };
+    if (m.session1 !== ZERO_ADDRESS && m.session0 !== ZERO_ADDRESS) {
+      return { matchId, session0: m.session0, session1: m.session1, startTurn: Number(m.startTurn) };
+    }
+    if (i >= 14) throw new Error(`match ${matchId}: sessions still incomplete after retries`);
+    await new Promise((r) => setTimeout(r, 2000));
+  }
 }
 
-// optional: a funded signer lets the server submit settlements
+// optional: a funded signer lets the server submit settlements.
+// ONE shared account with a serialized nonce manager: the operator transacts
+// from several concurrent paths (keeper, finalizeStart, settleSigned, league
+// payouts) and per-call accounts were guessing nonces against lagging RPC
+// nodes — settlements died on "nonce too low" (caught by the two-player e2e).
+const operatorAccount =
+  SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66
+    ? privateKeyToAccount(SIGNER as Hex, { nonceManager: createNonceManager({ source: jsonRpc() }) })
+    : undefined;
 let settlement: SettlementClient | undefined;
-if (SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66) {
+if (operatorAccount) {
   settlement = new SettlementClient({
     rpcUrl: RPC_URL,
     escrow: ESCROW,
-    account: privateKeyToAccount(SIGNER as Hex),
+    account: operatorAccount,
     feeCurrency: FEE_CURRENCY,
     chainId: CHAIN_ID, // was hardcoded to mainnet inside the client — every
     // server write on Sepolia bounced with "invalid chain ID"
@@ -296,7 +320,7 @@ const tournamentFinalize =
         const wallet = createWalletClient({
           chain: chainFor(CHAIN_ID),
           transport: http(RPC_URL),
-          account: privateKeyToAccount(SIGNER as Hex),
+          account: operatorAccount!,
         });
         const hash = await wallet.writeContract({
           address: TOURNAMENT,
@@ -770,6 +794,7 @@ async function openFromChain(matchId: bigint): Promise<void> {
       m = await read();
       if (Number(m.startTurn) === START_UNSET) return; // reveal re-rolled — next watch finishes
     }
+    if (m.session0 === ZERO_ADDRESS || m.session1 === ZERO_ADDRESS) return; // stale node — next watch retries
     if (hub.get(matchId)) return; // raced by the event watcher — already open
     openMatchFromChain(
       hub,
@@ -1090,7 +1115,7 @@ async function leaguePayout(token: Address, winners: LeagueWinner[]): Promise<Le
   const wallet = createWalletClient({
     chain: chainFor(CHAIN_ID),
     transport: http(RPC_URL),
-    account: privateKeyToAccount(SIGNER as Hex),
+    account: operatorAccount!,
   });
   const paid: LeagueWinner[] = [];
   for (const w of winners) {

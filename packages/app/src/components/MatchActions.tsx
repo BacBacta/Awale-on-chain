@@ -192,6 +192,19 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     // popup instead of one per game — approvals were half the tx friction
     const hash = await approve(wallet, { account, token, spender: cfg.escrow, amount: amount * 100n, feeCurrency: feeCurrency });
     await client.waitForTransactionReceipt({ hash });
+    // the RPC is load-balanced: a mined approve can be invisible to the next
+    // node for a few seconds — staking then reverts with "insufficient
+    // allowance". Wait until the allowance is actually readable.
+    for (let i = 0; i < 12; i++) {
+      const seen = (await readContract(client, {
+        address: token,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [account, cfg.escrow],
+      })) as bigint;
+      if (seen >= amount) break;
+      await new Promise((r) => setTimeout(r, 1500));
+    }
   }
 
   async function onJoinOpen(matchId: bigint) {

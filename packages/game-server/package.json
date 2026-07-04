@@ -3,13 +3,14 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Authoritative off-chain game server for Awalé: match orchestration, session-key move verification, settlement assembly, ELO matchmaking.",
+  "description": "Authoritative off-chain game server for Awal\u00e9: match orchestration, session-key move verification, settlement assembly, ELO matchmaking.",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "start": "tsx src/main.ts",
     "dev": "tsx watch src/main.ts",
-    "finalize-league": "tsx src/scripts/finalize-league.ts"
+    "finalize-league": "tsx src/scripts/finalize-league.ts",
+    "e2e:cash": "tsx e2e-cash.ts"
   },
   "dependencies": {
     "@selfxyz/core": "^1.2.0-beta.1",

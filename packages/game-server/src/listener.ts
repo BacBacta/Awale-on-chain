@@ -91,7 +91,12 @@ export function watchStartFinalized(
       for (const log of logs) {
         const matchId = log.args.matchId;
         if (matchId === undefined) continue;
-        void opts.readMatch(matchId).then((m) => openMatchFromChain(hub, m, opts.ctx));
+        void opts
+          .readMatch(matchId)
+          .then((m) => openMatchFromChain(hub, m, opts.ctx))
+          .catch(() => {
+            /* hub already has it (hydration won the race) or the read gave up */
+          });
       }
     },
   });
