@@ -493,7 +493,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       {/* Create */}
       <div className="card stack" style={{ gap: 12 }}>
         <div className="row">
-          <span className="h2">Create a match</span>
+          <span className="h2">Play for money</span>
           {balance !== null && (
             <span className="faint">
               Balance {fmt(balance, dec)} {sym}
@@ -578,8 +578,34 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
           </button>
         )}
 
-        <button className="btn block" onClick={onCreate} disabled={busy || !token || !adultOk}>
-          {step === "approving" ? "Confirm in wallet…" : step === "staking" ? "Adding to the pot…" : `Put ${stake || "0"} ${sym} in the pot`}
+        {/* THE button: one tap, the server pairs you (with your friend
+            searching at the same stake, most likely) and the two apps set
+            the table between themselves — no lobby, no link, no number */}
+        {finding === "idle" ? (
+          <button className="btn block" onClick={findOpponent} disabled={busy || !token || !adultOk}>
+            ⚡ Play for {stake || "0"} {sym} — find an opponent
+          </button>
+        ) : finding === "searching" ? (
+          <button className="btn block" onClick={cancelFind}>
+            <span className="dot pulse" /> Finding an opponent for {stake} {sym}… tap to cancel
+          </button>
+        ) : (
+          <button className="btn block" disabled>
+            {step === "approving"
+              ? "Confirm in your wallet…"
+              : step === "staking"
+                ? "Placing your stake…"
+                : `Matched with ${foundOpp ? friendlyName(foundOpp) : "…"} — setting the table…`}
+          </button>
+        )}
+
+        <button
+          className="faint"
+          onClick={onCreate}
+          disabled={busy || !token || !adultOk || finding !== "idle"}
+          style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12.5, alignSelf: "center" }}
+        >
+          Prefer a private table? Create a match &amp; share the invite
         </button>
         {tok?.faucet && (
           <button
