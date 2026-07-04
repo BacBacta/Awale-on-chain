@@ -345,13 +345,24 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
       io.to(pair.joinerSocket).emit("cash-join", { matchId: msg.matchId });
     });
 
-    // the joiner's stake landed too — table is fully set, release both
+    // the joiner's stake landed too — table is fully set, release both.
+    // Also open the board PROACTIVELY: we know the join just confirmed, so
+    // don't wait for the event watchers to notice (that passive leg measured
+    // 68s in the e2e) — finalize the first-move flip and hydrate now.
     socket.on("cash-joined", () => {
       for (const [creator, pair] of cashPairs) {
         if (pair.joinerSocket === socket.id) {
           clearTimeout(pair.timer);
           cashPairs.delete(creator);
           io.to(creator).emit("cash-ready", { matchId: pair.matchId ?? "" });
+          if (pair.matchId && deps.openFromChain) {
+            const id = BigInt(pair.matchId);
+            // first call usually finalizes the flip; a couple of spaced
+            // retries cover the reveal-block wait and stale-node reads
+            void deps.openFromChain(id).catch(() => {});
+            setTimeout(() => void deps.openFromChain?.(id).catch(() => {}), 4000);
+            setTimeout(() => void deps.openFromChain?.(id).catch(() => {}), 10_000);
+          }
           return;
         }
       }

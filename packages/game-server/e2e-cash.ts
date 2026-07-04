@@ -21,6 +21,9 @@ const A_KEY = process.env.A_KEY as Hex; // funded operator key (test wallet A)
 
 const faucetAbi = parseAbi(["function mint(address to, uint256 amount)"]);
 const pub = createPublicClient({ chain: celoSepolia, transport: http(RPC) });
+const T0 = Date.now();
+const marks: Record<string, number> = {};
+const mark = (k: string) => (marks[k] = Date.now());
 const log = (m: string) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
 const fail = (m: string): never => {
   console.error(`FAIL: ${m}`);
@@ -103,6 +106,7 @@ async function main() {
   sb.on("connect", () => setTimeout(() => sb.emit("cash-queue", { address: B.address, stakeWei: STAKE.toString(), token: TOKEN }), 1500));
   const [ma, mb] = await Promise.all([matchedA, matchedB]);
   if (ma.role !== "create" || mb.role !== "join") fail(`unexpected roles: A=${ma.role} B=${mb.role}`);
+  mark("paired");
   log(`✓ paired — A creates, B joins (A sees opponent ${ma.opponent})`);
 
   // forno is load-balanced: a mined approve can be invisible to the next
@@ -132,6 +136,7 @@ async function main() {
   const jm = await joinMsg;
   if (jm.matchId !== matchId.toString()) fail(`B got wrong match id ${jm.matchId}`);
   log("✓ B received the match id from the server");
+  const readyMsg = until<{ matchId: string }>("A cash-ready", 120_000, (done) => sa.on("cash-ready", done));
 
   // --- 3. B (joiner): approve×100 + join ---
   const sessB = { key: generatePrivateKey() };
@@ -141,7 +146,11 @@ async function main() {
   await waitAllowance(B.address, STAKE);
   h = await withRetry("B join", () => wb.writeContract({ address: ESCROW, abi: matchEscrowAbi, functionName: "joinMatch", args: [matchId, sessBaddr] }));
   await receipt(h);
-  log("✓ B joined on-chain — both stakes locked");
+  sb.emit("cash-joined", {});
+  const rm = await readyMsg;
+  if (rm.matchId !== matchId.toString()) fail("cash-ready carried wrong id");
+  mark("ready");
+  log("✓ B joined on-chain — both stakes locked; creator released by cash-ready");
 
   // --- 4. both watch until the board opens (StartFinalized / hydration) ---
   type StateMsg = { state: { turn: number; over: boolean; pits: number[] }; ply: number };
@@ -155,6 +164,7 @@ async function main() {
   sb.emit("watch", { matchId: matchId.toString(), player: 1 });
   const [stA] = await Promise.all([boardA, boardB]);
   clearInterval(rewatch);
+  mark("board");
   const verifier = (await pub.readContract({ address: ESCROW, abi: parseAbi(["function verifier() view returns (address)"]), functionName: "verifier" })) as Address;
   log(`✓ board open on BOTH sockets — turn=${stA.state.turn}, verifier=${verifier}`);
 
@@ -218,10 +228,33 @@ async function main() {
   log(`✓ on-chain Resolved — winner received ${Number(gained) / 1e18} aUSD (expected 1.84)`);
   if (gained !== 1_840_000_000_000_000_000n) fail(`payout mismatch: ${gained}`);
 
+  // --- scenario B: joiner fails AFTER the creator staked → the still-
+  // connected creator must receive cash-abort (its cue to auto-refund) ---
+  log("scenario B: joiner failure → creator gets the abort cue…");
+  const sa2: Socket = io(SERVER, { transports: ["websocket"] });
+  const sb2: Socket = io(SERVER, { transports: ["websocket"] });
+  const m2a = until<{ role: string }>("A2 matched", 30_000, (done) => sa2.on("cash-matched", done));
+  const m2b = until<{ role: string }>("B2 matched", 30_000, (done) => sb2.on("cash-matched", done));
+  const STAKE2 = STAKE / 4n; // separate queue key
+  sa2.on("connect", () => sa2.emit("cash-queue", { address: A.address, stakeWei: STAKE2.toString(), token: TOKEN }));
+  sb2.on("connect", () => setTimeout(() => sb2.emit("cash-queue", { address: B.address, stakeWei: STAKE2.toString(), token: TOKEN }), 1200));
+  await Promise.all([m2a, m2b]);
+  const abortA = until<{ reason: string }>("A2 cash-abort", 20_000, (done) => sa2.on("cash-abort", done));
+  sa2.emit("cash-created", { matchId: "999999" }); // creator reports its (fictional) stake
+  sb2.emit("cash-failed", {}); // joiner's stake fails
+  const ab = await abortA;
+  log(`✓ creator received the abort cue while still connected ("${ab.reason.slice(0, 50)}…") — the app auto-cancels here`);
+  sa2.close();
+  sb2.close();
+
   clearTimeout(deadline);
   sa.close();
   sb.close();
-  console.log("\nPASS — full one-tap flow: queue → pair → create → join → board → move → resign → settleSigned → paid.");
+  const secs = (a: string, b: string) => ((marks[b] - marks[a]) / 1000).toFixed(0);
+  console.log("\n=== FRICTION REPORT ===");
+  console.log(`pair → both stakes confirmed: ${secs("paired", "ready")}s (approve pre-warmed in the app hides ~half)`);
+  console.log(`pair → board open both sides: ${secs("paired", "board")}s`);
+  console.log("\nPASS — full flow + joiner-failure abort cue: queue → pair → create → join → cash-ready → board → move → resign → settleSigned → paid.");
   process.exit(0);
 }
 
