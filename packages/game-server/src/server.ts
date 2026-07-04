@@ -70,6 +70,10 @@ export interface ServerDeps {
   /** Called when a casual quick-match ends, with both wallet addresses —
    *  feeds Elo + win/played counters on the durable player profile. */
   onResult?: (players: [Address, Address], winner: number) => void;
+  /** Advisory engine-assistance analysis for a finished rated game (P2-7):
+   *  called with both wallets + the transcript (startTurn, moves) so the runtime
+   *  can replay it and flag a profile. Fire-and-forget; never gates play/money. */
+  onEngineAnalysis?: (players: [Address, Address], startTurn: 0 | 1, moves: number[]) => void;
   /** Server-side rating lookup for matchmaking. The client also sends an elo
    *  in "queue", but that value is attacker-chosen — never trust it when the
    *  profile can answer. */
@@ -375,6 +379,13 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     if (players) {
       casualPlayers.delete(roomId);
       deps.onResult?.(players, state.winner);
+      // advisory engine-assist analysis (P2-7): rated quick-match is where a
+      // bot playing your moves would climb the ladder. Replay is off the hot
+      // path (fire-and-forget in the hook). Only where we know both wallets.
+      if (deps.onEngineAnalysis && gm) {
+        const t = gm.transcript();
+        deps.onEngineAnalysis(players, t.startTurn, t.moves);
+      }
     }
 
     if (isCasualMatch(matchId)) {

@@ -59,6 +59,7 @@ import { erc20Abi, matchEscrowAbi, tournamentEscrowAbi } from "../../protocol/sr
 import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
 import { InMemoryPersonhoodRegistry, RedisPersonhoodRegistry } from "./personhood/registry.js";
 import { verifyAndRegister } from "./personhood/gate.js";
+import { analyzeTranscript } from "./anticheat/engine-match.js";
 import type { PersonhoodRegistry } from "./personhood/types.js";
 
 const RPC_URL = required("RPC_URL");
@@ -250,6 +251,30 @@ function recordGameResult(players: [Address, Address], winner: number, pool: "li
     await profiles.save(recordQuestGame(n0, winner === 0));
     await profiles.save(recordQuestGame(n1, winner === 1));
   })().catch((e) => console.warn(`[profile] result not recorded: ${(e as Error).message}`));
+}
+
+// Advisory engine-assistance detection (P2-7). Replays a finished rated game
+// through the shared engine and, if a player's moves track the engine's top
+// choice above the calibrated threshold over enough non-forced plies, records
+// an ADVISORY flag on their profile + logs it. NO ban, NO settlement change:
+// money is already settled on-chain, and a strong human or a near-solved
+// endgame can inflate the match rate, so this is a review signal only.
+function analyzeEngineAssist(players: [Address, Address], startTurn: 0 | 1, moves: number[]): void {
+  void (async () => {
+    const report = analyzeTranscript(startTurn, moves); // default depth/threshold
+    for (let seat = 0; seat < 2; seat++) {
+      const r = report.perPlayer[seat];
+      if (!r.flagged) continue;
+      const addr = players[seat];
+      const p = (await profiles.get(addr)) ?? freshProfile(addr);
+      const flags = new Set(p.flags ?? []);
+      flags.add("engine-assist");
+      await profiles.save({ ...p, flags: [...flags] });
+      console.warn(
+        `[anticheat] ${addr} flagged engine-assist: ${(r.matchRate * 100).toFixed(0)}% top-move over ${r.considered} non-forced plies (advisory only)`,
+      );
+    }
+  })().catch((e) => console.warn(`[anticheat] analysis failed: ${(e as Error).message}`));
 }
 
 // correspondence games rate the eloAsync pool; live/cash use eloLive
@@ -849,6 +874,7 @@ const socketHandle = attachSocketIO(io, {
     console.log(`[match ${matchId}] over, winner=${winner} — awaiting result signatures`);
   },
   onResult: recordGameResult,
+  onEngineAnalysis: analyzeEngineAssist, // advisory engine-assist flag (P2-7)
   // matchmaking rates from the server profile — the client's "elo" field is
   // attacker-chosen and only a fallback for players with no profile yet
   eloOf: async (address) => (await profiles.get(address))?.elo ?? null,

@@ -40,6 +40,9 @@ export interface PlayerProfile {
   lastStreakNudge: string;
   /** UTC day a your-turn nudge was last sent (dedupe: max one per day). */
   lastTurnNudge: string;
+  /** Advisory anti-cheat / moderation flags (P2-7), e.g. "engine-assist".
+   *  For human review only — never gates play or money. */
+  flags?: string[];
 }
 
 export function dayKey(d = new Date()): string {

@@ -97,3 +97,19 @@ export function chooseMove(s: GameState, difficulty: Difficulty = "medium", rng:
   }
   return best[Math.floor(rng() * best.length)]; // random among equally-best
 }
+
+/**
+ * Rank the legal houses best-first by negamax value at fixed `depth`.
+ * DETERMINISTIC — no blunder rate, no rng — because it's the reference an
+ * anti-cheat comparison replays against (P2-7): a given position must always
+ * produce the same ranking. Ties are broken by house index so the order is
+ * total and stable. Returns houses (0..5, relative to the side to move); the
+ * first element is the engine's top choice.
+ */
+export function rankMoves(s: GameState, depth = 6): number[] {
+  const houses = legalHouses(s);
+  if (houses.length <= 1) return houses;
+  const scored = houses.map((h) => ({ h, score: -negamax(applyMove(s, h), depth - 1, -Infinity, Infinity) }));
+  scored.sort((a, b) => b.score - a.score || a.h - b.h); // value desc, then stable by house
+  return scored.map((x) => x.h);
+}
