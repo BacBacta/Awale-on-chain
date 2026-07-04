@@ -7,6 +7,7 @@ import type { Address } from "viem";
 import { GameHub } from "../src/hub.js";
 import { Matchmaker } from "../src/matchmaking.js";
 import { attachSocketIO, type ServerDeps, type SocketHandle } from "../src/server.js";
+import { InMemoryCashPairStore } from "../src/cash-pair-store.js";
 import { moveDigest } from "../src/eip712.js";
 
 const VERIFIER: Address = "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3";
@@ -341,6 +342,36 @@ describe("Socket.IO transport (integration)", () => {
       lastHandle.sweepQueues();
       await new Promise((r) => setTimeout(r, 50));
       expect(matched).toBe(false); // different bands = different pools
+    });
+
+    it("P1-4: a half-built cash pair persisted before a restart is aborted, and the creator is told to reclaim it", async () => {
+      const store = new InMemoryCashPairStore();
+      // simulate the state the previous process left behind: creator staked,
+      // match #77 created on-chain, then the server died
+      await store.put({
+        creator: acct0.address,
+        joiner: acct1.address,
+        stakeKey: `${TOKEN}:1000000000000000000`,
+        matchId: "77",
+        createdAt: 1,
+      });
+
+      // "restart": a fresh server sharing the same store, then boot recovery
+      const port = await start(new GameHub(), { eloOf: async () => 1200, cashPairStore: store });
+      const recovered = await lastHandle.recoverCashPairs();
+      expect(recovered).toBe(1);
+      expect(await store.list()).toHaveLength(0); // cleared — no repeat next boot
+
+      // the creator reconnects and tries to queue again → gets the abort with a
+      // reason pointing at the match to cancel for a refund
+      const a = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+      client = a;
+      const abort = new Promise<{ reason: string }>((r) => a.once("cash-abort", r));
+      await new Promise<void>((r) => a.on("connect", () => r()));
+      a.emit("cash-queue", { address: acct0.address, stakeWei: "1000000000000000000", token: TOKEN, v: 2 });
+      const msg = await abort;
+      expect(msg.reason).toMatch(/restart/i);
+      expect(msg.reason).toMatch(/Your matches|reclaim|cancel/i);
     });
   });
 });

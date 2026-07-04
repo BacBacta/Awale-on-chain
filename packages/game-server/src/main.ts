@@ -20,6 +20,7 @@ import { keeperActions, runKeeper, EscrowStatus, type KeeperMatch } from "./keep
 import { AsyncMatchService } from "./async-match.js";
 import { InMemoryMatchStore, type MatchStore } from "./persistence/store.js";
 import { RedisMatchStore } from "./persistence/redis-store.js";
+import { InMemoryCashPairStore, RedisCashPairStore, type CashPairStore } from "./cash-pair-store.js";
 import IORedis from "ioredis";
 import {
   InMemorySubscriptionStore,
@@ -201,6 +202,9 @@ let kv: { get(k: string): Promise<string | null>; set(k: string, v: string): Pro
     },
   };
 })();
+// Half-built cash pairs survive a restart so a mid-flight stake is never
+// stranded (P1-4): Redis-backed when configured, in-memory otherwise.
+let cashPairStore: CashPairStore = new InMemoryCashPairStore();
 if (process.env.REDIS_URL) {
   const redis = new IORedis(process.env.REDIS_URL, { family: 6, maxRetriesPerRequest: 5, lazyConnect: true });
   redis.on("error", (e) => console.warn(`[redis] ${e.message}`));
@@ -214,8 +218,9 @@ if (process.env.REDIS_URL) {
   ledgerStore = new RedisLedgerStore(redis);
   inboxStore = new RedisInboxStore(redis);
   personhood = new RedisPersonhoodRegistry(redis);
+  cashPairStore = new RedisCashPairStore(redis);
   kv = redis;
-  console.log("stores: redis (async, social, push subscriptions, profiles, league, ledger, inbox, personhood)");
+  console.log("stores: redis (async, social, push subscriptions, profiles, league, ledger, inbox, personhood, cash-pairs)");
 } else {
   console.log("stores: in-memory (set REDIS_URL for durability + scaling)");
 }
@@ -853,8 +858,18 @@ const socketHandle = attachSocketIO(io, {
   },
   // stake-band boundaries (P0-3) are computed at this token's decimals
   stakeDecimals: Number(process.env.STAKE_DECIMALS ?? "18"),
+  cashPairStore,
   openFromChain,
 });
+
+// Boot recovery (P1-4): abort any cash pair the previous process left
+// half-built, so a mid-flight stake is freed (the creator is told to reclaim
+// it next time they queue). Same spirit as the keeper re-arming on-chain
+// timeouts on boot.
+void socketHandle
+  .recoverCashPairs()
+  .then((n) => n > 0 && console.log(`[boot] recovered ${n} half-built cash pair(s) — players will be told to reclaim any mid-flight stake`))
+  .catch((e) => console.warn(`[boot] cash-pair recovery failed: ${(e as Error).message}`));
 
 // Periodic matchmaking sweep (P0-1): pairing was previously evaluated ONLY when
 // a player enqueued, so two people already waiting never matched as their

@@ -41,6 +41,7 @@ import type { Address, Hex } from "viem";
 import { GameHub } from "./hub.js";
 import { Matchmaker, type Pairing } from "./matchmaking.js";
 import { bandFor, resolveStake } from "./stake-bands.js";
+import { recoverCashPairs, type CashPairStore } from "./cash-pair-store.js";
 import { DEFAULT_ELO } from "./store/types.js";
 import type { Match, Transcript } from "./match.js";
 import type { SettlementCoordinator } from "./settlement-coordinator.js";
@@ -97,6 +98,10 @@ export interface ServerDeps {
   };
   /** Token decimals for stake-band boundaries (P0-3). Default 18 (aUSD). */
   stakeDecimals?: number;
+  /** Persist half-built cash pairs so a restart can abort them cleanly instead
+   *  of stranding the creator's staked funds (P1-4). Omit = no persistence
+   *  (single-node dev/tests behave exactly as before). */
+  cashPairStore?: CashPairStore;
 }
 
 /** A fresh, collision-free id for an off-chain casual match (also used for async). */
@@ -124,6 +129,11 @@ const DEFAULT_RECONNECT_GRACE_MS = 45_000;
 /** What `attachSocketIO` hands back so the runtime can drive periodic work.
  *  Additive: existing callers that ignore the return value still compile. */
 export interface SocketHandle {
+  /** Boot recovery (P1-4): abort every cash pair the previous process left
+   *  half-built (persisted in the cashPairStore), so a mid-flight stake is
+   *  never stranded by a restart. Returns how many were recovered. No-op
+   *  without a store. */
+  recoverCashPairs(): Promise<number>;
   /** Pair every currently-compatible pair of waiting players (P0-1). Called on
    *  an interval from main.ts so two people already in the queue match once
    *  their windows overlap, without needing a third arrival. */
@@ -170,8 +180,19 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
   >();
   const cashPairs = new Map<
     string, // creator's socket id
-    { joinerSocket: string; stakeKey: string; timer: ReturnType<typeof setTimeout>; matchId?: string }
+    {
+      joinerSocket: string;
+      stakeKey: string;
+      timer: ReturnType<typeof setTimeout>;
+      matchId?: string;
+      creator: Address;
+      joiner: Address;
+    }
   >();
+  // After a restart, cash pairs recovered from the store abort here; the reason
+  // is delivered to a player the next time they identify (cash-queue), so a
+  // creator whose stake was mid-flight is told to reclaim it. addr → reason.
+  const pendingCashAbort = new Map<string, string>();
 
   function cashPool(poolKey: string): Matchmaker {
     let pool = cashPools.get(poolKey);
@@ -216,7 +237,15 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     // give the pair 4 minutes to get both stakes on-chain (measured ~50s/tx on
     // forno + human wallet confirmations — 120s was provably too tight)
     const timer = setTimeout(() => abortCashPair(pairing.a.id, "Setup took too long — try again."), 240_000);
-    cashPairs.set(pairing.a.id, { joinerSocket: pairing.b.id, stakeKey, timer });
+    cashPairs.set(pairing.a.id, {
+      joinerSocket: pairing.b.id,
+      stakeKey,
+      timer,
+      creator: creatorMeta.address,
+      joiner: joinerMeta.address,
+    });
+    // persist the half-built pair so a restart can abort it and free the stake
+    void deps.cashPairStore?.put({ creator: creatorMeta.address, joiner: joinerMeta.address, stakeKey, createdAt: Date.now() });
     io.to(pairing.a.id).emit("cash-matched", { role: "create", opponent: joinerMeta.address, stakeWei });
     io.to(pairing.b.id).emit("cash-matched", { role: "join", opponent: creatorMeta.address, stakeWei });
   }
@@ -226,6 +255,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     if (!pair) return;
     clearTimeout(pair.timer);
     cashPairs.delete(creatorSocket);
+    void deps.cashPairStore?.remove(pair.creator);
     io.to(creatorSocket).emit("cash-abort", { reason });
     io.to(pair.joinerSocket).emit("cash-abort", { reason });
   }
@@ -413,6 +443,16 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     // don't meet, exactly as two v1 clients at different stakes wouldn't.)
     socket.on("cash-queue", async (msg: { address: Address; stakeWei: string; token: Address; v?: number }) => {
       if (!msg?.address || !msg.stakeWei || !msg.token) return;
+      // a pair we recovered+aborted on boot: tell this returning player now, so
+      // a creator whose stake was mid-flight can reclaim it (their Open match
+      // is cancellable from "Your matches"). Don't also queue them into a new
+      // search this tick — they act on the abort first.
+      const pending = pendingCashAbort.get(msg.address.toLowerCase());
+      if (pending !== undefined) {
+        pendingCashAbort.delete(msg.address.toLowerCase());
+        socket.emit("cash-abort", { reason: pending });
+        return;
+      }
       let stake: bigint;
       try {
         stake = BigInt(msg.stakeWei);
@@ -444,6 +484,9 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
       const pair = cashPairs.get(socket.id);
       if (!pair || !msg?.matchId) return;
       pair.matchId = msg.matchId;
+      // re-persist with the on-chain match id: now a restart's abort can point
+      // the creator at the exact match to cancel for a refund
+      void deps.cashPairStore?.put({ creator: pair.creator, joiner: pair.joiner, stakeKey: pair.stakeKey, matchId: msg.matchId, createdAt: Date.now() });
       // include token + stake so the joiner never has to READ the fresh match
       // from a possibly-stale RPC node before staking
       const [token, stakeWei] = pair.stakeKey.split(":");
@@ -459,6 +502,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
         if (pair.joinerSocket === socket.id) {
           clearTimeout(pair.timer);
           cashPairs.delete(creator);
+          void deps.cashPairStore?.remove(pair.creator); // both staked — no longer at risk
           io.to(creator).emit("cash-ready", { matchId: pair.matchId ?? "" });
           if (pair.matchId && deps.openFromChain) {
             const id = BigInt(pair.matchId);
@@ -629,6 +673,21 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
       for (const [poolKey, pool] of cashPools) {
         for (const pairing of pool.sweep()) startCashPairing(pairing, poolKey);
       }
+    },
+    async recoverCashPairs() {
+      const store = deps.cashPairStore;
+      if (!store) return 0;
+      // On boot, abort every half-built pair the previous process left behind.
+      // Delivery is deferred to the players' next cash-queue (their sockets
+      // died with the old process); both sides are flagged so the creator can
+      // reclaim a mid-flight stake and the joiner isn't left waiting.
+      return recoverCashPairs(store, (pair) => {
+        const reason = pair.matchId
+          ? "The server restarted mid-match — your stake is safe under Your matches; cancel it there for a refund."
+          : "The server restarted before your match was set — nothing was staked. Please try again.";
+        pendingCashAbort.set(pair.creator.toLowerCase(), reason);
+        pendingCashAbort.set(pair.joiner.toLowerCase(), reason);
+      });
     },
   };
 }
