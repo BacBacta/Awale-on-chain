@@ -399,7 +399,7 @@ export function LiveMatch({
           account: myAddress.current,
           token: joinOffer.token,
           spender: cfg.escrow,
-          amount: joinOffer.stake,
+          amount: joinOffer.stake * 100n, // headroom: one approval, ~100 games
           feeCurrency: feeCurrency.current,
         });
         await client.waitForTransactionReceipt({ hash: ah });

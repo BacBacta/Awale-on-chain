@@ -121,6 +121,32 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
   const socketSeats = new Map<string, { roomId: string; player: 0 | 1 }>();
   const graceUsed = new Set<string>(); // `${roomId}:${player}`
 
+  // Staked quick-match: pick a stake, tap once, get paired. The #1 friction
+  // in real two-player tests was both friends CREATING a match and waiting in
+  // parallel rooms forever. The server now pairs money players like casual
+  // ones — first waiter becomes the creator, second the joiner — and
+  // choreographs create → join so nobody ever sees a lobby, an invite link
+  // or a match number. (The chain still holds the money; the server only
+  // coordinates who does which transaction.)
+  interface CashWaiter {
+    socketId: string;
+    address: Address;
+  }
+  const cashQueues = new Map<string, CashWaiter>(); // `${token}:${stakeWei}` → who's waiting
+  const cashPairs = new Map<
+    string, // creator's socket id
+    { joinerSocket: string; stakeKey: string; timer: ReturnType<typeof setTimeout> }
+  >();
+
+  function abortCashPair(creatorSocket: string, reason: string): void {
+    const pair = cashPairs.get(creatorSocket);
+    if (!pair) return;
+    clearTimeout(pair.timer);
+    cashPairs.delete(creatorSocket);
+    io.to(creatorSocket).emit("cash-abort", { reason });
+    io.to(pair.joinerSocket).emit("cash-abort", { reason });
+  }
+
   function clearTurnClock(roomId: string): void {
     const t = turnClockTimers.get(roomId);
     if (t) {
@@ -283,6 +309,54 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
       },
     );
 
+    // --- staked quick-match choreography ---
+    socket.on("cash-queue", (msg: { address: Address; stakeWei: string; token: Address }) => {
+      if (!msg?.address || !msg.stakeWei || !msg.token) return;
+      const key = `${msg.token.toLowerCase()}:${msg.stakeWei}`;
+      const waiting = cashQueues.get(key);
+      if (waiting && waiting.socketId !== socket.id && waiting.address.toLowerCase() !== msg.address.toLowerCase()) {
+        cashQueues.delete(key);
+        // give the pair 2 minutes to get both stakes on-chain (two wallet
+        // confirmations on mobile take a while) before releasing them
+        const timer = setTimeout(
+          () => abortCashPair(waiting.socketId, "Setup took too long — try again."),
+          120_000,
+        );
+        cashPairs.set(waiting.socketId, { joinerSocket: socket.id, stakeKey: key, timer });
+        io.to(waiting.socketId).emit("cash-matched", { role: "create", opponent: msg.address, stakeWei: msg.stakeWei });
+        socket.emit("cash-matched", { role: "join", opponent: waiting.address, stakeWei: msg.stakeWei });
+      } else {
+        cashQueues.set(key, { socketId: socket.id, address: msg.address });
+      }
+    });
+
+    socket.on("cash-cancel", () => {
+      for (const [k, w] of cashQueues) if (w.socketId === socket.id) cashQueues.delete(k);
+    });
+
+    // the creator's stake landed — hand the joiner the real match id
+    socket.on("cash-created", (msg: { matchId: string }) => {
+      const pair = cashPairs.get(socket.id);
+      if (!pair || !msg?.matchId) return;
+      clearTimeout(pair.timer);
+      cashPairs.delete(socket.id);
+      io.to(pair.joinerSocket).emit("cash-join", { matchId: msg.matchId });
+    });
+
+    // either side's transaction failed — release both cleanly
+    socket.on("cash-failed", () => {
+      if (cashPairs.has(socket.id)) {
+        abortCashPair(socket.id, "Your opponent couldn't stake — searching again.");
+        return;
+      }
+      for (const [creator, pair] of cashPairs) {
+        if (pair.joinerSocket === socket.id) {
+          abortCashPair(creator, "Your opponent couldn't stake. Your match stays open — share the invite or cancel it.");
+          return;
+        }
+      }
+    });
+
     // subscribe to a match's room and get its current state + ply. Also arms
     // (or catches up) the move-clock — this is how a staked match's clock
     // starts, since it's opened directly by the on-chain listener, not here.
@@ -389,6 +463,12 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
 
     socket.on("disconnect", () => {
       hub.matchmaker.remove(socket.id);
+      // staked quick-match cleanup: leave the queue; abort a half-built pair
+      for (const [k, w] of cashQueues) if (w.socketId === socket.id) cashQueues.delete(k);
+      if (cashPairs.has(socket.id)) abortCashPair(socket.id, "Your opponent disconnected — searching again.");
+      for (const [creator, pair] of cashPairs) {
+        if (pair.joinerSocket === socket.id) abortCashPair(creator, "Your opponent disconnected. Your match stays open — share the invite or cancel it.");
+      }
       // The move-clock is driven by match state, not connection state — with
       // ONE exception: if the player on the move just dropped, push their
       // forfeit timer back once (their blitz bank keeps draining regardless).

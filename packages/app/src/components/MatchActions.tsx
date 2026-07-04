@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { readContract } from "viem/actions";
 import { parseEventLogs, type Address } from "viem";
+import { io, type Socket } from "socket.io-client";
 import { publicClient, effectiveFeeCurrency } from "../lib/minipay.js";
 import { createMatch, joinMatch, approve, parseStake, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
 import { createSessionKey, persistSession } from "../lib/session.js";
@@ -51,6 +52,12 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   const [joiningOpen, setJoiningOpen] = useState<bigint | null>(null);
   // one-time 18+ / responsible-play acknowledgement before the first stake
   const [adultOk, setAdultOk] = useState(false);
+  // one-tap staked matchmaking (the primary path): queue on the server with
+  // a stake, get paired, and the two clients run create → join between them.
+  // Nobody browses lobbies, shares links or reads match numbers anymore.
+  const [finding, setFinding] = useState<"idle" | "searching" | "pairing">("idle");
+  const [foundOpp, setFoundOpp] = useState<Address | null>(null);
+  const cashSock = useRef<Socket | null>(null);
 
   const busy = step === "approving" || step === "staking";
   const tok = TOKENS[sel];
@@ -181,7 +188,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     })) as bigint;
     if (allowance >= amount) return;
     setStep("approving");
-    const hash = await approve(wallet, { account, token, spender: cfg.escrow, amount, feeCurrency: feeCurrency });
+    // approve generous headroom once (≈100 games at this stake): one wallet
+    // popup instead of one per game — approvals were half the tx friction
+    const hash = await approve(wallet, { account, token, spender: cfg.escrow, amount: amount * 100n, feeCurrency: feeCurrency });
     await client.waitForTransactionReceipt({ hash });
   }
 
@@ -202,6 +211,104 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   function fail(e: unknown) {
     setError(humanizeError(e));
     setStep("error");
+  }
+
+  /** Stake + create on-chain; returns the real match id from the receipt. */
+  async function createOnChain(amount: bigint): Promise<bigint> {
+    const client = publicClient(cfg.rpcUrl, cfg.chainId);
+    const session = createSessionKey();
+    await ensureAllowance(client, token!, amount);
+    setStep("staking");
+    const hash = await createMatch(wallet, {
+      account,
+      escrow: cfg.escrow,
+      token: token!,
+      stake: amount,
+      session: session.address,
+      feeCurrency: feeCurrency,
+    });
+    const receipt = await client.waitForTransactionReceipt({ hash });
+    const created = parseEventLogs({ abi: matchEscrowAbi, logs: receipt.logs, eventName: "MatchCreated" });
+    const matchId = (created[0]?.args as { matchId?: bigint } | undefined)?.matchId;
+    if (matchId === undefined) throw new Error("match created but its id couldn't be read — check Your matches");
+    persistSession(matchId, session);
+    recordLocalMatch(matchId);
+    setTx(hash);
+    return matchId;
+  }
+
+  function validateStake(): bigint | null {
+    const amount = parseStake(stake || "0", dec);
+    if (amount <= 0n) {
+      setError("Enter an amount greater than zero.");
+      return null;
+    }
+    if (minStake > 0n && amount < minStake) {
+      setError(`Minimum is ${fmt(minStake, dec)} ${sym}.`);
+      return null;
+    }
+    if (balance !== null && amount > balance) {
+      setError(`Not enough ${sym} — add money to MiniPay first.`);
+      return null;
+    }
+    return amount;
+  }
+
+  /** THE button: find someone at this stake and start playing. */
+  function findOpponent() {
+    if (!token || busy || !adultOk || finding !== "idle") return;
+    setError(null);
+    const amount = validateStake();
+    if (amount === null) return;
+    setFinding("searching");
+    const sock = io(process.env.NEXT_PUBLIC_SERVER_URL ?? "", { transports: ["websocket"] });
+    cashSock.current = sock;
+    const bail = (msg: string | null) => {
+      sock.close();
+      cashSock.current = null;
+      setFinding("idle");
+      setFoundOpp(null);
+      if (msg) setError(msg);
+    };
+    sock.on("connect", () => sock.emit("cash-queue", { address: account, stakeWei: amount.toString(), token }));
+    sock.on("connect_error", () => bail("Network hiccup — please try again."));
+    sock.on("cash-abort", (m: { reason: string }) => bail(m.reason));
+    sock.on("cash-matched", async (m: { role: "create" | "join"; opponent: Address }) => {
+      setFoundOpp(m.opponent);
+      setFinding("pairing");
+      if (m.role !== "create") return; // joiner waits for cash-join
+      try {
+        const matchId = await createOnChain(amount);
+        sock.emit("cash-created", { matchId: matchId.toString() });
+        track("match_created");
+        window.location.href = `/play?match=${matchId.toString()}`;
+      } catch (e) {
+        sock.emit("cash-failed", {});
+        bail(null);
+        fail(e);
+      }
+    });
+    sock.on("cash-join", async (m: { matchId: string }) => {
+      try {
+        setStep("staking");
+        await joinOpenMatch({ wallet, account, cfg, matchId: BigInt(m.matchId), feeCurrency });
+        track("match_joined");
+        window.location.href = `/play?match=${m.matchId}`;
+      } catch (e) {
+        sock.emit("cash-failed", {});
+        setStep("idle");
+        bail(null);
+        fail(e);
+      }
+    });
+  }
+
+  function cancelFind() {
+    cashSock.current?.emit("cash-cancel");
+    cashSock.current?.close();
+    cashSock.current = null;
+    setFinding("idle");
+    setFoundOpp(null);
   }
 
   async function onCreate() {

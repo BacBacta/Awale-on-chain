@@ -87,7 +87,8 @@ export async function joinOpenMatch(opts: {
     args: [account, cfg.escrow],
   })) as bigint;
   if (allowance < m.stake) {
-    const ah = await approve(wallet, { account, token: m.token, spender: cfg.escrow, amount: m.stake, feeCurrency });
+    // generous headroom: one approval covers ~100 games at this stake
+    const ah = await approve(wallet, { account, token: m.token, spender: cfg.escrow, amount: m.stake * 100n, feeCurrency });
     await client.waitForTransactionReceipt({ hash: ah });
   }
   const jh = await joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, feeCurrency });
