@@ -59,6 +59,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   const [finding, setFinding] = useState<"idle" | "searching" | "pairing">("idle");
   const [autoFind, setAutoFind] = useState(false);
   const [foundOpp, setFoundOpp] = useState<Address | null>(null);
+  // set only when the server resolved the pair to a stake LOWER than we typed
+  // (matched inside a stake band, P0-3) — surfaced so the final amount is shown
+  const [matchedStake, setMatchedStake] = useState<bigint | null>(null);
   const cashSock = useRef<Socket | null>(null);
 
   const busy = step === "approving" || step === "staking";
@@ -311,10 +314,14 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       cashSock.current = null;
       setFinding("idle");
       setFoundOpp(null);
+      setMatchedStake(null);
       setStep("idle");
       if (msg) setError(msg);
     };
-    sock.on("connect", () => sock.emit("cash-queue", { address: account, stakeWei: amount.toString(), token }));
+    // v: 2 — this client creates the match at the RESOLVED (lower) stake the
+    // server sends in cash-matched, so the server may pair us within a stake
+    // band and settle at the lower amount (P0-3).
+    sock.on("connect", () => sock.emit("cash-queue", { address: account, stakeWei: amount.toString(), token, v: 2 }));
     sock.on("connect_error", () => bail("Network hiccup — please try again."));
     sock.on("cash-abort", async (m: { reason: string }) => {
       // our stake is already on the table? bring it home automatically —
@@ -335,13 +342,17 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       }
       bail(m.reason);
     });
-    sock.on("cash-matched", async (m: { role: "create" | "join"; opponent: Address }) => {
+    sock.on("cash-matched", async (m: { role: "create" | "join"; opponent: Address; stakeWei?: string }) => {
       setFoundOpp(m.opponent);
       setFinding("pairing");
+      // the server resolves the pair to the LOWER of the two stakes (P0-3);
+      // fall back to our own amount for an older server that omits it
+      const resolved = m.stakeWei ? BigInt(m.stakeWei) : amount;
+      if (resolved !== amount) setMatchedStake(resolved); // show the final amount
       if (m.role !== "create") return; // joiner waits for cash-join
       try {
-        await allowanceReady;
-        createdId = await createOnChain(amount);
+        await allowanceReady; // approved for our amount ≥ resolved, so it covers it
+        createdId = await createOnChain(resolved);
         sock.emit("cash-created", { matchId: createdId.toString() });
         track("match_created");
         setStep("idle"); // board opens when the opponent's stake confirms
@@ -665,7 +676,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
               ? "Confirm in your wallet…"
               : step === "staking"
                 ? "Placing your stake…"
-                : `Matched with ${foundOpp ? friendlyName(foundOpp) : "…"} — setting the table…`}
+                : matchedStake !== null
+                  ? `Matched — you both play for ${fmt(matchedStake, dec)} ${sym} (the lower stake)`
+                  : `Matched with ${foundOpp ? friendlyName(foundOpp) : "…"} — setting the table…`}
           </button>
         )}
 

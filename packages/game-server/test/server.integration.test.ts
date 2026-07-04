@@ -285,7 +285,7 @@ describe("Socket.IO transport (integration)", () => {
       expect(new Set([ra.role, rb.role])).toEqual(new Set(["create", "join"]));
     });
 
-    it("keeps separate buckets per stake — different amounts never cross", async () => {
+    it("v1 clients keep separate exact-stake buckets — different amounts never cross", async () => {
       const port = await start(new GameHub(), { eloOf: async () => 1200 });
       const [a, b] = connectQueued(port);
       client = a;
@@ -295,12 +295,52 @@ describe("Socket.IO transport (integration)", () => {
       b.on("cash-matched", () => (matched = true));
       await new Promise<void>((r) => a.on("connect", () => r()));
       await new Promise<void>((r) => b.on("connect", () => r()));
+      // no `v` field = old client = exact-stake bucket
       a.emit("cash-queue", { address: acct0.address, stakeWei: "1000000000000000000", token: TOKEN });
       b.emit("cash-queue", { address: acct1.address, stakeWei: "2000000000000000000", token: TOKEN });
       await new Promise((r) => setTimeout(r, 80));
       lastHandle.sweepQueues();
       await new Promise((r) => setTimeout(r, 50));
-      expect(matched).toBe(false); // different exact stakes = different pools (until P0-3 bands)
+      expect(matched).toBe(false); // different exact stakes never cross for old clients
+    });
+
+    it("P0-3: v2 clients pair across a stake band and BOTH settle at the lower stake", async () => {
+      const port = await start(new GameHub(), { eloOf: async () => 1200, stakeDecimals: 18 });
+      const [a, b] = connectQueued(port);
+      client = a;
+      client2 = b;
+      const NINE = "900000000000000000"; // 0.9
+      const TEN = "1000000000000000000"; // 1.0 — same "low" band as 0.9
+      const mA = new Promise<{ role: string; stakeWei: string }>((r) => a.once("cash-matched", r));
+      const mB = new Promise<{ role: string; stakeWei: string }>((r) => b.once("cash-matched", r));
+      await new Promise<void>((r) => a.on("connect", () => r()));
+      await new Promise<void>((r) => b.on("connect", () => r()));
+      a.emit("cash-queue", { address: acct0.address, stakeWei: TEN, token: TOKEN, v: 2 });
+      b.emit("cash-queue", { address: acct1.address, stakeWei: NINE, token: TOKEN, v: 2 });
+
+      const [ra, rb] = await Promise.all([mA, mB]);
+      expect(new Set([ra.role, rb.role])).toEqual(new Set(["create", "join"]));
+      // both told to play for the LOWER stake, 0.9 — nobody risks more than asked
+      expect(ra.stakeWei).toBe(NINE);
+      expect(rb.stakeWei).toBe(NINE);
+    });
+
+    it("v2 clients do NOT cross a band boundary (0.9 low vs 5 mid)", async () => {
+      const port = await start(new GameHub(), { eloOf: async () => 1200, stakeDecimals: 18 });
+      const [a, b] = connectQueued(port);
+      client = a;
+      client2 = b;
+      let matched = false;
+      a.on("cash-matched", () => (matched = true));
+      b.on("cash-matched", () => (matched = true));
+      await new Promise<void>((r) => a.on("connect", () => r()));
+      await new Promise<void>((r) => b.on("connect", () => r()));
+      a.emit("cash-queue", { address: acct0.address, stakeWei: "900000000000000000", token: TOKEN, v: 2 }); // low
+      b.emit("cash-queue", { address: acct1.address, stakeWei: "5000000000000000000", token: TOKEN, v: 2 }); // mid
+      await new Promise((r) => setTimeout(r, 80));
+      lastHandle.sweepQueues();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(matched).toBe(false); // different bands = different pools
     });
   });
 });

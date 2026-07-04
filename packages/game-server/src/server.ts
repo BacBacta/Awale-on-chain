@@ -40,6 +40,7 @@ import type { Server, Socket } from "socket.io";
 import type { Address, Hex } from "viem";
 import { GameHub } from "./hub.js";
 import { Matchmaker, type Pairing } from "./matchmaking.js";
+import { bandFor, resolveStake } from "./stake-bands.js";
 import { DEFAULT_ELO } from "./store/types.js";
 import type { Match, Transcript } from "./match.js";
 import type { SettlementCoordinator } from "./settlement-coordinator.js";
@@ -94,6 +95,8 @@ export interface ServerDeps {
     /** injectable clock — test-only; defaults to Date.now in production */
     now?: () => number;
   };
+  /** Token decimals for stake-band boundaries (P0-3). Default 18 (aUSD). */
+  stakeDecimals?: number;
 }
 
 /** A fresh, collision-free id for an off-chain casual match (also used for async). */
@@ -133,6 +136,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
   const BLITZ_CLOCK_MS = deps.blitzClockMs; // undefined = untimed total (per-move clock governs)
   const UNSETTLED_WATCHDOG_MS = deps.unsettledWatchdogMs ?? DEFAULT_UNSETTLED_WATCHDOG_MS;
   const RECONNECT_GRACE_MS = deps.reconnectGraceMs ?? DEFAULT_RECONNECT_GRACE_MS;
+  const STAKE_DECIMALS = deps.stakeDecimals ?? 18; // aUSD; overridden per deployment
 
   // One move-clock timer per live match, keyed by room id (matchId.toString()).
   const turnClockTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -160,7 +164,10 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
   // the per-socket stake/token needed to build the match and to find which
   // pool to remove a leaver from.
   const cashPools = new Map<string, Matchmaker>(); // poolKey → skill queue
-  const cashMeta = new Map<string, { address: Address; stakeWei: string; token: Address; poolKey: string }>();
+  const cashMeta = new Map<
+    string,
+    { address: Address; stake: bigint; token: Address; poolKey: string }
+  >();
   const cashPairs = new Map<
     string, // creator's socket id
     { joinerSocket: string; stakeKey: string; timer: ReturnType<typeof setTimeout>; matchId?: string }
@@ -192,16 +199,19 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
   /** Turn a cash pairing into the create→join choreography. The earlier waiter
    *  (`pairing.a`) is the creator — unchanged from the old first-waiter rule.
    *  The 240s timer and the auto-cancel/refund path are untouched; only WHO
-   *  gets paired changed. */
+   *  gets paired changed. The pair settles at the LOWER of the two requested
+   *  stakes (P0-3) — the creator creates the on-chain match at that amount and
+   *  the joiner stakes the same, both shown it in cash-matched. Within a v1
+   *  (exact) pool the two stakes are equal, so this collapses to the old
+   *  behaviour for old clients. */
   function startCashPairing(pairing: Pairing, _poolKey: string): void {
     const creatorMeta = cashMeta.get(pairing.a.id);
     const joinerMeta = cashMeta.get(pairing.b.id);
     cashMeta.delete(pairing.a.id);
     cashMeta.delete(pairing.b.id);
     if (!creatorMeta || !joinerMeta) return; // a socket vanished between pair and dispatch
-    // exact-stake bucket for now: both requested the same amount. P0-3 widens
-    // this to stake BANDS and settles at the lower of the two.
-    const stakeWei = creatorMeta.stakeWei;
+    const resolved = resolveStake(creatorMeta.stake, joinerMeta.stake);
+    const stakeWei = resolved.toString();
     const stakeKey = `${creatorMeta.token.toLowerCase()}:${stakeWei}`;
     // give the pair 4 minutes to get both stakes on-chain (measured ~50s/tx on
     // forno + human wallet confirmations — 120s was provably too tight)
@@ -393,15 +403,34 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     );
 
     // --- staked quick-match choreography ---
-    socket.on("cash-queue", async (msg: { address: Address; stakeWei: string; token: Address }) => {
+    // `v: 2` marks a client that CREATES the match at the resolved (lower)
+    // stake carried in cash-matched. Only such clients may be paired
+    // cross-stake within a band (P0-3): a v1 client ignores that field and
+    // creates at its own amount, so it stays in an EXACT-stake bucket where
+    // the resolved stake equals what it typed. (Transient during rollout: a
+    // v1 and a v2 wanting the same amount sit in different buckets until the
+    // v1 client refreshes to v2. No money is at risk — worst case is they
+    // don't meet, exactly as two v1 clients at different stakes wouldn't.)
+    socket.on("cash-queue", async (msg: { address: Address; stakeWei: string; token: Address; v?: number }) => {
       if (!msg?.address || !msg.stakeWei || !msg.token) return;
+      let stake: bigint;
+      try {
+        stake = BigInt(msg.stakeWei);
+      } catch {
+        return; // malformed amount
+      }
+      if (stake <= 0n) return;
       // re-queue idempotency: drop any prior waiting entry for this socket
       removeFromCash(socket.id);
-      const poolKey = `${msg.token.toLowerCase()}:${msg.stakeWei}`;
+      const token = msg.token.toLowerCase();
+      const poolKey =
+        msg.v && msg.v >= 2
+          ? `${token}:band:${bandFor(stake, STAKE_DECIMALS)}` // cross-stake within a band
+          : `${token}:exact:${msg.stakeWei}`; // old client: exact stake only
       // rating from the server profile only — never the client (there's no
       // client-supplied elo on cash-queue, and we wouldn't trust one)
       const elo = (deps.eloOf ? await deps.eloOf(msg.address).catch(() => null) : null) ?? DEFAULT_ELO;
-      cashMeta.set(socket.id, { address: msg.address, stakeWei: msg.stakeWei, token: msg.token, poolKey });
+      cashMeta.set(socket.id, { address: msg.address, stake, token: msg.token, poolKey });
       const pairing = cashPool(poolKey).enqueue({ id: socket.id, address: msg.address, elo });
       if (pairing) startCashPairing(pairing, poolKey);
     });

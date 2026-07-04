@@ -851,6 +851,8 @@ const socketHandle = attachSocketIO(io, {
     windowGrowthPerSec: Number(process.env.CASH_WINDOW_GROWTH ?? "15"),
     pairAnyoneAfterSec: Number(process.env.CASH_PAIR_ANYONE_AFTER_SEC ?? "120"),
   },
+  // stake-band boundaries (P0-3) are computed at this token's decimals
+  stakeDecimals: Number(process.env.STAKE_DECIMALS ?? "18"),
   openFromChain,
 });
 
