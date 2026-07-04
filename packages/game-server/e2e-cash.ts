@@ -29,7 +29,7 @@ const fail = (m: string): never => {
   console.error(`FAIL: ${m}`);
   process.exit(1);
 };
-const deadline = setTimeout(() => fail("global timeout (360s)"), 360_000);
+const deadline = setTimeout(() => fail("global timeout (600s)"), 600_000);
 
 // forno's load-balanced nodes lag each other — viem's receipt waiter can hit
 // a node that hasn't seen the block yet and throw. Poll tolerantly instead.
