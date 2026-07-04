@@ -9,7 +9,12 @@ import { track } from "../lib/analytics.js";
 import { Icon } from "./Icon.js";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
-const FALLBACK_MS = 12_000; // no human in this long → play the AI instead
+// AI-fallback window (P2-8): adaptive on the server's queue-depth hint. When
+// the pool is empty nobody is coming soon, so fall back fast; when a human
+// candidate is already waiting, give the pairing the full window. Never exceed
+// the max, never remove the fallback (the CTA must always yield a game).
+const FALLBACK_MAX_MS = 12_000;
+const FALLBACK_EMPTY_MS = 6_000;
 
 // Casual Quick Match: queue on the server's ELO matchmaker and jump into an
 // off-chain live game on pairing. If no opponent shows up, fall back to the AI
@@ -53,12 +58,21 @@ export function QuickMatch({ account, autoStart }: { account?: Address; autoStar
     const sock = io(SERVER_URL, { transports: ["websocket"] });
     sockRef.current = sock;
 
-    timerRef.current = setTimeout(toBot, FALLBACK_MS);
+    // start with the max window; the server's queue-ack may shorten it
+    timerRef.current = setTimeout(toBot, FALLBACK_MAX_MS);
 
     sock.on("connect", async () => {
       // pair on the player's real skill rating when they have one
       const elo = account ? ((await getProfile(account))?.elo ?? 1200) : 1200;
       sock.emit("queue", { address: account ?? session.address, elo, mode: "casual", sessionPubKey: session.address });
+    });
+    // adaptive fallback: empty pool ⇒ fall back at 6s; a candidate exists ⇒
+    // keep the full 12s. Only ever SHORTENS the wait, never extends past max.
+    sock.on("queue-ack", (msg: { depth: number }) => {
+      if (msg.depth === 0 && timerRef.current) {
+        clearTimer();
+        timerRef.current = setTimeout(toBot, FALLBACK_EMPTY_MS);
+      }
     });
     sock.on("matched", (msg: { matchId?: string; role?: 0 | 1; opponent?: string }) => {
       if (!msg.matchId) return;

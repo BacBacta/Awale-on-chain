@@ -458,7 +458,14 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
           elo: serverElo ?? msg.elo,
           sessionPubKey: msg.sessionPubKey,
         });
-        if (pairing) completePairing(pairing);
+        if (pairing) {
+          completePairing(pairing);
+        } else {
+          // tell the client how many OTHERS are already waiting in its pool, so
+          // it can time its AI fallback (P2-8): fall back fast when nobody's
+          // around, wait the full window when a human candidate exists.
+          socket.emit("queue-ack", { depth: Math.max(0, pool.queueSize - 1) });
+        }
       },
     );
 

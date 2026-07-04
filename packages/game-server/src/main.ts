@@ -60,6 +60,7 @@ import { SelfPersonhoodVerifier } from "./personhood/self-verifier.js";
 import { InMemoryPersonhoodRegistry, RedisPersonhoodRegistry } from "./personhood/registry.js";
 import { verifyAndRegister } from "./personhood/gate.js";
 import { analyzeTranscript } from "./anticheat/engine-match.js";
+import { LobbyService, type RawOpenMatch } from "./lobby-service.js";
 import type { PersonhoodRegistry } from "./personhood/types.js";
 
 const RPC_URL = required("RPC_URL");
@@ -395,12 +396,51 @@ function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
   });
 }
 
+// Open-match lobby served from the server (P2-8): scan the recent match window
+// ONCE (not once per client × 40 reads), cache it, and serve a ready view. The
+// client falls back to its own on-chain scan only if this is unreachable.
+const ZERO = "0x0000000000000000000000000000000000000000";
+const LOBBY_SCAN_LIMIT = Number(process.env.LOBBY_SCAN_LIMIT ?? "60");
+async function scanOpenMatches(): Promise<RawOpenMatch[]> {
+  const next = (await publicClient.readContract({ address: ESCROW, abi: matchEscrowAbi, functionName: "nextMatchId" })) as bigint;
+  const lo = next > BigInt(LOBBY_SCAN_LIMIT) ? next - BigInt(LOBBY_SCAN_LIMIT) : 1n;
+  const out: RawOpenMatch[] = [];
+  for (let id = next - 1n; id >= lo; id--) {
+    try {
+      const m = (await publicClient.readContract({ address: ESCROW, abi: matchEscrowAbi, functionName: "getMatch", args: [id] })) as {
+        token: Address;
+        stake: bigint;
+        player0: Address;
+        player1: Address;
+        status: number;
+        rakeBps: number;
+      };
+      if (Number(m.status) !== 1 || m.player1 !== ZERO) continue; // Open + unjoined only
+      out.push({ id, stake: m.stake, token: m.token, creator: m.player0, rakeBps: Number(m.rakeBps) });
+    } catch {
+      /* skip an unreadable id */
+    }
+  }
+  return out;
+}
+const lobby = new LobbyService(scanOpenMatches);
+void lobby.refreshSafe();
+const lobbyTimer = setInterval(() => void lobby.refreshSafe(), Number(process.env.LOBBY_REFRESH_MS ?? "20000"));
+if ("unref" in lobbyTimer) lobbyTimer.unref?.();
+
 const httpServer = createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
   const json = (code: number, payload: unknown) => {
     res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*" });
     res.end(JSON.stringify(payload));
   };
+
+  // --- open-match lobby (P2-8) ---
+  if (req.method === "GET" && url.pathname === "/lobby") {
+    const viewer = (url.searchParams.get("viewer") ?? undefined) as Address | undefined;
+    json(200, lobby.snapshot(viewer));
+    return;
+  }
 
   // --- async / correspondence play ---
   if (req.method === "POST" && url.pathname === "/async/create") {

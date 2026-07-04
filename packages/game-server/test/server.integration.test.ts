@@ -145,6 +145,28 @@ describe("Socket.IO transport (integration)", () => {
       expect(hub.matchmaker.queueSize).toBe(0);
     });
 
+    it("P2-8: a queued player gets a queue-ack with the pool depth (for the adaptive AI fallback)", async () => {
+      const hub = new GameHub();
+      const port = await start(hub, { casualCtx: { chainId: CHAIN_ID, verifier: VERIFIER } });
+      const a = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+      client = a;
+      // first player: empty pool ⇒ depth 0 ⇒ client will fall back fast
+      const ack1 = await new Promise<{ depth: number }>((resolve) => {
+        a.on("connect", () => a.emit("queue", { address: acct0.address, elo: 1000, mode: "casual", sessionPubKey: acct0.address }));
+        a.once("queue-ack", resolve);
+      });
+      expect(ack1.depth).toBe(0);
+
+      // a second, far-rated player can't pair (gap too big) → sees depth 1
+      const b = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+      client2 = b;
+      const ack2 = await new Promise<{ depth: number }>((resolve) => {
+        b.on("connect", () => b.emit("queue", { address: acct1.address, elo: 5000, mode: "casual", sessionPubKey: acct1.address }));
+        b.once("queue-ack", resolve);
+      });
+      expect(ack2.depth).toBe(1); // one other waiter present
+    });
+
     it("casual: forfeits whoever's turn-clock expires, opponent wins, result reaches the profile hook", async () => {
       const hub = new GameHub();
       const results: { players: [Address, Address]; winner: number }[] = [];

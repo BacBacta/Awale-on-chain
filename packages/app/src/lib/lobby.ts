@@ -35,8 +35,58 @@ interface RawMatch {
   rakeBps: number;
 }
 
-/** The most recent open (joinable) cash matches, newest first. */
+const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
+
+interface ServerLobby {
+  matches: { id: string; stake: string; token: Address; creator: Address; rakeBps: number; mine: boolean }[];
+  mine: { id: string; stake: string; token: Address; creator: Address; rakeBps: number; mine: boolean }[];
+  convergeTo: string | null;
+}
+
+/** The full lobby view. Server-first (one shared scan + server-side
+ *  convergence), falling back to the on-chain scan below when the server is
+ *  unreachable. `convergeTo` is the older equal-stake match this viewer should
+ *  join instead of waiting in a parallel room (null if none / from fallback). */
+export async function fetchLobby(
+  cfg: EscrowConfig,
+  account?: Address,
+  limit = 40,
+): Promise<{ matches: OpenMatch[]; convergeTo: bigint | null }> {
+  if (SERVER_URL) {
+    try {
+      const url = `${SERVER_URL.replace(/\/$/, "")}/lobby${account ? `?viewer=${account}` : ""}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      if (res.ok) {
+        const data = (await res.json()) as ServerLobby;
+        const toOpen = (x: ServerLobby["matches"][number]): OpenMatch => ({
+          id: BigInt(x.id),
+          stake: BigInt(x.stake),
+          token: x.token,
+          creator: x.creator,
+          rakeBps: x.rakeBps,
+          mine: x.mine,
+        });
+        return {
+          matches: [...data.matches.map(toOpen), ...data.mine.map(toOpen)],
+          convergeTo: data.convergeTo ? BigInt(data.convergeTo) : null,
+        };
+      }
+    } catch {
+      /* server unreachable — fall back to the on-chain scan */
+    }
+  }
+  return { matches: await scanOpenMatchesOnChain(cfg, account, limit), convergeTo: null };
+}
+
+/** The most recent open (joinable) cash matches, newest first. Server-first,
+ *  on-chain fallback. */
 export async function listOpenMatches(cfg: EscrowConfig, account?: Address, limit = 40): Promise<OpenMatch[]> {
+  return (await fetchLobby(cfg, account, limit)).matches;
+}
+
+/** The on-chain scan — the fallback when the server lobby is unreachable, and
+ *  the source the server itself uses. Up to `limit` sequential getMatch reads. */
+async function scanOpenMatchesOnChain(cfg: EscrowConfig, account?: Address, limit = 40): Promise<OpenMatch[]> {
   const client = publicClient(cfg.rpcUrl, cfg.chainId);
   const next = (await readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "nextMatchId" })) as bigint;
   const out: OpenMatch[] = [];
