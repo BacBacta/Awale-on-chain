@@ -240,19 +240,22 @@ console.log(`push: ${VAPID_PUBLIC && VAPID_PRIVATE ? "web-push enabled" : "log-o
 // Every finished two-player game (casual quick-match or async, by play or by
 // forfeit) lands here: Elo transfer + played/won counters on both profiles.
 // Fire-and-forget — a profile hiccup must never affect the game itself.
-function recordGameResult(players: [Address, Address], winner: number): void {
+function recordGameResult(players: [Address, Address], winner: number, pool: "live" | "async" = "live"): void {
   void (async () => {
     const [p0, p1] = await Promise.all([
       profiles.get(players[0]).then((p) => p ?? freshProfile(players[0])),
       profiles.get(players[1]).then((p) => p ?? freshProfile(players[1])),
     ]);
-    const [n0, n1] = applyGameResult(p0, p1, winner);
+    const [n0, n1] = applyGameResult(p0, p1, winner, pool);
     await profiles.save(recordQuestGame(n0, winner === 0));
     await profiles.save(recordQuestGame(n1, winner === 1));
   })().catch((e) => console.warn(`[profile] result not recorded: ${(e as Error).message}`));
 }
 
-const asyncMatches = new AsyncMatchService(matchStore, notifier, { onResult: recordGameResult });
+// correspondence games rate the eloAsync pool; live/cash use eloLive
+const asyncMatches = new AsyncMatchService(matchStore, notifier, {
+  onResult: (players, winner) => recordGameResult(players, winner, "async"),
+});
 
 // Weekly prize-pool league — the recurring money event. Credited from the
 // chain's MatchSettled events (see the watcher near the bottom), paid out and

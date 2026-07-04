@@ -122,11 +122,42 @@ describe("game results → Elo + counters", () => {
   });
 
   it("upsets transfer more than expected wins", () => {
-    const underdog = { ...freshProfile(A), elo: 1100 };
-    const favourite = { ...freshProfile(B), elo: 1400 };
-    const [u] = applyGameResult(underdog, favourite, 0); // underdog wins
-    const [f2] = applyGameResult({ ...freshProfile(A), elo: 1400 }, { ...freshProfile(B), elo: 1100 }, 0); // favourite wins
+    // set eloLive (the pool that drives the result), not just the legacy mirror
+    const rated = (addr: Address, r: number) => ({ ...freshProfile(addr), eloLive: r, elo: r });
+    const [u] = applyGameResult(rated(A, 1100), rated(B, 1400), 0); // underdog wins
+    const [f2] = applyGameResult(rated(A, 1400), rated(B, 1100), 0); // favourite wins
     expect(u.elo - 1100).toBeGreaterThan(f2.elo - 1400);
+  });
+
+  describe("rating pools + K schedule (P1-5)", () => {
+    const rated = (addr: Address, opts: Partial<ReturnType<typeof freshProfile>>) => ({ ...freshProfile(addr), ...opts });
+
+    it("a provisional player (K=40) gains 20 for beating an equal — not 16", () => {
+      const [w, l] = applyGameResult(freshProfile(A), freshProfile(B), 0); // 0 games ⇒ K=40
+      expect(w.eloLive - DEFAULT_ELO).toBe(20);
+      expect(DEFAULT_ELO - l.eloLive).toBe(20);
+    });
+
+    it("an established player (30+ games) uses K=32", () => {
+      const p0 = rated(A, { gamesPlayed: 50 });
+      const p1 = rated(B, { gamesPlayed: 50 });
+      const [w] = applyGameResult(p0, p1, 0);
+      expect(w.eloLive - DEFAULT_ELO).toBe(16); // 32 * 0.5
+    });
+
+    it("live games move eloLive (+ the legacy elo mirror) and leave eloAsync alone", () => {
+      const [w] = applyGameResult(freshProfile(A), freshProfile(B), 0, "live");
+      expect(w.eloLive).toBeGreaterThan(DEFAULT_ELO);
+      expect(w.elo).toBe(w.eloLive); // mirror
+      expect(w.eloAsync).toBe(DEFAULT_ELO); // untouched
+    });
+
+    it("async games move eloAsync and leave eloLive/elo (the leaderboard rating) alone", () => {
+      const [w] = applyGameResult(freshProfile(A), freshProfile(B), 0, "async");
+      expect(w.eloAsync).toBeGreaterThan(DEFAULT_ELO);
+      expect(w.eloLive).toBe(DEFAULT_ELO); // live leaderboard rating untouched by correspondence
+      expect(w.elo).toBe(DEFAULT_ELO);
+    });
   });
 });
 
@@ -171,6 +202,19 @@ function storeSuite(name: string, make: () => ProfileStore) {
       const got = await s.get(A);
       expect(got?.elo).toBe(DEFAULT_ELO);
       expect(got?.streak).toBe(3);
+    });
+
+    it("migrates an old single-elo record into both pools (P1-5)", async () => {
+      const s = make();
+      // a record from before the pool split: has `elo` but no eloLive/eloAsync
+      const legacy = { ...freshProfile(A), elo: 1360 } as Partial<ReturnType<typeof freshProfile>>;
+      delete legacy.eloLive;
+      delete legacy.eloAsync;
+      await s.save(legacy as ReturnType<typeof freshProfile>);
+      const got = await s.get(A);
+      expect(got?.eloLive).toBe(1360); // seeded from the old elo — no history lost
+      expect(got?.eloAsync).toBe(1360);
+      expect(got?.elo).toBe(1360); // mirror stays consistent
     });
   });
 }

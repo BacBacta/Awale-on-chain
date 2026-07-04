@@ -8,7 +8,7 @@
 // streak rule mirrors the client's: alive if last solved today or yesterday.
 
 import type { Address } from "viem";
-import { updateElo, scoreForWinner } from "../elo.js";
+import { updateEloPair, scoreForWinner, kFactor } from "../elo.js";
 import { DEFAULT_ELO } from "../store/types.js";
 import type { RedisLike } from "../persistence/redis-store.js";
 import type { QuestProgress } from "./quests.js"; // type-only: no runtime cycle
@@ -22,7 +22,15 @@ export interface PlayerProfile {
   lastSeenAt: number; // epoch ms
   gamesPlayed: number;
   gamesWon: number;
-  /** Skill rating over casual + async play (Elo, K=32, starts at DEFAULT_ELO). */
+  /** Live (blitz/quick-match/cash) skill rating. THE rating used for live +
+   *  cash matchmaking and the leaderboard. `elo` mirrors it for backward
+   *  compatibility (older readers, the client). */
+  eloLive: number;
+  /** Correspondence (async/"with a friend at your own pace") skill rating —
+   *  kept separate because the two formats reward different skills. */
+  eloAsync: number;
+  /** Deprecated single rating, kept as a mirror of eloLive so nothing reading
+   *  `elo` breaks. Migrated from old records as eloLive (see normalize). */
   elo: number;
   /** Today's daily-quest progress (see profile/quests.ts); rolls over by day. */
   quests: QuestProgress;
@@ -50,6 +58,8 @@ export function freshProfile(address: Address): PlayerProfile {
     lastSeenAt: Date.now(),
     gamesPlayed: 0,
     gamesWon: 0,
+    eloLive: DEFAULT_ELO,
+    eloAsync: DEFAULT_ELO,
     elo: DEFAULT_ELO,
     quests: { day: "", playGames: 0, winGames: 0, practiceGames: 0, solvedDaily: false, rewarded: false },
     perfectDays: 0,
@@ -60,7 +70,16 @@ export function freshProfile(address: Address): PlayerProfile {
 
 /** Fill any fields a record persisted by an older build doesn't have yet. */
 function normalize(address: Address, parsed: Partial<PlayerProfile>): PlayerProfile {
-  return { ...freshProfile(address), lastSeenAt: 0, ...parsed };
+  const base = { ...freshProfile(address), lastSeenAt: 0, ...parsed };
+  // Migration (P1-5): an old record has a single `elo` and no split pools —
+  // seed BOTH pools from it so no rating history is lost.
+  if (parsed.eloLive === undefined && typeof parsed.elo === "number") {
+    base.eloLive = parsed.elo;
+    base.eloAsync = parsed.eloAsync ?? parsed.elo;
+  }
+  // keep the legacy mirror consistent with the live pool
+  base.elo = base.eloLive;
+  return base;
 }
 
 /** The streak as it stands *right now*: 0 once a day has been missed. */
@@ -95,20 +114,35 @@ export function migrateLocalStreak(
 }
 
 /**
- * Apply a finished two-player game to both profiles: Elo transfer plus
- * played/won counters. `winner` uses the engine convention (0, 1, 2 = draw).
- * Pure — callers load, apply, save.
+ * Apply a finished two-player game to both profiles: Elo transfer (in the given
+ * pool, with the FIDE-inspired per-player K schedule) plus played/won counters.
+ * `winner` uses the engine convention (0, 1, 2 = draw). `pool` routes the rating
+ * to eloLive (blitz/quick-match/cash) or eloAsync (correspondence); the legacy
+ * `elo` mirror tracks eloLive. Pure — callers load, apply, save.
  */
 export function applyGameResult(
   p0: PlayerProfile,
   p1: PlayerProfile,
   winner: number,
+  pool: "live" | "async" = "live",
 ): [PlayerProfile, PlayerProfile] {
-  const [elo0, elo1] = updateElo(p0.elo, p1.elo, scoreForWinner(winner));
-  return [
-    { ...p0, elo: elo0, gamesPlayed: p0.gamesPlayed + 1, gamesWon: p0.gamesWon + (winner === 0 ? 1 : 0) },
-    { ...p1, elo: elo1, gamesPlayed: p1.gamesPlayed + 1, gamesWon: p1.gamesWon + (winner === 1 ? 1 : 0) },
-  ];
+  const r0 = pool === "live" ? p0.eloLive : p0.eloAsync;
+  const r1 = pool === "live" ? p1.eloLive : p1.eloAsync;
+  // K uses each player's own experience + current pool rating
+  const [n0, n1] = updateEloPair(r0, r1, scoreForWinner(winner), kFactor(p0.gamesPlayed, r0), kFactor(p1.gamesPlayed, r1));
+  const apply = (p: PlayerProfile, newRating: number, won: boolean): PlayerProfile => {
+    const updated: PlayerProfile = {
+      ...p,
+      gamesPlayed: p.gamesPlayed + 1,
+      gamesWon: p.gamesWon + (won ? 1 : 0),
+      eloLive: pool === "live" ? newRating : p.eloLive,
+      eloAsync: pool === "async" ? newRating : p.eloAsync,
+      elo: p.elo,
+    };
+    updated.elo = updated.eloLive; // legacy mirror = live rating
+    return updated;
+  };
+  return [apply(p0, n0, winner === 0), apply(p1, n1, winner === 1)];
 }
 
 /** Ranked slice of profiles for the skill leaderboard: players with at least

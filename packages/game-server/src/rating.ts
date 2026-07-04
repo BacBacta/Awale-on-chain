@@ -1,35 +1,39 @@
 // Applies a finished match to the leaderboard: updates both players' Elo and
 // win/loss/draw counters, and records the result.
 
-import { updateElo, scoreForWinner } from "./elo.js";
+import { updateEloPair, scoreForWinner, kFactor } from "./elo.js";
 import type { LeaderboardStore, MatchResult, PlayerRating } from "./store/types.js";
 
 export async function applyMatchResult(
   store: LeaderboardStore,
   r: MatchResult,
+  pool: "live" | "async" = "live",
 ): Promise<[PlayerRating, PlayerRating]> {
   const a = await store.getRating(r.player0);
   const b = await store.getRating(r.player1);
 
+  const ra = pool === "live" ? a.eloLive : a.eloAsync;
+  const rb = pool === "live" ? b.eloLive : b.eloAsync;
   const score0 = scoreForWinner(r.winner);
-  const [elo0, elo1] = updateElo(a.elo, b.elo, score0);
+  // FIDE-inspired per-player K (P1-5)
+  const [na, nb] = updateEloPair(ra, rb, score0, kFactor(a.games, ra), kFactor(b.games, rb));
 
-  const n0: PlayerRating = {
-    ...a,
-    elo: elo0,
-    games: a.games + 1,
-    wins: a.wins + (r.winner === 0 ? 1 : 0),
-    losses: a.losses + (r.winner === 1 ? 1 : 0),
-    draws: a.draws + (r.winner === 2 ? 1 : 0),
+  const bump = (p: PlayerRating, newRating: number, place: 0 | 1): PlayerRating => {
+    const next: PlayerRating = {
+      ...p,
+      eloLive: pool === "live" ? newRating : p.eloLive,
+      eloAsync: pool === "async" ? newRating : p.eloAsync,
+      elo: p.elo,
+      games: p.games + 1,
+      wins: p.wins + (r.winner === place ? 1 : 0),
+      losses: p.losses + (r.winner === (1 - place) ? 1 : 0),
+      draws: p.draws + (r.winner === 2 ? 1 : 0),
+    };
+    next.elo = next.eloLive; // legacy mirror
+    return next;
   };
-  const n1: PlayerRating = {
-    ...b,
-    elo: elo1,
-    games: b.games + 1,
-    wins: b.wins + (r.winner === 1 ? 1 : 0),
-    losses: b.losses + (r.winner === 0 ? 1 : 0),
-    draws: b.draws + (r.winner === 2 ? 1 : 0),
-  };
+  const n0 = bump(a, na, 0);
+  const n1 = bump(b, nb, 1);
 
   await store.setRating(n0);
   await store.setRating(n1);

@@ -32,9 +32,15 @@ CREATE INDEX IF NOT EXISTS ratings_elo_idx ON ratings (elo DESC);
 `;
 
 function rowToRating(row: Record<string, unknown>): PlayerRating {
+  // This (unwired) leaderboard keeps a single `elo` column; both pools are
+  // seeded from it on read (P1-5 migration). The live path — profile/store —
+  // persists eloLive/eloAsync separately in its JSON blob.
+  const elo = Number(row.elo);
   return {
     address: row.address as Address,
-    elo: Number(row.elo),
+    eloLive: elo,
+    eloAsync: elo,
+    elo,
     games: Number(row.games),
     wins: Number(row.wins),
     losses: Number(row.losses),
@@ -57,7 +63,7 @@ export class PgLeaderboardStore implements LeaderboardStore {
        ON CONFLICT (address) DO UPDATE SET
          elo = EXCLUDED.elo, games = EXCLUDED.games, wins = EXCLUDED.wins,
          losses = EXCLUDED.losses, draws = EXCLUDED.draws`,
-      [r.address.toLowerCase(), r.elo, r.games, r.wins, r.losses, r.draws],
+      [r.address.toLowerCase(), r.eloLive, r.games, r.wins, r.losses, r.draws],
     );
   }
 
