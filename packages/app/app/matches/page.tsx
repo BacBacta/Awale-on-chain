@@ -226,6 +226,12 @@ export default function Matches() {
       {openMatches.some((o) => !o.mine) && (
         <>
           <span className="section-label">Money matches — open to join</span>
+          {openMatches.some((o) => o.mine) && (
+            <span className="faint" style={{ fontSize: 11.5 }}>
+              This list is what YOU can join — your own open matches are under &ldquo;Your money matches&rdquo; below,
+              so it differs from player to player.
+            </span>
+          )}
           {openMatches.filter((o) => !o.mine).map((o) => {
             const { prize } = computePayout(o.stake, o.rakeBps);
             return (

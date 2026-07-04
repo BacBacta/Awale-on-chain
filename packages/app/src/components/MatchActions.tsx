@@ -12,6 +12,8 @@ import { computePayout, fmt, rakePct } from "../lib/money.js";
 import { humanizeError } from "../lib/errors.js";
 import { recordLocalMatch, listLocalMatches } from "../lib/matches.js";
 import { stakeTokens, preferredIndex } from "../lib/stakeTokens.js";
+import { listOpenMatches, joinOpenMatch, type OpenMatch } from "../lib/lobby.js";
+import { friendlyName } from "../lib/names.js";
 import { faucetAbi } from "../lib/league.js";
 import { track } from "../lib/analytics.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
@@ -40,6 +42,12 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   // a match of mine already waiting for an opponent — steer to sharing it
   // instead of quietly stacking a second stake in a second empty lobby
   const [alreadyOpen, setAlreadyOpen] = useState<bigint | null>(null);
+  // open matches from OTHER players — shown ABOVE the create form. The
+  // recurring failure mode of two friends playing "for money" was BOTH
+  // tapping create: two orphan stakes, nobody across the board. Surfacing
+  // the friend's fresh match here turns the second create into a join.
+  const [openToJoin, setOpenToJoin] = useState<OpenMatch[]>([]);
+  const [joiningOpen, setJoiningOpen] = useState<bigint | null>(null);
   // one-time 18+ / responsible-play acknowledgement before the first stake
   const [adultOk, setAdultOk] = useState(false);
 
@@ -76,6 +84,13 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         /* balance preview is best-effort */
       });
   }, [account, cfg]);
+
+  useEffect(() => {
+    listOpenMatches(cfg, account)
+      .then((list) => setOpenToJoin(list.filter((o) => !o.mine).slice(0, 3)))
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account]);
 
   useEffect(() => {
     track("money_open");
@@ -163,6 +178,20 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     setStep("approving");
     const hash = await approve(wallet, { account, token, spender: cfg.escrow, amount, feeCurrency: feeCurrency });
     await client.waitForTransactionReceipt({ hash });
+  }
+
+  async function onJoinOpen(matchId: bigint) {
+    if (busy || joiningOpen !== null || !adultOk) return;
+    setJoiningOpen(matchId);
+    setError(null);
+    try {
+      await joinOpenMatch({ wallet, account, cfg, matchId, feeCurrency });
+      track("match_joined");
+      window.location.href = `/play?match=${matchId.toString()}`;
+    } catch (e) {
+      setError(humanizeError(e));
+      setJoiningOpen(null);
+    }
   }
 
   function fail(e: unknown) {
@@ -301,6 +330,38 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
 
   return (
     <div className="stack">
+      {/* Join first: if someone (your friend, most likely) already has a
+          stake waiting, joining beats creating a second empty lobby */}
+      {openToJoin.length > 0 && (
+        <div className="card stack" style={{ gap: 8 }}>
+          <span className="h2">Join an open match</span>
+          {openToJoin.map((o) => {
+            const { prize: oPrize } = computePayout(o.stake, o.rakeBps);
+            return (
+              <div className="row" key={o.id.toString()} style={{ gap: 8 }}>
+                <span className="col" style={{ flex: 1, gap: 1 }}>
+                  <span style={{ fontWeight: 700, fontSize: 14 }}>{friendlyName(o.creator)}</span>
+                  <span className="faint">
+                    Stake {fmt(o.stake, dec)} · winner takes {fmt(oPrize, dec)} {sym}
+                  </span>
+                </span>
+                <button
+                  className="btn"
+                  style={{ padding: "8px 16px" }}
+                  onClick={() => onJoinOpen(o.id)}
+                  disabled={busy || joiningOpen !== null || !adultOk}
+                >
+                  {joiningOpen === o.id ? "Joining…" : "Join"}
+                </button>
+              </div>
+            );
+          })}
+          <span className="faint" style={{ fontSize: 11.5, textAlign: "center" }}>
+            or create your own below
+          </span>
+        </div>
+      )}
+
       {/* Create */}
       <div className="card stack" style={{ gap: 12 }}>
         <div className="row">
