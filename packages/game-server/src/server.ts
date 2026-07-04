@@ -96,6 +96,9 @@ export interface ServerDeps {
     /** injectable clock — test-only; defaults to Date.now in production */
     now?: () => number;
   };
+  /** Skill window for the RANKED pool (P1-6) — a strict-window pool, separate
+   *  from casual. Same shape as cashMatchmaking. */
+  rankedMatchmaking?: { baseWindow?: number; windowGrowthPerSec?: number; pairAnyoneAfterSec?: number; now?: () => number };
   /** Token decimals for stake-band boundaries (P0-3). Default 18 (aUSD). */
   stakeDecimals?: number;
   /** Persist half-built cash pairs so a restart can abort them cleanly instead
@@ -173,6 +176,16 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
   // two wallets that happen to name the same amount (P0-2). `cashMeta` carries
   // the per-socket stake/token needed to build the match and to find which
   // pool to remove a leaver from.
+  // Ranked shares nothing with casual: its own STRICT-window pool (P1-6), so
+  // rated play is fair even when the queue is thin. Casual keeps using
+  // hub.matchmaker (lenient).
+  const rankedMatchmaker = new Matchmaker({
+    baseWindow: deps.rankedMatchmaking?.baseWindow ?? 100,
+    windowGrowthPerSec: deps.rankedMatchmaking?.windowGrowthPerSec ?? 10,
+    pairAnyoneAfterSec: deps.rankedMatchmaking?.pairAnyoneAfterSec ?? 0,
+    windowRule: "strict",
+    now: deps.rankedMatchmaking?.now,
+  });
   const cashPools = new Map<string, Matchmaker>(); // poolKey → skill queue
   const cashMeta = new Map<
     string,
@@ -201,6 +214,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
         baseWindow: deps.cashMatchmaking?.baseWindow ?? 200,
         windowGrowthPerSec: deps.cashMatchmaking?.windowGrowthPerSec ?? 15,
         pairAnyoneAfterSec: deps.cashMatchmaking?.pairAnyoneAfterSec ?? 120,
+        windowRule: "strict", // money is zero-sum + raked — fairness first (P1-6)
         now: deps.cashMatchmaking?.now,
       });
       cashPools.set(poolKey, pool);
@@ -422,7 +436,12 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
         }
         // the profile's rating wins over whatever the client claimed
         const serverElo = deps.eloOf ? await deps.eloOf(msg.address).catch(() => null) : null;
-        const pairing = hub.queue({
+        // ranked is its own STRICT pool (P1-6): a fresh player is never dragged
+        // into a huge Elo gap just because the other side waited long. Casual
+        // stays lenient — speed over fairness, and the AI fallback caps its
+        // wait anyway.
+        const pool = mode === "ranked" ? rankedMatchmaker : hub.matchmaker;
+        const pairing = pool.enqueue({
           id: socket.id,
           address: msg.address,
           elo: serverElo ?? msg.elo,
@@ -636,6 +655,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
 
     socket.on("disconnect", () => {
       hub.matchmaker.remove(socket.id);
+      rankedMatchmaker.remove(socket.id);
       // staked quick-match cleanup: leave the queue; abort a half-built pair
       removeFromCash(socket.id);
       if (cashPairs.has(socket.id)) abortCashPair(socket.id, "Your opponent disconnected — searching again.");
@@ -667,7 +687,8 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
 
   return {
     sweepQueues() {
-      for (const pairing of hub.matchmaker.sweep()) completePairing(pairing);
+      for (const pairing of hub.matchmaker.sweep()) completePairing(pairing); // casual
+      for (const pairing of rankedMatchmaker.sweep()) completePairing(pairing); // ranked (strict)
       // cash pools too (P0-2): two waiters in the same stake bucket pair once
       // their skill windows overlap, without a third arrival
       for (const [poolKey, pool] of cashPools) {

@@ -344,6 +344,34 @@ describe("Socket.IO transport (integration)", () => {
       expect(matched).toBe(false); // different bands = different pools
     });
 
+    it("P1-6: the ranked pool is strict — a fresh player isn't dragged into a waiting veteran's huge window", async () => {
+      let clock = 0;
+      const elos: Record<string, number> = { [acct0.address.toLowerCase()]: 1000, [acct1.address.toLowerCase()]: 1400 };
+      const port = await start(new GameHub(), {
+        casualCtx: { chainId: CHAIN_ID, verifier: VERIFIER },
+        eloOf: async (a) => elos[a.toLowerCase()] ?? null,
+        rankedMatchmaking: { baseWindow: 100, windowGrowthPerSec: 10, now: () => clock },
+      });
+      const [a, b] = connectQueued(port);
+      client = a;
+      client2 = b;
+      let matched = false;
+      a.on("matched", () => (matched = true));
+      b.on("matched", () => (matched = true));
+      await new Promise<void>((r) => a.on("connect", () => r()));
+      await new Promise<void>((r) => b.on("connect", () => r()));
+      // veteran queues ranked, waits; window widens to cover 400
+      a.emit("queue", { address: acct0.address, elo: 1000, mode: "ranked", sessionPubKey: acct0.address });
+      await new Promise((r) => setTimeout(r, 40));
+      clock = 60_000;
+      // fresh arrival 400 away: veteran's window covers it, the newcomer's does not
+      b.emit("queue", { address: acct1.address, elo: 1400, mode: "ranked", sessionPubKey: acct1.address });
+      await new Promise((r) => setTimeout(r, 40));
+      lastHandle.sweepQueues();
+      await new Promise((r) => setTimeout(r, 40));
+      expect(matched).toBe(false); // strict pool protects the fresh player
+    });
+
     it("P1-4: a half-built cash pair persisted before a restart is aborted, and the creator is told to reclaim it", async () => {
       const store = new InMemoryCashPairStore();
       // simulate the state the previous process left behind: creator staked,

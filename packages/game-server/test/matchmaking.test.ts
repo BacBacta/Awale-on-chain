@@ -160,4 +160,47 @@ describe("Matchmaker", () => {
       expect(mm.sweep()).toEqual([]);
     });
   });
+
+  describe("windowRule strict vs lenient (P1-6: fairness of the widened window)", () => {
+    // A veteran waited a long time (huge window); a FRESH player just arrived
+    // (base window only). The gap fits the veteran's window but NOT the
+    // newcomer's. Lenient (max) drags the newcomer in; strict (min) protects
+    // them. Returns the enqueue result for the fresh arrival (enqueue is eager,
+    // so a lenient pool pairs right here).
+    function freshArrival(rule?: "strict" | "lenient") {
+      let clock = 0;
+      const mm = new Matchmaker({ baseWindow: 100, windowGrowthPerSec: 10, windowRule: rule, now: () => clock });
+      mm.enqueue({ id: "veteran", address: addr(1), elo: 1000 }); // enqueuedAt 0
+      clock = 60_000; // veteran's window = 100 + 600 = 700
+      const pairing = mm.enqueue({ id: "fresh", address: addr(2), elo: 1400 }); // 400 away
+      return { mm, pairing };
+    }
+
+    it("lenient pairs the mismatch (either window suffices)", () => {
+      const { pairing } = freshArrival("lenient");
+      expect(pairing).not.toBeNull();
+      expect(new Set([pairing!.a.id, pairing!.b.id])).toEqual(new Set(["veteran", "fresh"]));
+    });
+
+    it("strict refuses it (a fresh player isn't dragged into a huge gap)", () => {
+      const { mm, pairing } = freshArrival("strict");
+      expect(pairing).toBeNull();
+      expect(mm.sweep()).toEqual([]); // and the sweep won't force it either
+      expect(mm.queueSize).toBe(2); // both still waiting
+    });
+
+    it("defaults to lenient (unchanged casual behaviour)", () => {
+      const { pairing } = freshArrival(undefined);
+      expect(pairing).not.toBeNull();
+    });
+
+    it("strict still pairs when BOTH windows cover the gap", () => {
+      let clock = 0;
+      const mm = new Matchmaker({ baseWindow: 100, windowGrowthPerSec: 10, windowRule: "strict", now: () => clock });
+      mm.enqueue({ id: "a", address: addr(1), elo: 1000 });
+      mm.enqueue({ id: "b", address: addr(2), elo: 1200 }); // gap 200, both wait at base 100
+      clock = 20_000; // both windows = 300 ≥ 200
+      expect(mm.sweep()).toHaveLength(1);
+    });
+  });
 });
