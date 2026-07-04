@@ -13,6 +13,7 @@ import { humanizeError } from "../lib/errors.js";
 import { recordLocalMatch, listLocalMatches } from "../lib/matches.js";
 import { stakeTokens, preferredIndex } from "../lib/stakeTokens.js";
 import { listOpenMatches, joinOpenMatch, type OpenMatch } from "../lib/lobby.js";
+import { CrossMatchOffer } from "./CrossMatchOffer.js";
 import { friendlyName } from "../lib/names.js";
 import { faucetAbi } from "../lib/league.js";
 import { track } from "../lib/analytics.js";
@@ -86,9 +87,13 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   }, [account, cfg]);
 
   useEffect(() => {
-    listOpenMatches(cfg, account)
-      .then((list) => setOpenToJoin(list.filter((o) => !o.mine).slice(0, 3)))
-      .catch(() => {});
+    const refresh = () =>
+      listOpenMatches(cfg, account, 15)
+        .then((list) => setOpenToJoin(list.filter((o) => !o.mine).slice(0, 3)))
+        .catch(() => {});
+    void refresh();
+    const iv = setInterval(refresh, 12_000); // a friend may create AFTER we opened the panel
+    return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
 
@@ -303,6 +308,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   if (step === "done" && openId !== null) {
     return (
       <div className="stack animate-in">
+        {/* if the friend created their own room instead of joining ours,
+            converge on the older match automatically */}
+        <CrossMatchOffer myMatchId={openId} myStake={stakeRaw} wallet={wallet} account={account} cfg={cfg} feeCurrency={feeCurrency} />
         <div className="card stack" style={{ gap: 12, alignItems: "center", textAlign: "center" }}>
           <span className="chip positive">
             <span className="dot pulse" />

@@ -24,6 +24,7 @@ import { getEquipped, type EquippedSkin } from "../lib/skins.js";
 import { displayName } from "../lib/names.js";
 import { Icon } from "./Icon.js";
 import { SoundToggle } from "./SoundToggle.js";
+import { CrossMatchOffer } from "./CrossMatchOffer.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
@@ -642,6 +643,17 @@ export function LiveMatch({
         // created but nobody joined yet — say so, hand out the invite, and keep
         // the exit visible: money locked in a lobby with no way back is churn.
         // The polling effect above swaps the board in the moment someone joins.
+        <div className="stack" style={{ gap: 10 }}>
+        {wallet.current && myAddress.current && stakeInfo.current && escrowConfig() && (
+          <CrossMatchOffer
+            myMatchId={matchId}
+            myStake={stakeInfo.current.stake}
+            wallet={wallet.current}
+            account={myAddress.current}
+            cfg={escrowConfig()!}
+            feeCurrency={feeCurrency.current}
+          />
+        )}
         <div className="card stack animate-in" style={{ gap: 12, alignItems: "center", textAlign: "center" }}>
           <span className="chip positive">
             <span className="dot pulse" /> Waiting for an opponent
@@ -662,6 +674,7 @@ export function LiveMatch({
             No one joined yet — cancel anytime and your stake comes back in full.
           </span>
           {cancelError && <span className="muted" style={{ color: "var(--danger)" }}>{cancelError}</span>}
+        </div>
         </div>
       ) : (
         <div className="card">
