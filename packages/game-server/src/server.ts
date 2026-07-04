@@ -135,7 +135,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
   const cashQueues = new Map<string, CashWaiter>(); // `${token}:${stakeWei}` → who's waiting
   const cashPairs = new Map<
     string, // creator's socket id
-    { joinerSocket: string; stakeKey: string; timer: ReturnType<typeof setTimeout> }
+    { joinerSocket: string; stakeKey: string; timer: ReturnType<typeof setTimeout>; matchId?: string }
   >();
 
   function abortCashPair(creatorSocket: string, reason: string): void {
@@ -335,13 +335,26 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
       for (const [k, w] of cashQueues) if (w.socketId === socket.id) cashQueues.delete(k);
     });
 
-    // the creator's stake landed — hand the joiner the real match id
+    // the creator's stake landed — hand the joiner the real match id. The
+    // pair stays open until the joiner confirms: if they fail, the creator
+    // is still connected and can auto-cancel for an instant refund.
     socket.on("cash-created", (msg: { matchId: string }) => {
       const pair = cashPairs.get(socket.id);
       if (!pair || !msg?.matchId) return;
-      clearTimeout(pair.timer);
-      cashPairs.delete(socket.id);
+      pair.matchId = msg.matchId;
       io.to(pair.joinerSocket).emit("cash-join", { matchId: msg.matchId });
+    });
+
+    // the joiner's stake landed too — table is fully set, release both
+    socket.on("cash-joined", () => {
+      for (const [creator, pair] of cashPairs) {
+        if (pair.joinerSocket === socket.id) {
+          clearTimeout(pair.timer);
+          cashPairs.delete(creator);
+          io.to(creator).emit("cash-ready", { matchId: pair.matchId ?? "" });
+          return;
+        }
+      }
     });
 
     // either side's transaction failed — release both cleanly

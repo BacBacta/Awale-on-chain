@@ -9,6 +9,7 @@ import { joinMatch, approve, type WriteClient, type EscrowConfig } from "./escro
 import { createSessionKey, persistSession } from "./session.js";
 import { recordLocalMatch } from "./matches.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
+import { confirmTx, sendWithStaleRetry } from "./tx.js";
 
 const ZERO = "0x0000000000000000000000000000000000000000";
 const STATUS_OPEN = 1;
@@ -89,9 +90,9 @@ export async function joinOpenMatch(opts: {
   if (allowance < m.stake) {
     // generous headroom: one approval covers ~100 games at this stake
     const ah = await approve(wallet, { account, token: m.token, spender: cfg.escrow, amount: m.stake * 100n, feeCurrency });
-    await client.waitForTransactionReceipt({ hash: ah });
+    await confirmTx(client, ah, "Approval");
     // load-balanced RPC: wait until the allowance is visible before joining
-    for (let i = 0; i < 12; i++) {
+    for (let i = 0; i < 8; i++) {
       const seen = (await readContract(client, {
         address: m.token,
         abi: erc20Abi,
@@ -102,9 +103,10 @@ export async function joinOpenMatch(opts: {
       await new Promise((r) => setTimeout(r, 1500));
     }
   }
-  const jh = await joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, feeCurrency });
-  // wait until the join is MINED: callers redirect to the match screen next,
-  // and reading the match pre-confirmation shows the old state — the joiner
-  // was greeted with "this wallet is not a player in this match"
-  await client.waitForTransactionReceipt({ hash: jh });
+  const jh = await sendWithStaleRetry("stake", () =>
+    joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, feeCurrency }),
+  );
+  // wait until the join is MINED (tolerantly): callers redirect to the match
+  // screen next, and a pre-confirmation read shows the old state
+  await confirmTx(client, jh, "Your stake");
 }

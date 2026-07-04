@@ -6,7 +6,7 @@ import { readContract } from "viem/actions";
 import { parseEventLogs, type Address } from "viem";
 import { io, type Socket } from "socket.io-client";
 import { publicClient, effectiveFeeCurrency } from "../lib/minipay.js";
-import { createMatch, joinMatch, approve, parseStake, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
+import { createMatch, joinMatch, approve, cancelMatch, parseStake, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
 import { createSessionKey, persistSession } from "../lib/session.js";
 import { receiptDeeplink } from "../lib/deeplinks.js";
 import { computePayout, fmt, rakePct } from "../lib/money.js";
@@ -18,6 +18,7 @@ import { CrossMatchOffer } from "./CrossMatchOffer.js";
 import { friendlyName } from "../lib/names.js";
 import { faucetAbi } from "../lib/league.js";
 import { track } from "../lib/analytics.js";
+import { confirmTx, sendWithStaleRetry } from "../lib/tx.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
 
 const TOKENS = stakeTokens();
@@ -56,6 +57,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   // a stake, get paired, and the two clients run create → join between them.
   // Nobody browses lobbies, shares links or reads match numbers anymore.
   const [finding, setFinding] = useState<"idle" | "searching" | "pairing">("idle");
+  const [autoFind, setAutoFind] = useState(false);
   const [foundOpp, setFoundOpp] = useState<Address | null>(null);
   const cashSock = useRef<Socket | null>(null);
 
@@ -110,6 +112,16 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       setAdultOk(localStorage.getItem("awale_adult") === "1");
     } catch {
       /* storage unavailable — keep the checkbox visible */
+    }
+    // rematch deep-link: /?money=1&stake=X&auto=1 — both players tap Rematch,
+    // both auto-queue at the same stake, the matchmaker reunites them
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const st = params.get("stake");
+      if (st && Number(st) > 0) setStake(st);
+      if (params.get("auto") === "1") setAutoFind(true);
+    } catch {
+      /* ignore */
     }
   }, []);
 
@@ -191,11 +203,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     // approve generous headroom once (≈100 games at this stake): one wallet
     // popup instead of one per game — approvals were half the tx friction
     const hash = await approve(wallet, { account, token, spender: cfg.escrow, amount: amount * 100n, feeCurrency: feeCurrency });
-    await client.waitForTransactionReceipt({ hash });
-    // the RPC is load-balanced: a mined approve can be invisible to the next
-    // node for a few seconds — staking then reverts with "insufficient
-    // allowance". Wait until the allowance is actually readable.
-    for (let i = 0; i < 12; i++) {
+    await confirmTx(client, hash, "Approval");
+    // best-effort visibility wait; the stake itself also retries on staleness
+    for (let i = 0; i < 8; i++) {
       const seen = (await readContract(client, {
         address: token,
         abi: erc20Abi,
@@ -226,21 +236,26 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     setStep("error");
   }
 
-  /** Stake + create on-chain; returns the real match id from the receipt. */
+  /** Stake + create on-chain; returns the real match id from the receipt.
+   *  Resilient by design: the stake send retries through stale-node reverts
+   *  and the receipt wait tolerates lagging nodes — these two were the
+   *  "Placing your stake fails 4 times out of 5". */
   async function createOnChain(amount: bigint): Promise<bigint> {
     const client = publicClient(cfg.rpcUrl, cfg.chainId);
     const session = createSessionKey();
     await ensureAllowance(client, token!, amount);
     setStep("staking");
-    const hash = await createMatch(wallet, {
-      account,
-      escrow: cfg.escrow,
-      token: token!,
-      stake: amount,
-      session: session.address,
-      feeCurrency: feeCurrency,
-    });
-    const receipt = await client.waitForTransactionReceipt({ hash });
+    const hash = await sendWithStaleRetry("stake", () =>
+      createMatch(wallet, {
+        account,
+        escrow: cfg.escrow,
+        token: token!,
+        stake: amount,
+        session: session.address,
+        feeCurrency: feeCurrency,
+      }),
+    );
+    const receipt = await confirmTx(client, hash, "Your stake");
     const created = parseEventLogs({ abi: matchEscrowAbi, logs: receipt.logs, eventName: "MatchCreated" });
     const matchId = (created[0]?.args as { matchId?: bigint } | undefined)?.matchId;
     if (matchId === undefined) throw new Error("match created but its id couldn't be read — check Your matches");
@@ -267,13 +282,28 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     return amount;
   }
 
-  /** THE button: find someone at this stake and start playing. */
+  /** THE button: find someone at this stake and start playing.
+   *
+   *  Friction-cuts baked in:
+   *  - the token approval runs DURING the search, not after pairing — by the
+   *    time an opponent appears, the slowest transaction is already done;
+   *  - the creator only leaves for the board once the joiner's stake is
+   *    CONFIRMED (cash-ready) — if the joiner fails, the creator is still
+   *    here and auto-cancels for an instant refund, no button hunting;
+   *  - every send retries through stale-node reverts, every receipt wait
+   *    tolerates lagging nodes (the old "fails 4 times out of 5"). */
   function findOpponent() {
     if (!token || busy || !adultOk || finding !== "idle") return;
     setError(null);
     const amount = validateStake();
     if (amount === null) return;
     setFinding("searching");
+    const client = publicClient(cfg.rpcUrl, cfg.chainId);
+    // warm the approval while we search — hides ~30-60s of setup time
+    const allowanceReady = ensureAllowance(client, token, amount);
+    allowanceReady.catch(() => {});
+    let createdId: bigint | null = null;
+
     const sock = io(process.env.NEXT_PUBLIC_SERVER_URL ?? "", { transports: ["websocket"] });
     cashSock.current = sock;
     const bail = (msg: string | null) => {
@@ -281,40 +311,72 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       cashSock.current = null;
       setFinding("idle");
       setFoundOpp(null);
+      setStep("idle");
       if (msg) setError(msg);
     };
     sock.on("connect", () => sock.emit("cash-queue", { address: account, stakeWei: amount.toString(), token }));
     sock.on("connect_error", () => bail("Network hiccup — please try again."));
-    sock.on("cash-abort", (m: { reason: string }) => bail(m.reason));
+    sock.on("cash-abort", async (m: { reason: string }) => {
+      // our stake is already on the table? bring it home automatically —
+      // a player must never have to hunt for a refund button
+      if (createdId !== null) {
+        const id = createdId;
+        createdId = null;
+        try {
+          const ch = await cancelMatch(wallet, { account, escrow: cfg.escrow, matchId: id, feeCurrency });
+          await confirmTx(client, ch, "Refund");
+          bail(`${m.reason} Your stake came back automatically.`);
+        } catch {
+          bail(`${m.reason} Auto-refund didn't go through — your stake is under Your matches.`);
+        }
+        return;
+      }
+      bail(m.reason);
+    });
     sock.on("cash-matched", async (m: { role: "create" | "join"; opponent: Address }) => {
       setFoundOpp(m.opponent);
       setFinding("pairing");
       if (m.role !== "create") return; // joiner waits for cash-join
       try {
-        const matchId = await createOnChain(amount);
-        sock.emit("cash-created", { matchId: matchId.toString() });
+        await allowanceReady;
+        createdId = await createOnChain(amount);
+        sock.emit("cash-created", { matchId: createdId.toString() });
         track("match_created");
-        window.location.href = `/play?match=${matchId.toString()}`;
+        setStep("idle"); // board opens when the opponent's stake confirms
       } catch (e) {
         sock.emit("cash-failed", {});
         bail(null);
         fail(e);
       }
     });
+    // the opponent's stake confirmed — table fully set, go play
+    sock.on("cash-ready", (m: { matchId: string }) => {
+      window.location.href = `/play?match=${m.matchId || createdId?.toString()}`;
+    });
     sock.on("cash-join", async (m: { matchId: string }) => {
       try {
+        await allowanceReady; // warmed during the search
         setStep("staking");
         await joinOpenMatch({ wallet, account, cfg, matchId: BigInt(m.matchId), feeCurrency });
+        sock.emit("cash-joined", {});
         track("match_joined");
         window.location.href = `/play?match=${m.matchId}`;
       } catch (e) {
         sock.emit("cash-failed", {});
-        setStep("idle");
         bail(null);
         fail(e);
       }
     });
   }
+
+  // fire the deep-linked rematch search once the panel is ready
+  useEffect(() => {
+    if (autoFind && adultOk && finding === "idle" && token) {
+      setAutoFind(false);
+      findOpponent();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFind, adultOk, token, stake]);
 
   function cancelFind() {
     cashSock.current?.emit("cash-cancel");

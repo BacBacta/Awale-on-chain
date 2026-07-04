@@ -24,6 +24,7 @@ export function GameOverlay({
   payout,
   stats,
   saveHref,
+  rematchHref,
   onPlayAgain,
   onShare,
 }: {
@@ -34,6 +35,9 @@ export function GameOverlay({
   stats?: { mine: number; opp: number; moves?: number };
   /** When set (cash win), offer to grow a share of the winnings in the League. */
   saveHref?: string;
+  /** One-tap revenge: both players tap it, both auto-queue at the same stake,
+   *  the matchmaker reunites them — no lobby, no setup. */
+  rematchHref?: string;
   onPlayAgain: () => void;
   onShare?: () => void;
 }) {
@@ -141,12 +145,17 @@ export function GameOverlay({
       )}
 
       <div className="stack" style={{ width: "100%", maxWidth: 260, marginTop: 8 }}>
+        {rematchHref && (
+          <a className="btn block" href={rematchHref}>
+            <Icon name="versus" size={17} /> Rematch — same stake
+          </a>
+        )}
         {saveHref && (
           <a className="btn block" href={saveHref} style={{ background: "linear-gradient(180deg, #f7d27a, var(--gold))" }}>
             <Icon name="trophy" size={17} /> You scored league points — see the race
           </a>
         )}
-        <button className={`btn ${saveHref ? "secondary" : ""} block`} onClick={onPlayAgain}>
+        <button className={`btn ${saveHref || rematchHref ? "secondary" : ""} block`} onClick={onPlayAgain}>
           <Icon name="play" size={17} /> Play again
         </button>
         {onShare && (

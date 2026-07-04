@@ -709,6 +709,13 @@ export function LiveMatch({
             // they're now in, not a Season page whose deposits may be closed
             outcome === 0 && stakeInfo.current ? "/compete" : undefined
           }
+          rematchHref={
+            casualRole != null
+              ? "/?play=1" // casual: straight back into quick match
+              : stakeInfo.current
+                ? `/?money=1&auto=1&stake=${fmt(stakeInfo.current.stake, STAKE_DECIMALS)}`
+                : undefined
+          }
           onPlayAgain={() => (window.location.href = "/")}
           onShare={() =>
             shareResult({
