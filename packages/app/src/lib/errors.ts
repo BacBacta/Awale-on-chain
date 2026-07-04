@@ -23,6 +23,7 @@ const RULES: Rule[] = [
   { test: /window closed|match expired|not finalized|start not finalized/i, msg: "This match window has closed." },
   { test: /stake|rake too high|window too short/i, msg: "Invalid match parameters." },
   // network
+  { test: /invalid chain id|chain mismatch|does not match the target chain/i, msg: "Wrong network — switch your wallet to Celo and retry." },
   { test: /nonce|replacement transaction underpriced/i, msg: "Network was busy — please retry." },
   { test: /timeout|timed out|network|fetch failed|econnreset/i, msg: "Network hiccup — please retry." },
 ];

@@ -240,7 +240,7 @@ export function LiveMatch({
         setTheirClaim({ winner: roleRef.current === 0 ? 1 : 0, transcript: msg.transcript });
       });
       sock.on("error", (e: { message: string }) => setStatus(e.message));
-    })().catch((e) => setStatus((e as Error).message));
+    })().catch((e) => setStatus(humanizeError(e)));
 
     return () => {
       sock?.close();
@@ -299,7 +299,7 @@ export function LiveMatch({
       });
       setClaimStatus("Claim submitted — payout in ~10 min unless disputed.");
     } catch (e) {
-      setClaimStatus(`Claim failed: ${(e as Error).message}`);
+      setClaimStatus(`Claim failed: ${humanizeError(e)}`);
     }
   }
 
@@ -326,7 +326,7 @@ export function LiveMatch({
       setClaimStatus("Dispute submitted.");
       setTheirClaim(null);
     } catch (e) {
-      setClaimStatus(`Dispute failed: ${(e as Error).message}`);
+      setClaimStatus(`Dispute failed: ${humanizeError(e)}`);
     }
   }
 
