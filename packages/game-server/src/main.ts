@@ -844,6 +844,13 @@ const socketHandle = attachSocketIO(io, {
   // matchmaking rates from the server profile — the client's "elo" field is
   // attacker-chosen and only a fallback for players with no profile yet
   eloOf: async (address) => (await profiles.get(address))?.elo ?? null,
+  // cash quick-match is Elo-aware now (P0-2): sharks-vs-fish on a raked pot is
+  // the biggest churn risk, so beginners don't get fed to the best player.
+  cashMatchmaking: {
+    baseWindow: Number(process.env.CASH_BASE_WINDOW ?? "200"),
+    windowGrowthPerSec: Number(process.env.CASH_WINDOW_GROWTH ?? "15"),
+    pairAnyoneAfterSec: Number(process.env.CASH_PAIR_ANYONE_AFTER_SEC ?? "120"),
+  },
   openFromChain,
 });
 

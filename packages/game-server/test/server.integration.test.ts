@@ -222,4 +222,85 @@ describe("Socket.IO transport (integration)", () => {
       expect(claimFired).toBe(false);
     });
   });
+
+  describe("cash matchmaking (P0-2: skill-aware pairing)", () => {
+    const TOKEN: Address = "0x1111111111111111111111111111111111111111";
+    const STAKE = "1000000000000000000"; // 1 token
+
+    function connectQueued(port: number): [Socket, Socket] {
+      const a = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+      const b = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+      return [a, b];
+    }
+
+    it("pairs two close-rated players in the same stake bucket immediately", async () => {
+      const elos: Record<string, number> = { [acct0.address.toLowerCase()]: 1200, [acct1.address.toLowerCase()]: 1210 };
+      const port = await start(new GameHub(), { eloOf: async (a) => elos[a.toLowerCase()] ?? null });
+      const [a, b] = connectQueued(port);
+      client = a;
+      client2 = b;
+
+      const mA = new Promise<{ role: string; stakeWei: string }>((r) => a.once("cash-matched", r));
+      const mB = new Promise<{ role: string; stakeWei: string }>((r) => b.once("cash-matched", r));
+      await new Promise<void>((r) => a.on("connect", () => r()));
+      await new Promise<void>((r) => b.on("connect", () => r()));
+      a.emit("cash-queue", { address: acct0.address, stakeWei: STAKE, token: TOKEN });
+      b.emit("cash-queue", { address: acct1.address, stakeWei: STAKE, token: TOKEN });
+
+      const [ra, rb] = await Promise.all([mA, mB]);
+      expect(new Set([ra.role, rb.role])).toEqual(new Set(["create", "join"]));
+      expect(ra.stakeWei).toBe(STAKE);
+    });
+
+    it("does NOT pair a novice with a shark inside the base window, but DOES after the liquidity backstop", async () => {
+      let clock = 0;
+      const elos: Record<string, number> = { [acct0.address.toLowerCase()]: 1200, [acct1.address.toLowerCase()]: 2000 };
+      const port = await start(new GameHub(), {
+        eloOf: async (a) => elos[a.toLowerCase()] ?? null,
+        // growth 0 so only the backstop can bridge the 800-gap — deterministic
+        cashMatchmaking: { baseWindow: 200, windowGrowthPerSec: 0, pairAnyoneAfterSec: 120, now: () => clock },
+      });
+      const [a, b] = connectQueued(port);
+      client = a;
+      client2 = b;
+
+      let matched = false;
+      a.on("cash-matched", () => (matched = true));
+      b.on("cash-matched", () => (matched = true));
+      await new Promise<void>((r) => a.on("connect", () => r()));
+      await new Promise<void>((r) => b.on("connect", () => r()));
+      a.emit("cash-queue", { address: acct0.address, stakeWei: STAKE, token: TOKEN });
+      b.emit("cash-queue", { address: acct1.address, stakeWei: STAKE, token: TOKEN });
+      await new Promise((r) => setTimeout(r, 80));
+      lastHandle.sweepQueues();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(matched).toBe(false); // 800 Elo apart, inside base window: never for money
+
+      // wait out the liquidity backstop — now a game beats no game
+      const mA = new Promise<{ role: string }>((r) => a.once("cash-matched", r));
+      const mB = new Promise<{ role: string }>((r) => b.once("cash-matched", r));
+      clock = 120_000;
+      lastHandle.sweepQueues();
+      const [ra, rb] = await Promise.all([mA, mB]);
+      expect(new Set([ra.role, rb.role])).toEqual(new Set(["create", "join"]));
+    });
+
+    it("keeps separate buckets per stake — different amounts never cross", async () => {
+      const port = await start(new GameHub(), { eloOf: async () => 1200 });
+      const [a, b] = connectQueued(port);
+      client = a;
+      client2 = b;
+      let matched = false;
+      a.on("cash-matched", () => (matched = true));
+      b.on("cash-matched", () => (matched = true));
+      await new Promise<void>((r) => a.on("connect", () => r()));
+      await new Promise<void>((r) => b.on("connect", () => r()));
+      a.emit("cash-queue", { address: acct0.address, stakeWei: "1000000000000000000", token: TOKEN });
+      b.emit("cash-queue", { address: acct1.address, stakeWei: "2000000000000000000", token: TOKEN });
+      await new Promise((r) => setTimeout(r, 80));
+      lastHandle.sweepQueues();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(matched).toBe(false); // different exact stakes = different pools (until P0-3 bands)
+    });
+  });
 });

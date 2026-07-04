@@ -22,6 +22,11 @@ export interface Pairing {
 export interface MatchmakerOptions {
   baseWindow?: number; // initial acceptable Elo gap
   windowGrowthPerSec?: number; // how much the window widens per second waited
+  /** Backstop so fairness degrades to LIQUIDITY, never deadlock: once a waiter
+   *  has waited this long, it may be paired regardless of Elo gap. 0 = never
+   *  (the historical behaviour; a lone waiter can wait forever). Cash/ranked
+   *  pools set this so a thin player base still eventually gets a game. */
+  pairAnyoneAfterSec?: number;
   now?: () => number; // injectable clock for testing
 }
 
@@ -29,11 +34,13 @@ export class Matchmaker {
   private readonly waiting: Player[] = [];
   private readonly baseWindow: number;
   private readonly growth: number;
+  private readonly pairAnyoneAfterSec: number;
   private readonly now: () => number;
 
   constructor(opts: MatchmakerOptions = {}) {
     this.baseWindow = opts.baseWindow ?? 100;
     this.growth = opts.windowGrowthPerSec ?? 10;
+    this.pairAnyoneAfterSec = opts.pairAnyoneAfterSec ?? 0;
     this.now = opts.now ?? Date.now;
   }
 
@@ -41,17 +48,25 @@ export class Matchmaker {
     return this.waiting.length;
   }
 
+  private waitedSec(p: Player): number {
+    return Math.max(0, (this.now() - p.enqueuedAt) / 1000);
+  }
+
   /** Acceptable Elo gap for a player given how long they've waited. */
   private window(p: Player): number {
-    const waitedSec = Math.max(0, (this.now() - p.enqueuedAt) / 1000);
-    return this.baseWindow + this.growth * waitedSec;
+    return this.baseWindow + this.growth * this.waitedSec(p);
   }
 
   /** Whether two waiters may be paired given their gap and how long each waited.
    *  Single source of truth for both `enqueue` and `sweep`. Lenient (the
    *  historical rule): a pair is fine if it fits EITHER widened window.
-   *  (P1-6 will make this pluggable strict/lenient.) */
+   *  (P1-6 will make this pluggable strict/lenient.) The pairAnyoneAfterSec
+   *  backstop overrides the gap once either side has waited long enough — so a
+   *  thin cash pool degrades to liquidity instead of deadlocking. */
   private accepts(gap: number, a: Player, b: Player): boolean {
+    if (this.pairAnyoneAfterSec > 0 && Math.max(this.waitedSec(a), this.waitedSec(b)) >= this.pairAnyoneAfterSec) {
+      return true;
+    }
     return gap <= Math.max(this.window(a), this.window(b));
   }
 

@@ -134,4 +134,30 @@ describe("Matchmaker", () => {
       expect(mm.queueSize).toBe(3);
     });
   });
+
+  describe("pairAnyoneAfterSec backstop (P0-2: cash/ranked liquidity floor)", () => {
+    it("respects the base window, then pairs a huge gap once the backstop is reached", () => {
+      // growth 0 so the ONLY way this gap ever pairs is the backstop — isolates it
+      let clock = 0;
+      const mm = new Matchmaker({ baseWindow: 200, windowGrowthPerSec: 0, pairAnyoneAfterSec: 120, now: () => clock });
+      mm.enqueue({ id: "novice", address: addr(1), elo: 1200 });
+      mm.enqueue({ id: "shark", address: addr(2), elo: 2000 }); // gap 800 ≫ window 200
+      expect(mm.sweep()).toEqual([]); // t=0: no pair
+      clock = 119_000;
+      expect(mm.sweep()).toEqual([]); // just before the backstop: still no pair
+      clock = 120_000;
+      const pairs = mm.sweep(); // backstop reached: liquidity beats fairness
+      expect(pairs).toHaveLength(1);
+      expect(new Set([pairs[0].a.id, pairs[0].b.id])).toEqual(new Set(["novice", "shark"]));
+    });
+
+    it("is off by default (0): a lone huge gap never pairs", () => {
+      let clock = 0;
+      const mm = new Matchmaker({ baseWindow: 200, windowGrowthPerSec: 0, now: () => clock });
+      mm.enqueue({ id: "novice", address: addr(1), elo: 1200 });
+      mm.enqueue({ id: "shark", address: addr(2), elo: 2000 });
+      clock = 10 * 60_000; // 10 minutes
+      expect(mm.sweep()).toEqual([]);
+    });
+  });
 });

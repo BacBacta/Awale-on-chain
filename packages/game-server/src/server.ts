@@ -39,7 +39,8 @@
 import type { Server, Socket } from "socket.io";
 import type { Address, Hex } from "viem";
 import { GameHub } from "./hub.js";
-import type { Pairing } from "./matchmaking.js";
+import { Matchmaker, type Pairing } from "./matchmaking.js";
+import { DEFAULT_ELO } from "./store/types.js";
 import type { Match, Transcript } from "./match.js";
 import type { SettlementCoordinator } from "./settlement-coordinator.js";
 import { assertPersonhood } from "./personhood/gate.js";
@@ -81,6 +82,18 @@ export interface ServerDeps {
    *  default 45s). Their blitz bank keeps draining — this only prevents the
    *  *forfeit* from landing while they can't see the board. */
   reconnectGraceMs?: number;
+  /** Skill window for CASH quick-match (P0-2). Money is zero-sum and raked, so
+   *  a beginner vs the server's best player is the product's biggest churn
+   *  risk — cash pairing now respects Elo. Defaults: base gap 200, +15/s,
+   *  pair-anyone backstop at 120s (fairness degrades to liquidity, never
+   *  deadlock, on a thin player base). */
+  cashMatchmaking?: {
+    baseWindow?: number;
+    windowGrowthPerSec?: number;
+    pairAnyoneAfterSec?: number;
+    /** injectable clock — test-only; defaults to Date.now in production */
+    now?: () => number;
+  };
 }
 
 /** A fresh, collision-free id for an off-chain casual match (also used for async). */
@@ -141,15 +154,62 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
   // choreographs create → join so nobody ever sees a lobby, an invite link
   // or a match number. (The chain still holds the money; the server only
   // coordinates who does which transaction.)
-  interface CashWaiter {
-    socketId: string;
-    address: Address;
-  }
-  const cashQueues = new Map<string, CashWaiter>(); // `${token}:${stakeWei}` → who's waiting
+  // Cash pairing now runs through the SAME Matchmaker as casual — one logical
+  // queue per stake bucket — so it respects Elo instead of pairing the first
+  // two wallets that happen to name the same amount (P0-2). `cashMeta` carries
+  // the per-socket stake/token needed to build the match and to find which
+  // pool to remove a leaver from.
+  const cashPools = new Map<string, Matchmaker>(); // poolKey → skill queue
+  const cashMeta = new Map<string, { address: Address; stakeWei: string; token: Address; poolKey: string }>();
   const cashPairs = new Map<
     string, // creator's socket id
     { joinerSocket: string; stakeKey: string; timer: ReturnType<typeof setTimeout>; matchId?: string }
   >();
+
+  function cashPool(poolKey: string): Matchmaker {
+    let pool = cashPools.get(poolKey);
+    if (!pool) {
+      pool = new Matchmaker({
+        baseWindow: deps.cashMatchmaking?.baseWindow ?? 200,
+        windowGrowthPerSec: deps.cashMatchmaking?.windowGrowthPerSec ?? 15,
+        pairAnyoneAfterSec: deps.cashMatchmaking?.pairAnyoneAfterSec ?? 120,
+        now: deps.cashMatchmaking?.now,
+      });
+      cashPools.set(poolKey, pool);
+    }
+    return pool;
+  }
+
+  /** Drop a socket from whatever cash pool it's waiting in (re-queue, cancel,
+   *  disconnect). Idempotent. */
+  function removeFromCash(socketId: string): void {
+    const meta = cashMeta.get(socketId);
+    if (!meta) return;
+    cashMeta.delete(socketId);
+    cashPools.get(meta.poolKey)?.remove(socketId);
+  }
+
+  /** Turn a cash pairing into the create→join choreography. The earlier waiter
+   *  (`pairing.a`) is the creator — unchanged from the old first-waiter rule.
+   *  The 240s timer and the auto-cancel/refund path are untouched; only WHO
+   *  gets paired changed. */
+  function startCashPairing(pairing: Pairing, _poolKey: string): void {
+    const creatorMeta = cashMeta.get(pairing.a.id);
+    const joinerMeta = cashMeta.get(pairing.b.id);
+    cashMeta.delete(pairing.a.id);
+    cashMeta.delete(pairing.b.id);
+    if (!creatorMeta || !joinerMeta) return; // a socket vanished between pair and dispatch
+    // exact-stake bucket for now: both requested the same amount. P0-3 widens
+    // this to stake BANDS and settles at the lower of the two.
+    const stakeWei = creatorMeta.stakeWei;
+    const stakeKey = `${creatorMeta.token.toLowerCase()}:${stakeWei}`;
+    // give the pair 4 minutes to get both stakes on-chain (measured ~50s/tx on
+    // forno + human wallet confirmations — 120s was provably too tight)
+    const timer = setTimeout(() => abortCashPair(pairing.a.id, "Setup took too long — try again."), 240_000);
+    cashPairs.set(pairing.a.id, { joinerSocket: pairing.b.id, stakeKey, timer });
+    io.to(pairing.a.id).emit("cash-matched", { role: "create", opponent: joinerMeta.address, stakeWei });
+    io.to(pairing.b.id).emit("cash-matched", { role: "join", opponent: creatorMeta.address, stakeWei });
+  }
 
   function abortCashPair(creatorSocket: string, reason: string): void {
     const pair = cashPairs.get(creatorSocket);
@@ -333,30 +393,20 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     );
 
     // --- staked quick-match choreography ---
-    socket.on("cash-queue", (msg: { address: Address; stakeWei: string; token: Address }) => {
+    socket.on("cash-queue", async (msg: { address: Address; stakeWei: string; token: Address }) => {
       if (!msg?.address || !msg.stakeWei || !msg.token) return;
-      const key = `${msg.token.toLowerCase()}:${msg.stakeWei}`;
-      const waiting = cashQueues.get(key);
-      if (waiting && waiting.socketId !== socket.id && waiting.address.toLowerCase() !== msg.address.toLowerCase()) {
-        cashQueues.delete(key);
-        // give the pair 4 minutes to get both stakes on-chain: the e2e run
-        // measured ~50s per player on forno for approve+stake — with human
-        // wallet confirmations on top, 120s was provably too tight
-        const timer = setTimeout(
-          () => abortCashPair(waiting.socketId, "Setup took too long — try again."),
-          240_000,
-        );
-        cashPairs.set(waiting.socketId, { joinerSocket: socket.id, stakeKey: key, timer });
-        io.to(waiting.socketId).emit("cash-matched", { role: "create", opponent: msg.address, stakeWei: msg.stakeWei });
-        socket.emit("cash-matched", { role: "join", opponent: waiting.address, stakeWei: msg.stakeWei });
-      } else {
-        cashQueues.set(key, { socketId: socket.id, address: msg.address });
-      }
+      // re-queue idempotency: drop any prior waiting entry for this socket
+      removeFromCash(socket.id);
+      const poolKey = `${msg.token.toLowerCase()}:${msg.stakeWei}`;
+      // rating from the server profile only — never the client (there's no
+      // client-supplied elo on cash-queue, and we wouldn't trust one)
+      const elo = (deps.eloOf ? await deps.eloOf(msg.address).catch(() => null) : null) ?? DEFAULT_ELO;
+      cashMeta.set(socket.id, { address: msg.address, stakeWei: msg.stakeWei, token: msg.token, poolKey });
+      const pairing = cashPool(poolKey).enqueue({ id: socket.id, address: msg.address, elo });
+      if (pairing) startCashPairing(pairing, poolKey);
     });
 
-    socket.on("cash-cancel", () => {
-      for (const [k, w] of cashQueues) if (w.socketId === socket.id) cashQueues.delete(k);
-    });
+    socket.on("cash-cancel", () => removeFromCash(socket.id));
 
     // the creator's stake landed — hand the joiner the real match id. The
     // pair stays open until the joiner confirms: if they fail, the creator
@@ -514,7 +564,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     socket.on("disconnect", () => {
       hub.matchmaker.remove(socket.id);
       // staked quick-match cleanup: leave the queue; abort a half-built pair
-      for (const [k, w] of cashQueues) if (w.socketId === socket.id) cashQueues.delete(k);
+      removeFromCash(socket.id);
       if (cashPairs.has(socket.id)) abortCashPair(socket.id, "Your opponent disconnected — searching again.");
       for (const [creator, pair] of cashPairs) {
         if (pair.joinerSocket === socket.id) abortCashPair(creator, "Your opponent disconnected. Your match stays open — share the invite or cancel it.");
@@ -545,6 +595,11 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
   return {
     sweepQueues() {
       for (const pairing of hub.matchmaker.sweep()) completePairing(pairing);
+      // cash pools too (P0-2): two waiters in the same stake bucket pair once
+      // their skill windows overlap, without a third arrival
+      for (const [poolKey, pool] of cashPools) {
+        for (const pairing of pool.sweep()) startCashPairing(pairing, poolKey);
+      }
     },
   };
 }
