@@ -12,7 +12,7 @@ import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { GameHub } from "./hub.js";
 import { attachSocketIO } from "./server.js";
-import { watchMatchJoined, watchStartFinalized, type ChainMatch, type EventWatcher } from "./listener.js";
+import { watchMatchJoined, watchStartFinalized, openMatchFromChain, type ChainMatch, type EventWatcher } from "./listener.js";
 import { SettlementClient } from "./chain.js";
 import { SettlementCoordinator } from "./settlement-coordinator.js";
 import { keeperActions, runKeeper, EscrowStatus, type KeeperMatch } from "./keeper.js";
@@ -729,6 +729,54 @@ const io = new Server(httpServer, { cors: { origin: "*" } });
 
 const coordinator = new SettlementCoordinator({ escrow: ESCROW, chainId: BigInt(CHAIN_ID), settlement });
 
+// Hub recovery — rebuild a staked match from its on-chain record when a
+// client watches one the hub doesn't hold. This happens for real: the
+// MatchJoined/StartFinalized event watchers are best-effort on forno (the
+// same lesson the settled pipeline learned), and a restart drops every open
+// match from memory. Without this, two players fully staked into an Active
+// match stare at "Connected" forever. If the first-move flip is still
+// pending, finalize it here (the contract re-rolls an aged-out reveal block;
+// the client's re-watch a few seconds later completes the second step).
+const START_UNSET = 255;
+const hydrating = new Set<string>();
+async function openFromChain(matchId: bigint): Promise<void> {
+  const key = matchId.toString();
+  if (hydrating.has(key)) return;
+  hydrating.add(key);
+  try {
+    const read = async () =>
+      (await publicClient.readContract({
+        address: ESCROW,
+        abi: matchEscrowAbi,
+        functionName: "getMatch",
+        args: [matchId],
+      })) as { session0: Address; session1: Address; status: number; startTurn: number };
+    let m = await read();
+    if (Number(m.status) !== EscrowStatus.Active) return; // nothing to open (or already settled)
+    tracked.add(key); // keeper takes over the lifecycle (finalize retries, TTL void)
+    if (Number(m.startTurn) === START_UNSET) {
+      if (!settlement) return;
+      try {
+        const hash = await settlement.finalizeStart(matchId);
+        await publicClient.waitForTransactionReceipt({ hash });
+      } catch {
+        /* too early, raced by the other player's watch, or already fixed */
+      }
+      m = await read();
+      if (Number(m.startTurn) === START_UNSET) return; // reveal re-rolled — next watch finishes
+    }
+    if (hub.get(matchId)) return; // raced by the event watcher — already open
+    openMatchFromChain(
+      hub,
+      { matchId, session0: m.session0, session1: m.session1, startTurn: Number(m.startTurn) },
+      { chainId: BigInt(CHAIN_ID), verifier: VERIFIER, clockMs: BLITZ_CLOCK_MS },
+    );
+    console.log(`[hydrate] match ${key} rebuilt from chain (startTurn=${m.startTurn})`);
+  } finally {
+    hydrating.delete(key);
+  }
+}
+
 attachSocketIO(io, {
   hub,
   coordinator,
@@ -742,6 +790,7 @@ attachSocketIO(io, {
   // matchmaking rates from the server profile — the client's "elo" field is
   // attacker-chosen and only a fallback for players with no profile yet
   eloOf: async (address) => (await profiles.get(address))?.elo ?? null,
+  openFromChain,
 });
 
 // First-move randomness lifecycle:

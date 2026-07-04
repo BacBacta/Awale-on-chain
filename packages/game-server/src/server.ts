@@ -70,6 +70,10 @@ export interface ServerDeps {
    *  in "queue", but that value is attacker-chosen — never trust it when the
    *  profile can answer. */
   eloOf?: (address: Address) => Promise<number | null>;
+  /** Rebuild a staked match from its on-chain record when the hub doesn't
+   *  have it (missed join event, server restart). Without this, two players
+   *  fully staked into an Active match stare at "Connected" forever. */
+  openFromChain?: (matchId: bigint) => Promise<void>;
   /** One reconnection grace per seat per match: if the player on the move
    *  drops (mobile data blink — the norm for the target market), the forfeit
    *  timer is pushed back this much once instead of firing on time (0 = off,
@@ -284,10 +288,17 @@ export function attachSocketIO(io: Server, deps: ServerDeps): void {
     // starts, since it's opened directly by the on-chain listener, not here.
     // `player` (optional) declares which seat this socket is — that's what
     // lets the disconnect handler grant the seat its reconnection grace.
-    socket.on("watch", (msg: { matchId: string; player?: 0 | 1 }) => {
+    socket.on("watch", async (msg: { matchId: string; player?: 0 | 1 }) => {
       socket.join(msg.matchId);
       const matchId = BigInt(msg.matchId);
-      const m = hub.get(matchId);
+      let m = hub.get(matchId);
+      // a staked match missing from the hub gets rebuilt from the chain —
+      // the client re-watches every few seconds, so a not-ready-yet
+      // hydration (reveal block pending) resolves on a later attempt
+      if (!m && !isCasualMatch(matchId) && deps.openFromChain) {
+        await deps.openFromChain(matchId).catch(() => {});
+        m = hub.get(matchId);
+      }
       if (m) socket.emit("state", { matchId: msg.matchId, state: m.state, ply: m.ply, clocks: clocksOf(m) });
       if (msg.player === 0 || msg.player === 1) socketSeats.set(socket.id, { roomId: msg.matchId, player: msg.player });
       armTurnClockIfNeeded(matchId, msg.matchId);
