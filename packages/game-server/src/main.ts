@@ -74,6 +74,9 @@ const PORT = Number(process.env.PORT ?? "8080");
 const SIGNER = process.env.SERVER_SIGNER_KEY;
 const FEE_CURRENCY = (process.env.FEE_CURRENCY || undefined) as Address | undefined;
 const KEEPER_INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS ?? "30000");
+// operator gas vigil: refresh every 5 min; warn under 0.2 CELO
+const OPERATOR_GAS_WARN_WEI = BigInt(process.env.OPERATOR_GAS_WARN_WEI ?? "200000000000000000");
+let operatorGasWei: bigint | null = null;
 // full-escrow rescan cadence (see rescanTick) — cheap: one nextMatchId read,
 // plus one getMatch per not-yet-terminal id on the following keeper ticks
 const RESCAN_INTERVAL_MS = Number(process.env.RESCAN_INTERVAL_MS ?? String(10 * 60 * 1000));
@@ -105,6 +108,12 @@ const TURN_CLOCK_MS = Number(process.env.TURN_CLOCK_MS ?? "30000");
 // actions (finalize proposed results, void expired matches). Terminal matches
 // are pruned.
 const tracked = new Set<string>();
+// Matches the keeper can never void: voidExpired is player-gated on-chain, so
+// when the operator isn't a player the revert is DETERMINISTIC — retrying it
+// every 30s flooded the logs so hard that real signals scrolled out of the
+// buffer entirely. One "not a player" parks the match here for good; the
+// players' own recovery UI ("Get my stake back") is the only path, by design.
+const voidBlocked = new Set<string>();
 // wallet pairs per tracked match (filled by the keeper's reads) — needed to
 // notify refunds when a match is voided
 const keeperPlayers = new Map<string, [Address, Address]>();
@@ -897,7 +906,18 @@ const httpServer = createServer((req, res) => {
     return;
   }
   res.writeHead(200, { "content-type": "application/json" });
-  res.end(JSON.stringify({ ok: true, activeMatches: hub.activeCount, chainId: CHAIN_ID }));
+  res.end(
+    JSON.stringify({
+      ok: true,
+      activeMatches: hub.activeCount,
+      chainId: CHAIN_ID,
+      // settlement watchdog: the operator wallet pays gas for EVERY automatic
+      // payout/refund — if it runs dry, settlement silently dies. Surfacing
+      // the balance here turns that silent death into a visible number.
+      operatorGasWei: operatorGasWei?.toString() ?? null,
+      operatorGasLow: operatorGasWei !== null ? operatorGasWei < OPERATOR_GAS_WARN_WEI : null,
+    }),
+  );
 });
 const io = new Server(httpServer, { cors: { origin: "*" } });
 
@@ -1128,7 +1148,9 @@ async function keeperTick(): Promise<void> {
       /* transient RPC error — retry next tick */
     }
   }
-  const actions = keeperActions(matches, now, blockNumber);
+  const actions = keeperActions(matches, now, blockNumber).filter(
+    (a) => !(a.action === "voidExpired" && voidBlocked.has(a.matchId.toString())),
+  );
   if (actions.length === 0) return;
   try {
     // per-action failures are reported, not thrown — one un-voidable match
@@ -1136,7 +1158,13 @@ async function keeperTick(): Promise<void> {
     const failed = new Set<string>();
     await runKeeper(settlement, actions, (a, err) => {
       failed.add(`${a.action}:${a.matchId}`);
-      console.warn(`[keeper] ${a.action} match ${a.matchId} failed: ${(err as Error).message}`);
+      const msg = (err as Error).message.split("\n")[0]; // viem dumps ~10 lines; one is plenty
+      if (a.action === "voidExpired" && /not a player/i.test((err as Error).message)) {
+        voidBlocked.add(a.matchId.toString());
+        console.warn(`[keeper] match ${a.matchId} is not keeper-voidable (operator isn't a player) — parked; players must reclaim via the app`);
+        return;
+      }
+      console.warn(`[keeper] ${a.action} match ${a.matchId} failed: ${msg}`);
     });
     for (const a of actions) {
       if (failed.has(`${a.action}:${a.matchId}`)) continue;
@@ -1165,6 +1193,25 @@ async function keeperTick(): Promise<void> {
 if (settlement) {
   const t = setInterval(() => void keeperTick(), KEEPER_INTERVAL_MS);
   if ("unref" in t) t.unref();
+}
+
+// Operator gas vigil: the wallet that pays for finalizeStart/settleSigned/
+// finalize/void and the league payouts. Poll its balance so /health exposes
+// it and the logs shout BEFORE settlement dies of an empty tank.
+if (operatorAccount) {
+  const checkGas = async () => {
+    try {
+      operatorGasWei = await publicClient.getBalance({ address: operatorAccount.address });
+      if (operatorGasWei < OPERATOR_GAS_WARN_WEI) {
+        console.warn(`[ops] operator gas LOW: ${(Number(operatorGasWei) / 1e18).toFixed(3)} CELO (${operatorAccount.address}) — top up or settlement stops`);
+      }
+    } catch {
+      /* transient read failure — next tick */
+    }
+  };
+  void checkGas();
+  const g = setInterval(() => void checkGas(), 5 * 60 * 1000);
+  if ("unref" in g) g.unref();
 }
 
 // Chain rescan: the keeper's `tracked` set is in-memory, so every deploy
