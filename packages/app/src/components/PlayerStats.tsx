@@ -1,60 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { readContract, getLogs, getBlockNumber } from "viem/actions";
-import { parseAbiItem, type Address } from "viem";
+import { readContract } from "viem/actions";
+import { type Address } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
 import { escrowConfig } from "../lib/escrow.js";
 import { listLocalMatches, STATUS } from "../lib/matches.js";
 import { fmt } from "../lib/money.js";
 import { getProfile, rankFor } from "../lib/profile.js";
+import { cachedOutcomes, scanSettled, type Outcome } from "../lib/outcomes.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
-const SETTLED = parseAbiItem("event MatchSettled(uint256 indexed matchId, uint8 winner, uint256 prize)");
 
-const LOG_WINDOW = 9000n; // forno caps getLogs ranges (~10k blocks)
-const MAX_LOOKBACK = 400_000n; // how far back to hunt for a match's settlement
-
-/** Find the MatchSettled outcome (winner + prize) for each of `ids`, scanning
- *  the chain in forno-sized windows from the tip backward and stopping early
- *  once every id is accounted for. Never throws — a window that fails is
- *  skipped, so partial results still beat the old all-or-nothing [0,latest]. */
-async function settledOutcomes(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  client: any,
-  escrow: Address,
-  ids: bigint[],
-): Promise<Map<string, { winner: number; prize: bigint }>> {
-  const out = new Map<string, { winner: number; prize: bigint }>();
-  const need = new Set(ids.map((i) => i.toString()));
-  let tip: bigint;
-  try {
-    tip = await getBlockNumber(client);
-  } catch {
-    return out;
-  }
-  const floor = tip > MAX_LOOKBACK ? tip - MAX_LOOKBACK : 0n;
-  let to = tip;
-  while (to >= floor && need.size > 0) {
-    const from = to > LOG_WINDOW ? to - LOG_WINDOW + 1n : 0n;
-    try {
-      const logs = await getLogs(client, { address: escrow, event: SETTLED, args: { matchId: ids }, fromBlock: from, toBlock: to });
-      for (const l of logs) {
-        const a = l.args as { matchId?: bigint; winner?: number; prize?: bigint };
-        if (a.matchId == null) continue;
-        out.set(a.matchId.toString(), { winner: Number(a.winner), prize: a.prize ?? 0n });
-        need.delete(a.matchId.toString());
-      }
-    } catch {
-      /* skip a window the RPC rejected */
-    }
-    if (from === 0n) break;
-    to = from - 1n;
-  }
-  return out;
-}
+// Outcome lookup lives in lib/outcomes.ts now: cached forever per match
+// (settled results are immutable) and scanned ONLY for Resolved ids — the old
+// scan hunted cancelled/voided ids that never emitted MatchSettled, so it
+// exhausted its whole 400k-block lookback on every single visit.
 
 interface Stats {
   played: number;
@@ -113,26 +76,28 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
       }
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
 
-      // Read every match record AND the settlement outcomes CONCURRENTLY — the
-      // old code awaited a windowed log scan and then read getMatch one id at a
-      // time, sequentially, on the slow public RPC. On desktop especially that
-      // could take many seconds (or hang), so the whole section sat on
-      // "Loading…" and never appeared. Now it's one parallel round, bounded by
-      // a hard timeout so the stats always render.
-      const [winnerOf, records] = await withTimeout(
-        Promise.all([
-          settledOutcomes(client, cfg.escrow, ids),
-          Promise.all(
-            ids.map((id) =>
-              readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "getMatch", args: [id] })
-                .then((m) => ({ id, m: m as { status: number; stake: bigint; player0: Address; player1: Address } }))
-                .catch(() => null),
-            ),
+      // One parallel round of getMatch first (fast), THEN hunt logs only for
+      // the Resolved ids whose outcome isn't already in the immutable cache.
+      // Typically that's zero or one recent match — found within the first
+      // window or two — where the old code re-walked 400k blocks every visit.
+      const records = await withTimeout(
+        Promise.all(
+          ids.map((id) =>
+            readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "getMatch", args: [id] })
+              .then((m) => ({ id, m: m as { status: number; stake: bigint; player0: Address; player1: Address } }))
+              .catch(() => null),
           ),
-        ]),
-        12_000,
-        [new Map(), []] as [Map<string, { winner: number; prize: bigint }>, ({ id: bigint; m: { status: number; stake: bigint; player0: Address; player1: Address } } | null)[]],
+        ),
+        8_000,
+        [] as ({ id: bigint; m: { status: number; stake: bigint; player0: Address; player1: Address } } | null)[],
       );
+      const resolvedIds = records.filter((r) => r !== null && Number(r.m.status) === STATUS.Resolved).map((r) => r!.id);
+      const winnerOf = cachedOutcomes(resolvedIds);
+      const missing = resolvedIds.filter((id) => !winnerOf.has(id.toString()));
+      if (missing.length > 0) {
+        const found = await withTimeout(scanSettled(client, cfg.escrow, missing), 10_000, new Map<string, Outcome>());
+        for (const [k, v] of found) winnerOf.set(k, v);
+      }
 
       const s: Stats = { played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n };
       for (const r of records) {

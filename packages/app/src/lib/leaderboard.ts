@@ -7,14 +7,14 @@
 // unreachable: it still works, it's just O(matches) RPC calls on a metered
 // connection.
 
-import { readContract, getLogs } from "viem/actions";
-import { parseAbiItem, type Address } from "viem";
+import { readContract } from "viem/actions";
+import type { Address } from "viem";
 import { publicClient } from "./minipay.js";
+import { scanSettled } from "./outcomes.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 import type { EscrowConfig } from "./escrow.js";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
-const SETTLED = parseAbiItem("event MatchSettled(uint256 indexed matchId, uint8 winner, uint256 prize)");
 
 export interface LeaderRow {
   address: Address;
@@ -25,7 +25,9 @@ export interface LeaderRow {
 export async function loadLeaderboard(cfg: EscrowConfig, limit = 25): Promise<LeaderRow[]> {
   if (SERVER_URL) {
     try {
-      const res = await fetch(`${SERVER_URL}/money-leaderboard?n=${limit}`);
+      // 5s cap: a hanging fetch used to block the whole board for the
+      // browser's default timeout (minutes) before even trying the fallback
+      const res = await fetch(`${SERVER_URL}/money-leaderboard?n=${limit}`, { signal: AbortSignal.timeout(5000) });
       if (res.ok) {
         const { leaders } = (await res.json()) as { leaders: { address: Address; wins: number; netWei: string }[] };
         return leaders.map((l) => ({ address: l.address, wins: l.wins, net: BigInt(l.netWei) }));
@@ -39,23 +41,25 @@ export async function loadLeaderboard(cfg: EscrowConfig, limit = 25): Promise<Le
 
 async function loadLeaderboardFromChain(cfg: EscrowConfig, limit: number): Promise<LeaderRow[]> {
   const client = publicClient(cfg.rpcUrl, cfg.chainId);
-  const logs = await getLogs(client, { address: cfg.escrow, event: SETTLED, fromBlock: 0n, toBlock: "latest" });
+  // bounded backward scan — the old [0, latest] getLogs is rejected outright
+  // by forno (~10k-block cap), so this fallback always threw and the board
+  // showed "no settled matches yet" even when there were plenty
+  const outcomes = await scanSettled(client, cfg.escrow);
 
   const tally = new Map<string, { wins: number; net: bigint }>();
-  for (const l of logs) {
-    const a = l.args as { matchId?: bigint; winner?: number; prize?: bigint };
-    if (a.matchId == null || a.winner == null || a.winner === 2) continue; // skip draws
+  for (const [idStr, o] of outcomes) {
+    if (o.winner === 2) continue; // skip draws
     try {
       const m = (await readContract(client, {
         address: cfg.escrow,
         abi: matchEscrowAbi,
         functionName: "getMatch",
-        args: [a.matchId],
+        args: [BigInt(idStr)],
       })) as { player0: Address; player1: Address };
-      const winner = (Number(a.winner) === 0 ? m.player0 : m.player1).toLowerCase();
+      const winner = (o.winner === 0 ? m.player0 : m.player1).toLowerCase();
       const cur = tally.get(winner) ?? { wins: 0, net: 0n };
       cur.wins += 1;
-      cur.net += a.prize ?? 0n;
+      cur.net += o.prize;
       tally.set(winner, cur);
     } catch {
       /* skip */
