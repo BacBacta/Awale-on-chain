@@ -25,7 +25,7 @@ export interface AsyncState {
 // Mirrors the server's ASYNC_TURN_CLOCK_MS default — used only to decide when
 // to *show* the claim button; the server is the actual authority and will
 // reject a premature claim regardless of this local guess.
-export const ASYNC_TURN_CLOCK_MS = 3 * 24 * 60 * 60 * 1000;
+export const ASYNC_TURN_CLOCK_MS = 24 * 60 * 60 * 1000; // must match the server default
 
 export function asyncEnabled(): boolean {
   return !!SERVER_URL;
@@ -66,6 +66,12 @@ export async function moveAsync(matchId: string, player: 0 | 1, house: number, s
 /** Claim a walkover: the opponent hasn't moved in days while it's their turn. */
 export async function claimTimeoutAsync(matchId: string, claimant: 0 | 1): Promise<GameState> {
   const { state } = await post<{ state: GameState }>("/async/claim-timeout", { matchId, claimant });
+  return state;
+}
+
+/** Leave / resign a correspondence game — the opponent wins now and is notified. */
+export async function resignAsync(matchId: string, player: 0 | 1): Promise<GameState> {
+  const { state } = await post<{ state: GameState }>("/async/resign", { matchId, player });
   return state;
 }
 

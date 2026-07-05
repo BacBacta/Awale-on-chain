@@ -15,17 +15,20 @@ const B: Address = "0x000000000000000000000000000000000000000b";
 
 function spyNotifier() {
   const calls: { address: Address; matchId: string }[] = [];
+  const notifies: { address: Address; title: string }[] = [];
   const notifier: Notifier = {
-    async notify() {},
+    async notify(address, n) {
+      notifies.push({ address, title: n.title });
+    },
     async notifyTurn(address, matchId) {
       calls.push({ address, matchId });
     },
   };
-  return { notifier, calls };
+  return { notifier, calls, notifies };
 }
 
 async function newService() {
-  const { notifier, calls } = spyNotifier();
+  const { notifier, calls, notifies } = spyNotifier();
   const svc = new AsyncMatchService(new InMemoryMatchStore(), notifier);
   const id = await svc.create({
     matchId: 42n,
@@ -36,7 +39,7 @@ async function newService() {
     startTurn: 0,
     mode: "casual",
   });
-  return { svc, calls, id };
+  return { svc, calls, notifies, id };
 }
 
 describe("AsyncMatchService", () => {
@@ -125,6 +128,75 @@ describe("AsyncMatchService", () => {
       const second = await newService();
       await second.svc.setTurnClock(second.id, 60_000);
       await expect(second.svc.claimTimeout(second.id, 1, 0)).rejects.toThrow("still has time");
+    });
+
+    describe("resign / leave", () => {
+      it("the opponent wins immediately and is notified", async () => {
+        const { svc, notifies, id } = await newService();
+        const state = await svc.resign(id, 0); // A leaves → B wins now
+        expect(state.over).toBe(true);
+        expect(state.winner).toBe(1);
+        // B (the opponent) got a "you win" notification
+        expect(notifies).toHaveLength(1);
+        expect(notifies[0].address).toBe(B);
+        expect(notifies[0].title).toMatch(/win/i);
+      });
+
+      it("can be resigned even when it's not your turn", async () => {
+        const { svc, id } = await newService(); // A on move
+        const state = await svc.resign(id, 1); // B leaves off-turn → A wins
+        expect(state.over).toBe(true);
+        expect(state.winner).toBe(0);
+      });
+
+      it("feeds the profile/Elo hook", async () => {
+        const { notifier } = spyNotifier();
+        const results: { players: [Address, Address]; winner: number }[] = [];
+        const svc = new AsyncMatchService(new InMemoryMatchStore(), notifier, {
+          onResult: (players, winner) => results.push({ players, winner }),
+        });
+        const id = await svc.create({
+          matchId: 44n,
+          chainId: CHAIN_ID,
+          verifier: VERIFIER,
+          sessions: [s0.address, s1.address],
+          players: [A, B],
+          startTurn: 0,
+          mode: "casual",
+        });
+        await svc.resign(id, 0);
+        expect(results).toEqual([{ players: [A, B], winner: 1 }]);
+      });
+
+      it("rejects resigning a match with no opponent yet", async () => {
+        const { notifier } = spyNotifier();
+        const svc = new AsyncMatchService(new InMemoryMatchStore(), notifier);
+        const id = await svc.createOpen({
+          matchId: 45n,
+          chainId: CHAIN_ID,
+          verifier: VERIFIER,
+          creator: A,
+          session0: s0.address,
+          startTurn: 0,
+          mode: "casual",
+        });
+        await expect(svc.resign(id, 0)).rejects.toThrow("no opponent");
+      });
+
+      it("rejects a staked (cash) async resign — settles on-chain", async () => {
+        const { notifier } = spyNotifier();
+        const svc = new AsyncMatchService(new InMemoryMatchStore(), notifier);
+        const id = await svc.create({
+          matchId: 46n,
+          chainId: CHAIN_ID,
+          verifier: VERIFIER,
+          sessions: [s0.address, s1.address],
+          players: [A, B],
+          startTurn: 0,
+          mode: "cash",
+        });
+        await expect(svc.resign(id, 0)).rejects.toThrow("settle on-chain");
+      });
     });
 
     it("the per-match clock survives moves", async () => {

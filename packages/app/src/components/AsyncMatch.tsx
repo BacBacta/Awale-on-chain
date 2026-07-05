@@ -19,6 +19,7 @@ import {
   joinAsync,
   moveAsync,
   claimTimeoutAsync,
+  resignAsync,
   roleOf,
   recordAsyncMatch,
   createAsync,
@@ -35,6 +36,7 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
   const [status, setStatus] = useState("Loading…");
   const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
   const [copied, setCopied] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
   const session = useRef<SessionKey | null>(null);
   const cfg = escrowConfig();
   const prevTurn = useRef<number | null>(null);
@@ -127,6 +129,16 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
     }
   }
 
+  async function leaveGame() {
+    if (!data || role === null || data.over || data.open) return;
+    try {
+      const state = await resignAsync(matchId, role);
+      setData({ ...data, state, over: state.over });
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+  }
+
   const inviteUrl = typeof window !== "undefined" ? `${window.location.origin}/play?async=${matchId}` : "";
   async function copyInvite() {
     // native share sheet first (best on mobile); if it's unavailable or the
@@ -185,13 +197,23 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
   const playable = myTurn ? legalHouses(data.state) : [];
   const outcome: 0 | 1 | 2 | null = data.over ? (data.state.winner === 2 ? 2 : data.state.winner === r ? 0 : 1) : null;
 
+  const oppName = displayName(data.open ? null : data.players[1 - r]);
+  // inactivity model: the opponent has `grace` from their last move; once it
+  // lapses the waiting player can claim the win. Shown as a live countdown so
+  // the table never just "sits there waiting for their return".
+  const grace = data.turnClockMs ?? ASYNC_TURN_CLOCK_MS;
+  const sinceMove = Math.max(0, Date.now() - data.updatedAt);
+  const waitingOnOpp = !data.over && !data.open && !myTurn;
+  const claimable = waitingOnOpp && sinceMove >= grace;
+  const claimInMs = Math.max(0, grace - sinceMove);
+
   const statusLabel = data.open
     ? "Waiting for an opponent to join"
     : data.over
       ? "Game over"
       : myTurn
         ? "Your turn"
-        : "Opponent's turn — come back later";
+        : `Waiting for ${oppName}`;
 
   return (
     <main className="stack" style={{ flex: 1, gap: 14, position: "relative", padding: "12px 8px" }}>
@@ -242,16 +264,46 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
         </span>
       </div>
 
-      {!data.over && !data.open && !myTurn && Date.now() - data.updatedAt >= (data.turnClockMs ?? ASYNC_TURN_CLOCK_MS) && (
-        <div className="card stack animate-in" style={{ gap: 8, alignItems: "center", textAlign: "center" }}>
+      {/* Waiting on the opponent: say how long it's been and — crucially —
+          when this resolves. A friend who left no longer leaves the other
+          staring at a silent board. */}
+      {waitingOnOpp && !claimable && (
+        <div className="card stack animate-in" style={{ gap: 6, alignItems: "center", textAlign: "center", padding: "14px 16px" }}>
           <span className="muted">
-            {data.turnClockMs != null
-              ? "Your opponent's move timer has run out."
-              : "Your opponent hasn't moved in a few days."}
+            {oppName} last played {humanizeDuration(sinceMove)} ago.
           </span>
-          <button className="btn secondary" onClick={claimTimeout}>
-            Claim the win
+          <span className="faint">
+            If they don&apos;t come back, you can claim the win in {humanizeDuration(claimInMs)}.
+          </span>
+        </div>
+      )}
+
+      {claimable && (
+        <div className="card stack animate-in" style={{ gap: 10, alignItems: "center", textAlign: "center", padding: "16px" }}>
+          <span className="muted">{oppName} left the game without playing.</span>
+          <button className="btn block" onClick={claimTimeout}>
+            <Icon name="trophy" size={17} /> Claim the win
           </button>
+        </div>
+      )}
+
+      {/* Leave cleanly — the opponent is told and wins, instead of a dead table. */}
+      {!data.over && !data.open && (
+        <div className="row" style={{ justifyContent: "center", marginTop: 2 }}>
+          {confirmLeave ? (
+            <span className="row" style={{ gap: 8 }}>
+              <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 12.5 }} onClick={() => setConfirmLeave(false)}>
+                Keep playing
+              </button>
+              <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 12.5, color: "var(--danger)" }} onClick={leaveGame}>
+                Yes, leave — opponent wins
+              </button>
+            </span>
+          ) : (
+            <button className="btn ghost" style={{ padding: "6px 12px", fontSize: 12.5, color: "var(--faint)" }} onClick={() => setConfirmLeave(true)}>
+              Leave game
+            </button>
+          )}
         </div>
       )}
 
@@ -267,4 +319,16 @@ function legalHouses(s: GameState): number[] {
   const out: number[] = [];
   for (let h = 0; h < 6; h++) if (mask & (1 << h)) out.push(h);
   return out;
+}
+
+/** Compact human duration: "2d 4h" / "3h 20m" / "12m" / "under a minute". */
+function humanizeDuration(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m`;
+  return "under a minute";
 }

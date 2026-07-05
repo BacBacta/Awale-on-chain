@@ -182,6 +182,42 @@ export class AsyncMatchService {
   }
 
   /**
+   * A player leaves / resigns a correspondence game: the opponent wins now, no
+   * waiting out the inactivity clock. Notifies the opponent so a friend who
+   * left doesn't leave the other staring at a table forever. Casual only —
+   * staked async resigns settle on-chain.
+   */
+  async resign(matchId: string, player: 0 | 1): Promise<GameState> {
+    const rec = await this.store.get(matchId);
+    if (!rec) throw new Error("no such match");
+    if (rec.mode !== "casual") throw new Error("staked async matches settle on-chain, not here");
+    if (rec.players[1] === ZERO) throw new Error("no opponent yet — cancel the invite instead");
+    const m = Match.rehydrate(rec.snapshot);
+    if (m.over) throw new Error("match over");
+
+    const state = m.forfeit(player); // the resigner forfeits → the opponent wins
+    await this.store.save({
+      snapshot: m.snapshot(),
+      players: rec.players,
+      mode: rec.mode,
+      turn: m.turn,
+      over: m.over,
+      ply: m.ply,
+      updatedAt: Date.now(),
+      turnClockMs: rec.turnClockMs,
+    });
+    const opponent = rec.players[1 - player];
+    await this.notifier.notify(opponent, {
+      title: "You win — Awalé",
+      body: "Your friend left the game — the win is yours.",
+      url: `/play?async=${matchId}`,
+      tag: `awale-over-${matchId}`,
+    });
+    this.reportResult(rec.players, state.winner, rec.mode);
+    return state;
+  }
+
+  /**
    * Put this match on a short leash: future inactivity claims use `ms`
    * instead of the global correspondence default. Called when a game is
    * attached to a tournament bracket — those run on minutes, not days.

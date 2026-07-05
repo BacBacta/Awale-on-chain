@@ -73,7 +73,10 @@ const FEE_CURRENCY = (process.env.FEE_CURRENCY || undefined) as Address | undefi
 const KEEPER_INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS ?? "30000");
 // Async play's own move-clock: correspondence games are explicitly "play
 // whenever", so the window is days, not the minutes a live match gets.
-const ASYNC_TURN_CLOCK_MS = Number(process.env.ASYNC_TURN_CLOCK_MS ?? String(3 * 24 * 60 * 60 * 1000));
+// Friend games are correspondence, but a friend who abandons shouldn't lock the
+// board for days. 24h is generous for "play whenever today" yet lets the other
+// claim the win within a day (they also see a live countdown, and can leave).
+const ASYNC_TURN_CLOCK_MS = Number(process.env.ASYNC_TURN_CLOCK_MS ?? String(24 * 60 * 60 * 1000));
 // A tournament is a live event — a host who never creates their bracket game
 // gets a much shorter leash than an ordinary correspondence match.
 const TOURNAMENT_WALKOVER_MS = Number(process.env.TOURNAMENT_WALKOVER_MS ?? String(15 * 60_000));
@@ -520,6 +523,17 @@ const httpServer = createServer((req, res) => {
         const { matchId, claimant } = b as { matchId: string; claimant: 0 | 1 };
         if (!matchId || claimant == null) throw new Error("matchId + claimant required");
         return asyncMatches.claimTimeout(matchId, claimant, ASYNC_TURN_CLOCK_MS);
+      })
+      .then((state) => json(200, { state }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/async/resign") {
+    readJson(req)
+      .then((b) => {
+        const { matchId, player } = b as { matchId: string; player: 0 | 1 };
+        if (!matchId || player == null) throw new Error("matchId + player required");
+        return asyncMatches.resign(matchId, player);
       })
       .then((state) => json(200, { state }))
       .catch((e) => json(400, { error: (e as Error).message }));
