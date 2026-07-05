@@ -26,6 +26,30 @@ const SYMBOL = "aUSD";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Wallet = any;
 
+// Pull the useful bits out of a viem/wallet error for on-screen diagnosis —
+// shortMessage + details + the nested cause, which is where MiniPay's real
+// revert/gas reason hides behind the humanized headline.
+function rawErrorDetail(e: unknown): string | null {
+  if (!e || typeof e !== "object") return typeof e === "string" ? e : null;
+  const parts: string[] = [];
+  const pick = (o: unknown, k: string) => {
+    const v = o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined;
+    if (typeof v === "string" && v) parts.push(v);
+  };
+  pick(e, "shortMessage");
+  pick(e, "details");
+  pick(e, "message");
+  const cause = (e as { cause?: unknown }).cause;
+  if (cause) {
+    pick(cause, "shortMessage");
+    pick(cause, "details");
+    pick(cause, "message");
+  }
+  const seen = new Set<string>();
+  const text = parts.filter((p) => (seen.has(p) ? false : seen.add(p))).join(" · ");
+  return text ? text.slice(0, 400) : null;
+}
+
 export default function Shop() {
   const cos = cosmeticsAddress();
   const cfg = escrowConfig();
@@ -37,6 +61,9 @@ export default function Shop() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // raw error detail, surfaced under the humanized message — a generic
+  // "Something went wrong" hides the actual revert/gas reason in MiniPay.
+  const [detail, setDetail] = useState<string | null>(null);
   // on-chain catalogue per itemId: is it actually on sale, its real price, and
   // how many are left (null = unlimited). Until an item is created on-chain
   // (createItem) `onSale` is false and we show "Coming soon" rather than a Buy
@@ -123,6 +150,7 @@ export default function Shop() {
     if (!cfg) return;
     setBusy(true);
     setError(null);
+    setDetail(null);
     setStatus(`${label}…`);
     try {
       const h = await fn();
@@ -131,6 +159,7 @@ export default function Shop() {
       await refresh();
     } catch (e) {
       setError(humanizeError(e));
+      setDetail(rawErrorDetail(e));
       setStatus(null);
     } finally {
       setBusy(false);
@@ -280,10 +309,18 @@ export default function Shop() {
 
       {status && <span className="muted">{status}</span>}
       {error && (
-        <div className="chip danger" style={{ alignSelf: "stretch", justifyContent: "center", padding: 10 }}>
-          {error}
+        <div className="col" style={{ gap: 6 }}>
+          <div className="chip danger" style={{ alignSelf: "stretch", justifyContent: "center", padding: 10 }}>
+            {error}
+          </div>
+          {detail && (
+            <span className="faint" style={{ fontSize: 11, lineHeight: 1.4, wordBreak: "break-word", textAlign: "center" }}>
+              {detail}
+            </span>
+          )}
         </div>
       )}
+      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc3</span>
     </main>
   );
 }
