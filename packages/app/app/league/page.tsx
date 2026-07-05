@@ -290,7 +290,7 @@ export default function League() {
               deposit needed, every money game counts.
             </span>
             <Link className="btn block" href="/compete" style={{ marginTop: 4 }}>
-              <Icon name="trophy" size={17} /> Join this week&apos;s race
+              <Icon name="trophy" size={17} /> Go to the Weekly league
             </Link>
           </div>
         )

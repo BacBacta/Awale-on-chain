@@ -741,11 +741,19 @@ export function LiveMatch({
         </div>
         </div>
       ) : (
-        <div className="card">
+        // fallback for non-board states: connecting, or a terminal/error
+        // message ("match full", "session key not found", "open in MiniPay",
+        // "not available"). Always offer a way back so it's never a dead end,
+        // and only pulse for genuine loading (a static error shouldn't imply
+        // "still working").
+        <div className="card stack" style={{ gap: 12, alignItems: "center", textAlign: "center" }}>
           <span className="chip">
-            <span className="dot pulse" />
+            {/^(Connecting|Connected|Loading)/i.test(status) && <span className="dot pulse" />}
             {status}
           </span>
+          <Link className="btn secondary block" href="/">
+            <Icon name="play" size={16} /> Back to lobby
+          </Link>
         </div>
       )}
 

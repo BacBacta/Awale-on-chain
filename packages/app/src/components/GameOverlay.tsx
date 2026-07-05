@@ -181,7 +181,7 @@ export function GameOverlay({
         )}
         {saveHref && (
           <a className="btn block" href={saveHref} style={{ background: "linear-gradient(180deg, #f7d27a, var(--gold))" }}>
-            <Icon name="trophy" size={17} /> You scored league points — see the race
+            <Icon name="trophy" size={17} /> You scored league points — see the Weekly league
           </a>
         )}
         <button className={`btn ${saveHref || rematchHref ? "secondary" : ""} block`} onClick={onPlayAgain}>
