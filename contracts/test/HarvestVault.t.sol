@@ -242,4 +242,75 @@ contract HarvestVaultTest is Test {
         vm.expectRevert(bytes("HarvestVault: exceeds yield"));
         vault.claimPrize(id, greedy, empty);
     }
+
+    // ------------------------------- fuzz ------------------------------- //
+
+    /// @dev deposit for a fresh, on-the-fly funded player.
+    function _freshDeposit(uint256 id, uint256 salt, uint256 amount) internal returns (address who, uint256 amt) {
+        who = address(uint160(uint256(keccak256(abi.encode("player", salt)))));
+        amt = bound(amount, 1, 1_000_000e6);
+        usdc.mint(who, amt);
+        vm.startPrank(who);
+        usdc.approve(address(vault), amt);
+        vault.deposit(id, amt);
+        vm.stopPrank();
+    }
+
+    /// No-loss under arbitrary deposits and arbitrary yield: every depositor
+    /// gets their *exact* principal back, the realised yield equals what
+    /// accrued, and only that yield is left in the vault afterwards.
+    function testFuzz_noLossManyDepositors(uint256[5] memory amounts, uint256 yield) public {
+        uint256 id = _createSeason();
+        address[5] memory who;
+        uint256[5] memory dep;
+        uint256 total;
+        for (uint256 i; i < 5; i++) {
+            (who[i], dep[i]) = _freshDeposit(id, i, amounts[i]);
+            total += dep[i];
+        }
+        yield = bound(yield, 0, 5_000_000e6);
+        if (yield > 0) _accrue(yield);
+
+        vm.warp(seasonEnd + 1);
+        vm.prank(owner);
+        vault.finalize(id, bytes32(0));
+
+        assertEq(vault.getSeason(id).totalPrincipal, total, "principal tallied");
+        assertEq(vault.getSeason(id).yieldPot, yield, "yieldPot = redeemed - principal");
+
+        for (uint256 i; i < 5; i++) {
+            uint256 before = usdc.balanceOf(who[i]);
+            vm.prank(who[i]);
+            vault.claimPrincipal(id);
+            assertEq(usdc.balanceOf(who[i]) - before, dep[i], "exact principal returned");
+        }
+        assertEq(usdc.balanceOf(address(vault)), yield, "only the yield remains");
+    }
+
+    /// The solvency guard holds for ANY finalized prize amount: a prize is
+    /// payable iff it fits within the realised yield, and a paid prize never
+    /// pushes prizeDistributed past the pot — even from a malformed root.
+    function testFuzz_prizeNeverExceedsYield(uint256 yield, uint256 grant) public {
+        uint256 id = _createSeason();
+        _depositBoth(id);
+        yield = bound(yield, 0, 1_000_000e6);
+        if (yield > 0) _accrue(yield);
+        grant = bound(grant, 1, 2_000_000e6);
+
+        vm.warp(seasonEnd + 1);
+        bytes32 root = _leaf(alice, grant); // single-leaf tree → empty proof
+        vm.prank(owner);
+        vault.finalize(id, root);
+
+        uint256 pot = vault.getSeason(id).yieldPot;
+        bytes32[] memory empty = new bytes32[](0);
+        vm.prank(alice);
+        if (grant > pot) {
+            vm.expectRevert(bytes("HarvestVault: exceeds yield"));
+            vault.claimPrize(id, grant, empty);
+        } else {
+            vault.claimPrize(id, grant, empty);
+            assertLe(vault.getSeason(id).prizeDistributed, pot, "distributed within pot");
+        }
+    }
 }
