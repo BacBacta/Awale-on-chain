@@ -16,7 +16,7 @@ import { attachSocketIO } from "./server.js";
 import { watchMatchJoined, watchStartFinalized, openMatchFromChain, type ChainMatch, type EventWatcher } from "./listener.js";
 import { SettlementClient } from "./chain.js";
 import { SettlementCoordinator } from "./settlement-coordinator.js";
-import { keeperActions, runKeeper, EscrowStatus, type KeeperMatch } from "./keeper.js";
+import { keeperActions, runKeeper, idsToRescan, EscrowStatus, type KeeperMatch } from "./keeper.js";
 import { AsyncMatchService } from "./async-match.js";
 import { InMemoryMatchStore, type MatchStore } from "./persistence/store.js";
 import { RedisMatchStore } from "./persistence/redis-store.js";
@@ -71,6 +71,9 @@ const PORT = Number(process.env.PORT ?? "8080");
 const SIGNER = process.env.SERVER_SIGNER_KEY;
 const FEE_CURRENCY = (process.env.FEE_CURRENCY || undefined) as Address | undefined;
 const KEEPER_INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS ?? "30000");
+// full-escrow rescan cadence (see rescanTick) — cheap: one nextMatchId read,
+// plus one getMatch per not-yet-terminal id on the following keeper ticks
+const RESCAN_INTERVAL_MS = Number(process.env.RESCAN_INTERVAL_MS ?? String(10 * 60 * 1000));
 // Async play's own move-clock: correspondence games are explicitly "play
 // whenever", so the window is days, not the minutes a live match gets.
 // Friend games are correspondence, but a friend who abandons shouldn't lock the
@@ -1022,6 +1025,7 @@ async function keeperTick(): Promise<void> {
       const status = Number(m.status);
       if (status === EscrowStatus.Resolved || status === EscrowStatus.Voided || status === EscrowStatus.Cancelled) {
         tracked.delete(idStr); // terminal — stop watching
+        knownTerminal.add(idStr); // …and don't re-add it on the next rescan
         continue;
       }
       keeperPlayers.set(idStr, [m.player0, m.player1]);
@@ -1067,6 +1071,35 @@ async function keeperTick(): Promise<void> {
 if (settlement) {
   const t = setInterval(() => void keeperTick(), KEEPER_INTERVAL_MS);
   if ("unref" in t) t.unref();
+}
+
+// Chain rescan: the keeper's `tracked` set is in-memory, so every deploy
+// used to orphan the matches that were live before it — Active forever,
+// money frozen, invisible to finalize/void (the #17…#46 stuck-stake bug).
+// Walk the whole escrow (nextMatchId is small) at boot and periodically,
+// and hand every unknown non-terminal id back to the keeper.
+const knownTerminal = new Set<string>();
+async function rescanTick(): Promise<void> {
+  if (!settlement) return;
+  try {
+    const next = (await publicClient.readContract({
+      address: ESCROW,
+      abi: matchEscrowAbi,
+      functionName: "nextMatchId",
+    })) as bigint;
+    const ids = idsToRescan(next, tracked, knownTerminal);
+    for (const id of ids) tracked.add(id);
+    if (ids.length > 0) console.log(`[keeper] rescan picked up ${ids.length} match(es): ${ids.join(", ")}`);
+  } catch (err) {
+    console.warn(`[keeper] rescan failed: ${(err as Error).message}`);
+  }
+}
+if (settlement) {
+  // boot scan waits for the first hydrate burst to pass, then repeats
+  const boot = setTimeout(() => void rescanTick(), 15_000);
+  if ("unref" in boot) boot.unref();
+  const r = setInterval(() => void rescanTick(), RESCAN_INTERVAL_MS);
+  if ("unref" in r) r.unref();
 }
 
 // Auto-register on-chain tournaments into the lobby: read every Open tournament

@@ -290,7 +290,14 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     clearTimeout(pair.timer);
     cashPairs.delete(creatorSocket);
     void deps.cashPairStore?.remove(pair.creator);
-    io.to(creatorSocket).emit("cash-abort", { reason });
+    // if the creator already staked (their table exists on-chain), a generic
+    // "took too long" reads as LOST MONEY. Say the truth: the stake is safe
+    // and reclaimable. (The client auto-refunds when it can; this message is
+    // the fallback for when it can't.)
+    const creatorReason = pair.matchId
+      ? "Your opponent couldn't put their stake in. Your money is safe — your table is under Your matches; cancel it there for an instant full refund."
+      : reason;
+    io.to(creatorSocket).emit("cash-abort", { reason: creatorReason });
     io.to(pair.joinerSocket).emit("cash-abort", { reason });
   }
 

@@ -58,6 +58,25 @@ export function keeperActions(matches: KeeperMatch[], now: number, blockNumber =
   return out;
 }
 
+/**
+ * Which match ids a chain rescan should (re-)watch. Pure.
+ *
+ * The keeper's `tracked` set is in-memory: every deploy wiped it, and any
+ * match that went Active before a restart became invisible to the keeper
+ * FOREVER — never finalized, never voided. That is exactly how real stakes
+ * ended up frozen in Active matches (#17…#46) until a manual ops script.
+ * A periodic rescan walks every id below `next` and re-adds the unknowns;
+ * the keeper tick then reads each and prunes terminals into `terminal`.
+ */
+export function idsToRescan(next: bigint, trackedIds: ReadonlySet<string>, terminal: ReadonlySet<string>): string[] {
+  const out: string[] = [];
+  for (let id = 1n; id < next; id++) {
+    const key = id.toString();
+    if (!trackedIds.has(key) && !terminal.has(key)) out.push(key);
+  }
+  return out;
+}
+
 /** Execute keeper actions, returning the submitted transaction hashes. */
 export async function runKeeper(client: SettlementClient, actions: KeeperAction[]): Promise<Hex[]> {
   const hashes: Hex[] = [];

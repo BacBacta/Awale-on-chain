@@ -77,3 +77,21 @@ describe("runKeeper", () => {
     expect(hashes).toEqual(["0xfin", "0xvoid"]);
   });
 });
+
+describe("idsToRescan", () => {
+  // the tracked set is in-memory: a deploy wiped it and orphaned every live
+  // match (frozen stakes #17…#46). The rescan must hand every unknown,
+  // not-yet-terminal id back to the keeper.
+  it("returns every id below next that is neither tracked nor terminal", async () => {
+    const { idsToRescan } = await import("../src/keeper.js");
+    const tracked = new Set(["2"]);
+    const terminal = new Set(["3"]);
+    expect(idsToRescan(6n, tracked, terminal)).toEqual(["1", "4", "5"]);
+  });
+
+  it("empty escrow or everything known → nothing to do", async () => {
+    const { idsToRescan } = await import("../src/keeper.js");
+    expect(idsToRescan(1n, new Set(), new Set())).toEqual([]);
+    expect(idsToRescan(3n, new Set(["1", "2"]), new Set())).toEqual([]);
+  });
+});
