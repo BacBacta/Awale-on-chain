@@ -205,9 +205,16 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
               {tier.icon} {tier.name}
             </span>
           </div>
-          <span className="title score" style={{ color: "var(--gold)" }}>
-            {elo}
-          </span>
+          {/* the number is the RATING (labelled), the tier above is the RANK —
+              same split as RankHero, so 1197 is never ambiguous */}
+          <div className="col" style={{ alignItems: "flex-end", gap: 0 }}>
+            <span className="title score" style={{ color: "var(--gold)", lineHeight: 1 }}>
+              {elo}
+            </span>
+            <span className="faint" style={{ fontSize: 10, letterSpacing: "0.6px", textTransform: "uppercase" }}>
+              rating
+            </span>
+          </div>
         </div>
       )}
 

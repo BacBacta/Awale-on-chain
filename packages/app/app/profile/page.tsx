@@ -190,7 +190,7 @@ export default function Profile() {
       <div className="stack" style={{ gap: 8, marginTop: 2 }}>
         {asyncEnabled() && (
           <button className="btn secondary block" onClick={challenge} disabled={challenging}>
-            <Icon name="versus" size={16} /> {challenging ? "Creating…" : "Challenge a friend"}
+            <Icon name="versus" size={16} /> {challenging ? "Creating…" : "Play with a friend"}
           </button>
         )}
         {address && (

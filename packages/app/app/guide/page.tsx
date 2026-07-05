@@ -46,7 +46,7 @@ export default function Guide() {
     <main className="pad stack" style={{ flex: 1, gap: 14 }}>
       <span className="title">How it all works</span>
       <span className="muted">
-        One game — Awalé. Play it free or for money. Every game you finish counts toward your rank.
+        One game — Awalé. Play it free or for money. Every match against another player moves your rating.
       </span>
 
       {/* the game itself */}
@@ -93,7 +93,9 @@ export default function Guide() {
       </span>
       <div className="card stack" style={{ gap: 10 }}>
         <span className="muted" style={{ lineHeight: 1.5 }}>
-          <b style={{ color: "var(--text)" }}>Your rank.</b> Every finished game — free or money — moves it:
+          <b style={{ color: "var(--text)" }}>Your rating &amp; rank.</b> Every match against another player — free or
+          for money — moves your <b style={{ color: "var(--text)" }}>rating</b> (the number). It earns a{" "}
+          <b style={{ color: "var(--text)" }}>rank</b> (the badge). Practice and the daily puzzle are just for fun.
           <br />
           <span style={{ fontSize: 13 }}>{TIERS}</span>
         </span>

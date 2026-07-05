@@ -37,7 +37,14 @@ export function Leaderboard() {
     );
   }
   if (rows.length === 0) {
-    return <div className="card muted">No settled cash matches yet — win one to claim the top spot.</div>;
+    return (
+      <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
+        <span className="muted">No settled money matches yet — win one to claim the top spot.</span>
+        <a className="btn secondary block" href="/?money=1">
+          Play for money
+        </a>
+      </div>
+    );
   }
 
   return (

@@ -90,8 +90,8 @@ export default function Compete() {
             ))}
           </div>
           <span className="muted" style={{ textAlign: "center" }}>
-            Win games to climb from Seedling to Grandmaster. Every game you finish counts — your first one places you
-            on the ladder.
+            Win matches to climb from Seedling to Grandmaster. Every match against another player counts — your first
+            one places you on the ladder.
           </span>
           <Link className="btn block" href="/?play=1">
             Play your first game

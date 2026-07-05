@@ -258,7 +258,7 @@ export default function Matches() {
       {asyncRows.length > 0 && (
         <>
           <span className="section-label">
-            Friendly games
+            With a friend
             {asyncRows.some((r) => r.yourTurn) && (
               <span className="chip positive" style={{ marginLeft: 8 }}>
                 {asyncRows.filter((r) => r.yourTurn).length} need your move

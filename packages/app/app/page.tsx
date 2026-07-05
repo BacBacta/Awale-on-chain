@@ -180,7 +180,7 @@ export default function Lobby() {
             win real money
           </span>
           <span className="muted" style={{ fontSize: 13 }}>
-            Play free, or put a few dollars on a match.
+            Play free or for money — every match climbs your rank.
           </span>
         </div>
       </div>

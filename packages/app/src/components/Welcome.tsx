@@ -75,7 +75,7 @@ export function Welcome() {
           Awalé
         </span>
         <span className="muted" style={{ textAlign: "center", lineHeight: 1.5 }}>
-          Sow seeds, capture, and win the pot. Play free, or put a few dollars on a match — winner takes the pot.
+          Sow seeds, capture, win the pot. Play free or for money — and every match climbs your rank.
         </span>
 
         <div className="stack" style={{ width: "100%", marginTop: 6, gap: 10 }}>
