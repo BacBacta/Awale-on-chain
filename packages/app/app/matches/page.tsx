@@ -182,7 +182,8 @@ export default function Matches() {
       persistSession(BigInt(id), session);
       recordAsyncMatch(id);
       window.location.href = `/play?async=${id}`;
-    } catch {
+    } catch (e) {
+      setError(humanizeError(e)); // was a silent no-op — now the failure is visible
       setCreating(false);
     }
   }

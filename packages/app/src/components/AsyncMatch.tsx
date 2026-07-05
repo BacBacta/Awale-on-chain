@@ -34,6 +34,7 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
   const [role, setRole] = useState<0 | 1 | null>(null);
   const [status, setStatus] = useState("Loading…");
   const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
+  const [copied, setCopied] = useState(false);
   const session = useRef<SessionKey | null>(null);
   const cfg = escrowConfig();
   const prevTurn = useRef<number | null>(null);
@@ -126,10 +127,28 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
     }
   }
 
-  function copyInvite() {
-    const url = `${window.location.origin}/play?async=${matchId}`;
-    if (navigator.share) navigator.share({ title: "Awalé", text: "Join my Awalé game", url }).catch(() => {});
-    else navigator.clipboard?.writeText(url).catch(() => {});
+  const inviteUrl = typeof window !== "undefined" ? `${window.location.origin}/play?async=${matchId}` : "";
+  async function copyInvite() {
+    // native share sheet first (best on mobile); if it's unavailable or the
+    // user cancels, fall back to the clipboard. Either way we confirm on
+    // screen — and the link is shown below so it ALWAYS works, even when the
+    // MiniPay webview blocks both share and clipboard (that silent failure was
+    // the "nothing happens" bug).
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: "Awalé", text: "Join my Awalé game", url: inviteUrl });
+        return;
+      }
+    } catch {
+      /* share cancelled/blocked — fall through to copy */
+    }
+    try {
+      await navigator.clipboard?.writeText(inviteUrl);
+    } catch {
+      /* clipboard blocked — the link on screen can be copied by hand */
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
   }
 
   async function rematch() {
@@ -189,13 +208,23 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
       </div>
 
       {data.open && (
-        <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
+        <div className="card stack" style={{ gap: 12, alignItems: "center", textAlign: "center" }}>
           <span className="chip positive">
             <span className="dot pulse" /> Waiting for an opponent
           </span>
-          <span className="muted">Share the link — your friend can join and play whenever. You'll be notified to come back.</span>
+          <span className="muted">Send this link — your friend joins and plays whenever. You&apos;ll be notified to come back.</span>
+          {/* the link is always visible & selectable, so inviting works even if
+              the webview blocks the share sheet and the clipboard */}
+          <input
+            readOnly
+            value={inviteUrl}
+            onFocus={(e) => e.currentTarget.select()}
+            aria-label="Invite link"
+            className="input"
+            style={{ fontSize: 12.5, textAlign: "center", width: "100%" }}
+          />
           <button className="btn block" onClick={copyInvite}>
-            <Icon name="share" size={17} /> Invite a friend
+            <Icon name="share" size={17} /> {copied ? "Link copied ✓" : "Copy invite link"}
           </button>
         </div>
       )}
