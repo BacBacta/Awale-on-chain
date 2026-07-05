@@ -3,11 +3,12 @@
 import { Icon } from "../../src/components/Icon.js";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { readContract, waitForTransactionReceipt } from "viem/actions";
+import { readContract } from "viem/actions";
 import { parseUnits, type Address } from "viem";
 import { getInjectedProvider, connect, publicClient, effectiveFeeCurrency } from "../../src/lib/minipay.js";
 import { escrowConfig } from "../../src/lib/escrow.js";
 import { fmt } from "../../src/lib/money.js";
+import { readWithRetry, sendWithStaleRetry, confirmTx } from "../../src/lib/tx.js";
 import {
   BOARD_SKINS,
   SEED_SKINS,
@@ -83,13 +84,17 @@ export default function Shop() {
   const refresh = useCallback(async () => {
     if (!cos || !cfg) return;
     const client = publicClient(cfg.rpcUrl, cfg.chainId);
-    setCurrency((await readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "currency" })) as Address);
+    setCurrency(
+      (await readWithRetry(() => readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "currency" }))) as Address,
+    );
     const paid = [...BOARD_SKINS, ...SEED_SKINS].filter((s) => s.itemId > 0);
 
     // real catalogue state (price / supply / sold-out) — independent of wallet
     const rows = await Promise.all(
       paid.map((s) =>
-        readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "items", args: [BigInt(s.itemId)] }).catch(() => null),
+        readWithRetry(() =>
+          readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "items", args: [BigInt(s.itemId)] }),
+        ).catch(() => null),
       ),
     );
     const cat: Record<number, { onSale: boolean; price: bigint; left: number | null }> = {};
@@ -104,7 +109,9 @@ export default function Shop() {
     if (!account) return;
     const bals = await Promise.all(
       paid.map((s) =>
-        readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "balanceOf", args: [account, BigInt(s.itemId)] }),
+        readWithRetry(() =>
+          readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "balanceOf", args: [account, BigInt(s.itemId)] }),
+        ),
       ),
     );
     const o: Record<number, boolean> = {};
@@ -154,7 +161,7 @@ export default function Shop() {
     setStatus(`${label}…`);
     try {
       const h = await fn();
-      await waitForTransactionReceipt(publicClient(cfg.rpcUrl, cfg.chainId), { hash: h });
+      await confirmTx(publicClient(cfg.rpcUrl, cfg.chainId), h, label);
       setStatus(`${label} ✓`);
       await refresh();
     } catch (e) {
@@ -170,7 +177,9 @@ export default function Shop() {
     if (!wallet || !account || !currency) return;
     const fee = feeCurrency();
     void run("Minting test aUSD", () =>
-      wallet.writeContract({ address: currency, abi: faucetAbi, functionName: "mint", args: [account, parseUnits("100", DECIMALS)], feeCurrency: fee }),
+      sendWithStaleRetry("Mint", () =>
+        wallet.writeContract({ address: currency, abi: faucetAbi, functionName: "mint", args: [account, parseUnits("100", DECIMALS)], feeCurrency: fee }),
+      ),
     );
   }
 
@@ -185,17 +194,20 @@ export default function Shop() {
     const fee = feeCurrency();
     void run(`Buying ${s.name}`, async () => {
       const client = publicClient(cfg!.rpcUrl, cfg!.chainId);
-      const allowance = (await readContract(client, {
-        address: currency,
-        abi: erc20Abi,
-        functionName: "allowance",
-        args: [account, cos],
-      })) as bigint;
+      // the allowance read is the first RPC hop and was the exact step forno
+      // dropped ("Failed to fetch") — retry it before giving up.
+      const allowance = (await readWithRetry(() =>
+        readContract(client, { address: currency, abi: erc20Abi, functionName: "allowance", args: [account, cos] }),
+      )) as bigint;
       if (allowance < cost) {
-        const ah = await wallet.writeContract({ address: currency, abi: erc20Abi, functionName: "approve", args: [cos, cost], feeCurrency: fee });
-        await waitForTransactionReceipt(client, { hash: ah });
+        const ah = await sendWithStaleRetry("Approval", () =>
+          wallet.writeContract({ address: currency, abi: erc20Abi, functionName: "approve", args: [cos, cost], feeCurrency: fee }),
+        );
+        await confirmTx(client, ah, "Approval");
       }
-      return wallet.writeContract({ address: cos, abi: cosmeticsAbi, functionName: "buy", args: [BigInt(s.itemId), 1n], feeCurrency: fee });
+      return sendWithStaleRetry("Purchase", () =>
+        wallet.writeContract({ address: cos, abi: cosmeticsAbi, functionName: "buy", args: [BigInt(s.itemId), 1n], feeCurrency: fee }),
+      );
     });
   }
 
@@ -320,7 +332,7 @@ export default function Shop() {
           )}
         </div>
       )}
-      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc3</span>
+      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc4</span>
     </main>
   );
 }
