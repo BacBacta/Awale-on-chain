@@ -355,6 +355,9 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
 
   /** (Re)schedule the clock against however much time the current mover has left. */
   function scheduleTurnClock(matchId: bigint, roomId: string, m: Match): void {
+    // Casual quick-match has NO move-clock — think as long as you like. Only
+    // staked play is timed (money can't sit locked in a match forever).
+    if (isCasualMatch(matchId)) return;
     const timer = setTimeout(() => onTurnClockExpired(matchId, roomId), msUntilExpiry(m));
     if ("unref" in timer) timer.unref?.();
     turnClockTimers.set(roomId, timer);
@@ -790,6 +793,9 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
       if (!seat || RECONNECT_GRACE_MS <= 0) return;
       const m = hub.get(BigInt(seat.roomId));
       if (!m || m.over || m.turn !== seat.player) return;
+      // casual is untimed — a drop never forfeits it (a free game just waits;
+      // the opponent can leave whenever). Only staked play forfeits on abandon.
+      if (isCasualMatch(BigInt(seat.roomId))) return;
       const key = `${seat.roomId}:${seat.player}`;
       if (graceUsed.has(key)) return;
       graceUsed.add(key);

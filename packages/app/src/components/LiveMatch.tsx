@@ -562,8 +562,11 @@ export function LiveMatch({
   const PER_MOVE_MS = 25_000; // displayed budget; server forfeits at 30s (latency grace)
 
   /** Remaining ms in the current turn for `player` (null if it's not their
-   *  move or the game is over). Same 10s window on both clients. */
+   *  move, the game is over, or the match is untimed). Casual quick-match has
+   *  NO move-clock — think as long as you like — so it returns null there and
+   *  no countdown / "hurry" warning ever shows. Only staked play is timed. */
   function perMoveRemaining(player: 0 | 1): number | null {
+    if (casualRole != null) return null; // untimed casual
     if (!state || state.over || state.turn !== player || !turnStartedAt) return null;
     return Math.max(0, PER_MOVE_MS - (Date.now() - turnStartedAt));
   }

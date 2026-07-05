@@ -68,7 +68,7 @@ export default function Guide() {
         Ways to play
       </span>
       <div className="stack" style={{ gap: 8 }}>
-        <Way icon="bolt" title="Quick match" sub="Free · live vs a real player · 25s per move" />
+        <Way icon="bolt" title="Quick match" sub="Free · live vs a real player · no clock" />
         <Way icon="versus" title="With a friend" sub="Free · share a link · play at your own pace" />
         <Way icon="wallet" title="For money" sub="You each stake $0.25–1 · winner takes 92%" />
         <Way icon="play" title="Practice vs AI" sub="Free · warm up anytime · pick your level" />
@@ -124,7 +124,7 @@ export default function Guide() {
       <div className="card stack" style={{ gap: 10 }}>
         <Point n={1}>18+ only. Stake what you can afford to lose — nothing more.</Point>
         <Point n={2}>
-          Timers keep games moving: live games give you 25 seconds per move (miss it and you forfeit — the app never plays for you); friend games allow days per move. If an
+          Take your time: Quick match has no clock. Only money games are timed — 25 seconds per move (miss it and you forfeit; the app never plays for you). Friend games allow days per move. If an
           opponent abandons a money game, you claim the win.
         </Point>
         <Point n={3}>Every fee and payout is shown before you commit. No hidden costs.</Point>

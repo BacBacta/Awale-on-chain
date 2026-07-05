@@ -8,7 +8,7 @@ import { GameHub } from "../src/hub.js";
 import { Matchmaker } from "../src/matchmaking.js";
 import { attachSocketIO, type ServerDeps, type SocketHandle } from "../src/server.js";
 import { InMemoryCashPairStore } from "../src/cash-pair-store.js";
-import { moveDigest } from "../src/eip712.js";
+import { moveDigest, resignDigest } from "../src/eip712.js";
 
 const VERIFIER: Address = "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3";
 const CHAIN_ID = 31337n;
@@ -200,12 +200,30 @@ describe("Socket.IO transport (integration)", () => {
       expect(ack2.depth).toBe(1); // one other waiter present
     });
 
-    it("casual: forfeits whoever's turn-clock expires, opponent wins, result reaches the profile hook", async () => {
+    it("casual is untimed: an idle player never forfeits (Quick Match has no move-clock)", async () => {
+      const hub = new GameHub();
+      // a 50ms move-clock WOULD forfeit instantly if casual were timed — it isn't
+      const port = await start(hub, { casualCtx: { chainId: CHAIN_ID, verifier: VERIFIER }, turnClockMs: 50 });
+      const { a, b, matchId } = await matchTwoCasualPlayers(port);
+      client = a;
+      client2 = b;
+      a.emit("watch", { matchId });
+      b.emit("watch", { matchId });
+
+      let over = false;
+      a.on("gameover", () => (over = true));
+      b.on("gameover", () => (over = true));
+      // neither player moves for well past the would-be clock window
+      await new Promise((r) => setTimeout(r, 400));
+      expect(over).toBe(false); // no forfeit — casual has no time limit
+      expect(hub.get(BigInt(matchId))).toBeDefined(); // match still live
+    });
+
+    it("casual: a resign ends the game and feeds the profile/Elo hook", async () => {
       const hub = new GameHub();
       const results: { players: [Address, Address]; winner: number }[] = [];
       const port = await start(hub, {
         casualCtx: { chainId: CHAIN_ID, verifier: VERIFIER },
-        turnClockMs: 50,
         onResult: (players, winner) => results.push({ players, winner }),
       });
       const { a, b, matchId, roleA, roleB, turn } = await matchTwoCasualPlayers(port);
@@ -213,48 +231,24 @@ describe("Socket.IO transport (integration)", () => {
       client2 = b;
       a.emit("watch", { matchId });
       b.emit("watch", { matchId });
+      await new Promise((r) => setTimeout(r, 20));
 
-      const mover = turn === roleA ? a : b;
-      const waiter = turn === roleA ? b : a;
+      // the player to move resigns → the opponent wins
+      const resigner = turn === roleA ? a : b;
+      const resignerAcct = turn === roleA ? acct0 : acct1;
       const expectedWinner = turn === roleA ? roleB : roleA;
-      void mover; // never plays — lets its clock run out
+      const sig = await resignerAcct.sign({ hash: resignDigest(BigInt(matchId), 0n, { chainId: CHAIN_ID, verifier: VERIFIER }) });
 
-      const gameover = new Promise<{ winner: number }>((resolve) => waiter.once("gameover", resolve));
+      const gameover = new Promise<{ winner: number }>((resolve) => a.once("gameover", resolve));
+      resigner.emit("resign", { matchId, player: turn, signature: sig });
       const msg = await gameover;
       expect(msg.winner).toBe(expectedWinner);
-      expect(hub.get(BigInt(matchId))).toBeUndefined(); // closed after the forfeit
-      // both wallet addresses + the winner made it to the Elo/profile feed
+      // both wallets + the winner reached the Elo/profile feed
       expect(results).toHaveLength(1);
       expect(results[0].winner).toBe(expectedWinner);
       expect(results[0].players.map((p) => p.toLowerCase()).sort()).toEqual(
         [acct0.address, acct1.address].map((p) => p.toLowerCase()).sort(),
       );
-    });
-
-    it("casual: a timely move hands the clock to the next mover, not a re-forfeit of the one who just played", async () => {
-      const hub = new GameHub();
-      const port = await start(hub, { casualCtx: { chainId: CHAIN_ID, verifier: VERIFIER }, turnClockMs: 80 });
-      const { a, b, matchId, roleA, roleB, turn } = await matchTwoCasualPlayers(port);
-      client = a;
-      client2 = b;
-      a.emit("watch", { matchId });
-      b.emit("watch", { matchId });
-
-      const mover = turn === roleA ? a : b;
-      const moverRole = turn === roleA ? roleA : roleB;
-      const house = hub.get(BigInt(matchId))!.legalMoves()[0];
-      const sig = await (turn === roleA ? acct0 : acct1).sign({
-        hash: moveDigest(BigInt(matchId), 0n, house, { chainId: CHAIN_ID, verifier: VERIFIER }),
-      });
-
-      const gameover = new Promise<{ winner: number }>((resolve) => a.once("gameover", resolve));
-      mover.emit("move", { matchId, player: turn, house, signature: sig });
-
-      // neither player moves again: whoever's turn it is *now* (the other
-      // player) should be the one whose clock expires — proving the timer
-      // followed the turn instead of re-punishing the player who just moved.
-      const msg = await gameover;
-      expect(msg.winner).toBe(moverRole);
     });
 
     it("staked timeout: forfeits into game-over (two-signature fast path), with claim-eligible only as the watchdog fallback", async () => {
