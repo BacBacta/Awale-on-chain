@@ -125,7 +125,7 @@ function isCasualMatch(matchId: bigint): boolean {
   return matchId >= CASUAL_ID_FLOOR;
 }
 
-const DEFAULT_TURN_CLOCK_MS = 30_000; // per-move backstop: the client auto-plays at 10s, this only fires for a truly-gone client
+const DEFAULT_TURN_CLOCK_MS = 30_000; // per-move forfeit clock. There is NO client auto-play on money games — this deadline is the real one, and every "state" broadcast carries it (turnDeadline) so clients count down to THIS clock.
 // The total per-player "blitz" clock is retired for money/live play: games now
 // run on a 10s-per-move rhythm with client auto-play, so there is no total-time
 // flag-fall (which was what produced the 10-minute frozen settlement screen).
@@ -145,6 +145,10 @@ export interface SocketHandle {
    *  an interval from main.ts so two people already in the queue match once
    *  their windows overlap, without needing a third arrival. */
   sweepQueues(): void;
+  /** Chain-reconciliation: drive the pairing handshake from on-chain events
+   *  when the one-shot cash-created / cash-joined socket events were lost. */
+  cashPairMatchCreated(creator: Address, matchId: bigint, token: string, stakeWei: string): void;
+  cashPairMatchJoined(matchId: bigint): void;
 }
 
 export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
@@ -360,6 +364,16 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     return Math.max(0, total === null ? perMove : Math.min(perMove, total));
   }
 
+  /** Server-authoritative turn deadline (epoch ms) for a timed match, or null
+   *  for casual/finished. Sent with every "state" so the client counts down
+   *  to the SAME clock the server forfeits on — the client used to show its
+   *  own 25s reset on local receive time while the server forfeited at 30s,
+   *  announcing forfeits 5s early and re-arming to full on every reconnect. */
+  function turnDeadlineOf(matchId: bigint, m: Match | undefined | null): number | null {
+    if (!m || m.over || isCasualMatch(matchId)) return null;
+    return Date.now() + msUntilExpiry(m);
+  }
+
   /** (Re)schedule the clock against however much time the current mover has left. */
   function scheduleTurnClock(matchId: bigint, roomId: string, m: Match): void {
     // Casual quick-match has NO move-clock — think as long as you like. Only
@@ -402,9 +416,9 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     // fast path (settleSigned, instant) — the opponent is normally still
     // here to co-sign — with the challenge-window claim only as the watchdog
     // fallback when they've truly disconnected. This is what killed the
-    // 10-minute frozen screen after a timeout. In practice the client's own
-    // 10s-per-move auto-play means the game usually reaches a natural end
-    // and this server backstop only fires on a genuinely abandoned game.
+    // 10-minute frozen screen after a timeout. There is NO client auto-play
+    // (the app never plays for a player on a money game), so this forfeit IS
+    // the normal ending for a player who stops moving.
     try {
       const state = hub.forfeit(matchId, timedOutPlayer);
       announceGameOver(matchId, roomId, state);
@@ -440,7 +454,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     graceUsed.delete(`${roomId}:0`);
     graceUsed.delete(`${roomId}:1`);
     const gm = hub.get(matchId);
-    io.to(roomId).emit("state", { matchId: roomId, state, ply: gm?.ply ?? 0, clocks: gm ? clocksOf(gm) : null });
+    io.to(roomId).emit("state", { matchId: roomId, state, ply: gm?.ply ?? 0, clocks: gm ? clocksOf(gm) : null, turnDeadline: null });
     io.to(roomId).emit("gameover", { matchId: roomId, winner: state.winner });
     deps.onGameOver?.(matchId, state.winner);
 
@@ -719,7 +733,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
         await deps.openFromChain(matchId).catch(() => {});
         m = hub.get(matchId);
       }
-      if (m) socket.emit("state", { matchId: msg.matchId, state: m.state, ply: m.ply, clocks: clocksOf(m) });
+      if (m) socket.emit("state", { matchId: msg.matchId, state: m.state, ply: m.ply, clocks: clocksOf(m), turnDeadline: turnDeadlineOf(matchId, m) });
       if (msg.player === 0 || msg.player === 1) socketSeats.set(socket.id, { roomId: msg.matchId, player: msg.player });
       armTurnClockIfNeeded(matchId, msg.matchId);
     });
@@ -752,8 +766,8 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
             announceGameOver(matchId, msg.matchId, state);
           } else {
             const mm = hub.get(matchId);
-            io.to(msg.matchId).emit("state", { matchId: msg.matchId, state, ply: mm?.ply ?? 0, clocks: mm ? clocksOf(mm) : null });
-            rearmTurnClock(matchId, msg.matchId);
+            rearmTurnClock(matchId, msg.matchId); // re-arm FIRST so the broadcast deadline is the fresh turn's
+            io.to(msg.matchId).emit("state", { matchId: msg.matchId, state, ply: mm?.ply ?? 0, clocks: mm ? clocksOf(mm) : null, turnDeadline: turnDeadlineOf(matchId, mm) });
           }
         } catch (err) {
           socket.emit("error", { message: (err as Error).message });
@@ -873,6 +887,35 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
         pendingCashAbort.set(pair.creator.toLowerCase(), reason);
         pendingCashAbort.set(pair.joiner.toLowerCase(), reason);
       });
+    },
+    // Chain-reconciliation for the pairing handshake: the cash-created /
+    // cash-joined socket events are one-shot — a mobile blink at the wrong
+    // moment used to dead-end the pair for 240s with the creator's money
+    // already on the table. The chain itself is the source of truth, so the
+    // on-chain event watchers drive the SAME transitions as the lost events.
+    cashPairMatchCreated(creator, matchId, token, stakeWei) {
+      for (const pair of cashPairs.values()) {
+        if (pair.creator.toLowerCase() === creator.toLowerCase() && !pair.matchId) {
+          pair.matchId = matchId.toString();
+          void deps.cashPairStore?.put({ creator: pair.creator, joiner: pair.joiner, stakeKey: pair.stakeKey, matchId: pair.matchId, createdAt: Date.now() });
+          io.to(pair.joinerSocket).emit("cash-join", { matchId: pair.matchId, token, stakeWei });
+          console.log(`[cash] pair for match ${pair.matchId} recovered from MatchCreated (socket event lost)`);
+          return;
+        }
+      }
+    },
+    cashPairMatchJoined(matchId) {
+      const idStr = matchId.toString();
+      for (const [creator, pair] of cashPairs) {
+        if (pair.matchId === idStr) {
+          clearTimeout(pair.timer);
+          cashPairs.delete(creator);
+          void deps.cashPairStore?.remove(pair.creator);
+          io.to(creator).emit("cash-ready", { matchId: idStr });
+          console.log(`[cash] pair for match ${idStr} released by MatchJoined (socket event lost)`);
+          return;
+        }
+      }
     },
   };
 }

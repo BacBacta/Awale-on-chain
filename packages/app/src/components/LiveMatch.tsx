@@ -113,6 +113,12 @@ export function LiveMatch({
   // when the current turn began — set from the last state broadcast so both
   // clients agree on the countdown.
   const [turnStartedAt, setTurnStartedAt] = useState(0);
+  // server-authoritative deadline (epoch ms) for the current turn — the ONE
+  // clock the server actually forfeits on. The local 25s-from-receipt estimate
+  // is only the fallback for an older server that doesn't send it: it drifted
+  // with latency, restarted at full on every reconnect, and announced
+  // forfeits 5s before the server's real 30s.
+  const [turnDeadline, setTurnDeadline] = useState<number | null>(null);
   // Same-opponent rematch handshake (offer → accept → new game, no lobby).
   const [rematchState, setRematchState] = useState<"idle" | "offered" | "incoming" | "declined">("idle");
   const rematchSession = useRef<SessionKey | null>(null); // the NEW casual match's key
@@ -270,11 +276,12 @@ export function LiveMatch({
       });
       sock.on("disconnect", () => setConnLost(true));
       sock.io.on("reconnect", () => setConnLost(false));
-      sock.on("state", (msg: { state: GameState; ply: number; clocks?: [number, number] | null }) => {
+      sock.on("state", (msg: { state: GameState; ply: number; clocks?: [number, number] | null; turnDeadline?: number | null }) => {
         setState(msg.state);
         setPly(msg.ply);
         setTimedOut(false); // the game moved on — the eligibility notice is stale
-        if (!msg.state.over) setTurnStartedAt(Date.now()); // fresh 10s for this turn
+        setTurnDeadline(msg.state.over ? null : (msg.turnDeadline ?? null));
+        if (!msg.state.over) setTurnStartedAt(Date.now()); // legacy fallback only
       });
       sock.on("gameover", async (msg: { winner: number }) => {
         setStatus(msg.winner === myRole ? "You win 🎉" : msg.winner === 2 ? "Draw" : "You lose");
@@ -672,15 +679,20 @@ export function LiveMatch({
     return () => clearInterval(iv);
   }, [state === null, state?.over]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const PER_MOVE_MS = 25_000; // displayed budget; server forfeits at 30s (latency grace)
+  const PER_MOVE_MS = 25_000; // legacy fallback budget when the server sends no deadline
 
   /** Remaining ms in the current turn for `player` (null if it's not their
    *  move, the game is over, or the match is untimed). Casual quick-match has
    *  NO move-clock — think as long as you like — so it returns null there and
-   *  no countdown / "hurry" warning ever shows. Only staked play is timed. */
+   *  no countdown / "hurry" warning ever shows. Only staked play is timed.
+   *  The countdown tracks the SERVER's deadline when it sends one — the same
+   *  clock it forfeits on — so display and reality can't disagree. There is
+   *  no auto-play on a money game; missing the deadline forfeits. */
   function perMoveRemaining(player: 0 | 1): number | null {
     if (casualRole != null) return null; // untimed casual
-    if (!state || state.over || state.turn !== player || !turnStartedAt) return null;
+    if (!state || state.over || state.turn !== player) return null;
+    if (turnDeadline !== null) return Math.max(0, turnDeadline - Date.now());
+    if (!turnStartedAt) return null;
     return Math.max(0, PER_MOVE_MS - (Date.now() - turnStartedAt));
   }
 

@@ -490,3 +490,62 @@ describe("cash queue UX (integration)", () => {
     expect(msg.reason).toMatch(/opponent left/i);
   });
 });
+
+describe("wave C (integration)", () => {
+  const TOKEN = "0x0000000000000000000000000000000000000001" as Address;
+
+  it("a staked match's state carries the server's turnDeadline (the clock it forfeits on)", async () => {
+    const hub = new GameHub();
+    hub.open({
+      matchId: 9n,
+      chainId: CHAIN_ID,
+      verifier: VERIFIER,
+      sessions: [acct0.address, acct1.address],
+      startTurn: 0,
+    });
+    const port = await start(hub, { turnClockMs: 30_000 });
+    const a = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+    client = a;
+    const st = await new Promise<{ turnDeadline?: number | null }>((resolve) => {
+      a.on("connect", () => a.emit("watch", { matchId: "9", player: 0 }));
+      a.once("state", resolve);
+    });
+    expect(typeof st.turnDeadline).toBe("number");
+    const msLeft = (st.turnDeadline as number) - Date.now();
+    expect(msLeft).toBeGreaterThan(20_000);
+    expect(msLeft).toBeLessThanOrEqual(30_500);
+  });
+
+  it("chain events drive the pairing when the socket events are lost", async () => {
+    const hub = new GameHub();
+    const port = await start(hub, {});
+    const a = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+    const b = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+    client = a;
+    client2 = b;
+    const matchedA = new Promise<{ role: string }>((r) => a.once("cash-matched", r));
+    const matchedB = new Promise<{ role: string }>((r) => b.once("cash-matched", r));
+    await waitConnect(a);
+    a.emit("cash-queue", { address: acct0.address, stakeWei: "1000000", token: TOKEN, v: 2 });
+    await waitConnect(b);
+    b.emit("cash-queue", { address: acct1.address, stakeWei: "1000000", token: TOKEN, v: 2 });
+    const [mA] = await Promise.all([matchedA, matchedB]);
+    // don't assume which side the server made creator — read it
+    const creatorAddr = mA.role === "create" ? acct0.address : acct1.address;
+    const creatorSock = mA.role === "create" ? a : b;
+    const joinerSock = mA.role === "create" ? b : a;
+
+    // the creator's cash-created is LOST — the MatchCreated chain event
+    // must hand the joiner their cash-join anyway
+    const joinMsg = new Promise<{ matchId: string; token?: string; stakeWei?: string }>((r) => joinerSock.once("cash-join", r));
+    lastHandle.cashPairMatchCreated(creatorAddr, 46n, TOKEN.toLowerCase(), "1000000");
+    const j = await joinMsg;
+    expect(j.matchId).toBe("46");
+    expect(j.stakeWei).toBe("1000000");
+
+    // the joiner's cash-joined is LOST too — MatchJoined must release the creator
+    const ready = new Promise<{ matchId: string }>((r) => creatorSock.once("cash-ready", r));
+    lastHandle.cashPairMatchJoined(46n);
+    expect((await ready).matchId).toBe("46");
+  });
+});

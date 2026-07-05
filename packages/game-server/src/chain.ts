@@ -17,6 +17,7 @@ import {
   type Account,
   type Address,
   type Hex,
+  fallback,
 } from "viem";
 import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import type { Transcript } from "./match.js";
@@ -102,6 +103,9 @@ const escrowAbi = [
 
 export interface SettlementClientOptions {
   rpcUrl: string;
+  /** Backup RPC endpoints — the settlement path (finalize/void/settleSigned)
+   *  must not die with a single flaky node. */
+  fallbackRpcUrls?: string[];
   escrow: Address;
   account: Account;
   /** feeCurrency adapter address paid for the network fee (CIP-64). */
@@ -121,8 +125,12 @@ export class SettlementClient {
     this.escrow = opts.escrow;
     this.feeCurrency = opts.feeCurrency;
     const chain = chainFor(opts.chainId ?? celo.id);
-    this.wallet = createWalletClient({ account: opts.account, chain, transport: http(opts.rpcUrl) });
-    this.publicClient = createPublicClient({ chain, transport: http(opts.rpcUrl) });
+    const backups = (opts.fallbackRpcUrls ?? []).filter((u) => u && u !== opts.rpcUrl);
+    const transport = backups.length
+      ? fallback([http(opts.rpcUrl, { timeout: 20_000, retryCount: 1 }), ...backups.map((u) => http(u, { timeout: 15_000, retryCount: 1 }))])
+      : http(opts.rpcUrl);
+    this.wallet = createWalletClient({ account: opts.account, chain, transport });
+    this.publicClient = createPublicClient({ chain, transport });
   }
 
   /** Happy path: both session keys signed the result. */

@@ -7,7 +7,7 @@
 
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import { createPublicClient, createWalletClient, http, parseAbiItem, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, fallback, http, parseAbiItem, type Address, type Hex } from "viem";
 import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { createNonceManager, jsonRpc } from "viem/nonce";
@@ -19,6 +19,9 @@ import { SettlementCoordinator } from "./settlement-coordinator.js";
 import { keeperActions, runKeeper, idsToRescan, EscrowStatus, type KeeperMatch } from "./keeper.js";
 import { AsyncMatchService } from "./async-match.js";
 import { InMemoryMatchStore, type MatchStore } from "./persistence/store.js";
+import { InMemoryLiveMatchStore } from "./store/memory.js";
+import { RedisLiveMatchStore } from "./store/redis.js";
+import type { LiveMatchStore } from "./store/types.js";
 import { RedisMatchStore } from "./persistence/redis-store.js";
 import { InMemoryCashPairStore, RedisCashPairStore, type CashPairStore } from "./cash-pair-store.js";
 import IORedis from "ioredis";
@@ -118,13 +121,39 @@ function chainFor(id: number) {
   return celo;
 }
 
+// Live-match snapshots (crash/deploy recovery): the hub persists every move
+// through this handle, so a deploy mid-game no longer loses the signed
+// transcript (which made staked matches unsettleable — money locked to TTL).
+// A tiny delegating proxy lets the hub capture ONE stable reference while the
+// backing store is swapped to Redis lower down (the REDIS_URL wiring runs
+// after the hub must already exist).
+let liveMatchBacking: LiveMatchStore = new InMemoryLiveMatchStore();
+const liveMatchStore: LiveMatchStore = {
+  save: (snap) => liveMatchBacking.save(snap),
+  load: (id) => liveMatchBacking.load(id),
+  remove: (id) => liveMatchBacking.remove(id),
+  list: () => liveMatchBacking.list(),
+};
+
 // 30s timeout (default 10s): the public Celo Sepolia RPC (forno) is often slow
 // from Fly, which was timing out the tournament lobby sync's nextTournamentId read.
+// Fallback endpoints (same medicine the app client takes): forno's nodes drop
+// requests, and the server had a SINGLE endpoint — RPC down meant the whole
+// matchmaking→settlement pipeline down. Override with RPC_FALLBACK_URLS.
+const DEFAULT_FALLBACK_RPCS: Record<number, string[]> = {
+  11142220: ["https://celo-sepolia.drpc.org", "https://rpc.ankr.com/celo_sepolia"],
+};
+const RPC_FALLBACKS = (process.env.RPC_FALLBACK_URLS?.split(",").map((u) => u.trim()).filter(Boolean) ?? DEFAULT_FALLBACK_RPCS[CHAIN_ID] ?? []).filter(
+  (u) => u !== RPC_URL,
+);
+const rpcTransport = RPC_FALLBACKS.length
+  ? fallback([http(RPC_URL, { timeout: 20_000, retryCount: 1 }), ...RPC_FALLBACKS.map((u) => http(u, { timeout: 15_000, retryCount: 1 }))])
+  : http(RPC_URL, { timeout: 30_000, retryCount: 2 });
 const publicClient = createPublicClient({
   chain: chainFor(CHAIN_ID),
-  transport: http(RPC_URL, { timeout: 30_000, retryCount: 2 }),
+  transport: rpcTransport,
 });
-const hub = new GameHub();
+const hub = new GameHub(undefined, liveMatchStore);
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -165,6 +194,7 @@ let settlement: SettlementClient | undefined;
 if (operatorAccount) {
   settlement = new SettlementClient({
     rpcUrl: RPC_URL,
+    fallbackRpcUrls: RPC_FALLBACKS,
     escrow: ESCROW,
     account: operatorAccount,
     feeCurrency: FEE_CURRENCY,
@@ -227,6 +257,7 @@ if (process.env.REDIS_URL) {
   inboxStore = new RedisInboxStore(redis);
   personhood = new RedisPersonhoodRegistry(redis);
   cashPairStore = new RedisCashPairStore(redis);
+  liveMatchBacking = new RedisLiveMatchStore(redis);
   kv = redis;
   console.log("stores: redis (async, social, push subscriptions, profiles, league, ledger, inbox, personhood, cash-pairs)");
 } else {
@@ -887,6 +918,18 @@ async function openFromChain(matchId: bigint): Promise<void> {
   if (hydrating.has(key)) return;
   hydrating.add(key);
   try {
+    // snapshot first: a persisted transcript restores the game EXACTLY where
+    // it was (moves + signatures), where a chain rebuild can only restart the
+    // board at ply 0 and lose the settle/dispute material
+    if (!hub.get(matchId)) {
+      const snap = await liveMatchStore.load(matchId).catch(() => null);
+      if (snap) {
+        hub.restore(snap);
+        tracked.add(key);
+        console.log(`[hydrate] match ${key} restored from snapshot (ply ${snap.moves.length})`);
+        return;
+      }
+    }
     const read = async () =>
       (await publicClient.readContract({
         address: ESCROW,
@@ -993,6 +1036,9 @@ if (settlement) {
     escrow: ESCROW,
     finalize: async (matchId) => {
       tracked.add(matchId.toString()); // keeper now watches this match's lifecycle
+      // a lost cash-joined socket event no longer strands the pair — the
+      // chain event drives the same release
+      socketHandle.cashPairMatchJoined(matchId);
       try {
         await settlement!.finalizeStart(matchId);
       } catch {
@@ -1001,6 +1047,47 @@ if (settlement) {
     },
   });
 }
+
+// Chain-reconciliation for the CREATE leg of a cash pair: if the creator's
+// one-shot cash-created socket event is lost (mobile blink), the joiner never
+// gets cash-join and the pair dies at 240s with real money staked. The
+// MatchCreated event carries everything the relay needs.
+publicClient.watchContractEvent({
+  address: ESCROW,
+  abi: matchEscrowAbi,
+  eventName: "MatchCreated",
+  onLogs: (logs) => {
+    for (const log of logs) {
+      const a = log.args as { matchId?: bigint; player0?: Address; token?: Address; stake?: bigint };
+      if (a.matchId !== undefined && a.player0 && a.token) {
+        socketHandle.cashPairMatchCreated(a.player0, a.matchId, a.token.toLowerCase(), (a.stake ?? 0n).toString());
+      }
+    }
+  },
+  onError: () => {
+    /* forno rejects filters sometimes — the socket event stays the primary leg */
+  },
+});
+
+// Boot: restore live matches from their persisted snapshots — a deploy
+// mid-game used to reset boards to ply 0 and lose the signed transcript.
+void (async () => {
+  try {
+    const ids = await liveMatchStore.list();
+    let restored = 0;
+    for (const id of ids) {
+      if (hub.get(id)) continue;
+      const snap = await liveMatchStore.load(id).catch(() => null);
+      if (!snap) continue;
+      hub.restore(snap);
+      if (id < 1n << 200n) tracked.add(id.toString()); // staked → keeper watches it
+      restored++;
+    }
+    if (restored > 0) console.log(`[hydrate] restored ${restored} live match(es) from snapshots`);
+  } catch (e) {
+    console.warn(`[hydrate] snapshot restore failed: ${(e as Error).message}`);
+  }
+})();
 
 // Keeper loop: finalize proposed results past their challenge window, fix the
 // first move when its reveal block is mined, and void matches that expired.
@@ -1181,6 +1268,7 @@ watchStartFinalized(
 async function onSettled(matchId: bigint, winner: number, prizeWei: bigint, at: Date): Promise<void> {
   const key = matchId.toString();
   if (!(await ledger.claim(key))) return;
+  hub.close(matchId); // done on-chain — free the room and its snapshot
   const m = (await publicClient.readContract({
     address: ESCROW,
     abi: matchEscrowAbi,

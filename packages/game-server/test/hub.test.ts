@@ -73,3 +73,47 @@ describe("GameHub", () => {
     expect(() => hub.forfeit(999n, 0)).toThrow("no such match");
   });
 });
+
+describe("GameHub snapshots (crash/deploy recovery)", () => {
+  const cfg = {
+    matchId: 42n,
+    chainId: CHAIN_ID,
+    verifier: VERIFIER,
+    sessions: [acct0.address, acct1.address] as [Address, Address],
+    startTurn: 0 as const,
+  };
+
+  it("persists on open and forfeit; a new hub restores the exact state", async () => {
+    const { InMemoryLiveMatchStore } = await import("../src/store/memory.js");
+    const store = new InMemoryLiveMatchStore();
+    const hub = new GameHub(undefined, store);
+    hub.open(cfg);
+    // persistence is fire-and-forget — settle the microtask queue
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await store.load(42n)).not.toBeNull();
+
+    // a forfeit ends the match without a move — the snapshot must carry it
+    hub.forfeit(42n, 1);
+    await new Promise((r) => setTimeout(r, 0));
+    const snap = (await store.load(42n))!;
+    expect(snap.terminal?.winner).toBe(0);
+
+    // deploy simulation: a brand-new hub, restored from the store
+    const hub2 = new GameHub(undefined, store);
+    hub2.restore(snap);
+    const m = hub2.get(42n)!;
+    expect(m.state.over).toBe(true);
+    expect(m.state.winner).toBe(0);
+  });
+
+  it("close() drops the snapshot too — settled matches don't linger", async () => {
+    const { InMemoryLiveMatchStore } = await import("../src/store/memory.js");
+    const store = new InMemoryLiveMatchStore();
+    const hub = new GameHub(undefined, store);
+    hub.open(cfg);
+    await new Promise((r) => setTimeout(r, 0));
+    hub.close(42n);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(await store.load(42n)).toBeNull();
+  });
+});
