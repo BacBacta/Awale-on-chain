@@ -174,12 +174,12 @@ export default function Lobby() {
           style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(11,10,8,0.12) 20%, rgba(11,10,8,0.72) 72%, rgba(11,10,8,0.92))" }}
         />
         <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 6 }}>
-          <span className="display" style={{ fontSize: 27, lineHeight: 1.06, textShadow: "0 2px 22px rgba(0,0,0,0.75)" }}>
+          <span className="display animate-in" style={{ fontSize: 27, lineHeight: 1.06, textShadow: "0 2px 22px rgba(0,0,0,0.75)", animationDelay: "40ms" }}>
             Play Awalé,
             <br />
-            win real money
+            win <span className="gold-text">real money</span>
           </span>
-          <span className="muted" style={{ fontSize: 13 }}>
+          <span className="muted animate-in" style={{ fontSize: 13, animationDelay: "130ms" }}>
             Play free or for money — every match climbs your rank.
           </span>
         </div>

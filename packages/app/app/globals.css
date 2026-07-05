@@ -594,14 +594,54 @@ body {
   }
 }
 
+/* the primary CTA breathes a soft green glow — a game-app "press me" pulse */
+@keyframes cta-breathe {
+  0%,
+  100% {
+    box-shadow:
+      0 8px 22px rgba(76, 229, 132, 0.28),
+      0 0 0 0 rgba(76, 229, 132, 0);
+  }
+  50% {
+    box-shadow:
+      0 12px 30px rgba(76, 229, 132, 0.42),
+      0 0 22px 2px rgba(76, 229, 132, 0.16);
+  }
+}
+.btn.shine {
+  animation: cta-breathe 3.6s ease-in-out infinite;
+}
+.btn.shine:active {
+  animation: none;
+}
+
+/* animated gold on the money words — a slow premium shimmer, not a flash */
+.gold-text {
+  background: linear-gradient(96deg, var(--gold) 0%, #ffe7ad 38%, var(--gold) 72%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: gold-shimmer 5.5s var(--ease-out) infinite;
+}
+@keyframes gold-shimmer {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
 /* the self-playing board, floating as a living backdrop behind the headline */
 .hero-board {
   position: absolute;
   inset: 0;
-  opacity: 0.52;
+  opacity: 0.6;
   display: grid;
   place-items: center;
-  filter: blur(0.5px) saturate(1.06);
+  filter: blur(0.5px) saturate(1.12);
   -webkit-mask-image: radial-gradient(135% 82% at 50% 20%, #000 34%, transparent 74%);
   mask-image: radial-gradient(135% 82% at 50% 20%, #000 34%, transparent 74%);
   animation: float 6.5s var(--ease-out) infinite;
