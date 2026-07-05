@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { readContract, getLogs } from "viem/actions";
+import { readContract, getLogs, getBlockNumber } from "viem/actions";
 import { parseAbiItem, type Address } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
 import { escrowConfig } from "../lib/escrow.js";
@@ -13,6 +13,48 @@ import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
 const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
 const SETTLED = parseAbiItem("event MatchSettled(uint256 indexed matchId, uint8 winner, uint256 prize)");
+
+const LOG_WINDOW = 9000n; // forno caps getLogs ranges (~10k blocks)
+const MAX_LOOKBACK = 400_000n; // how far back to hunt for a match's settlement
+
+/** Find the MatchSettled outcome (winner + prize) for each of `ids`, scanning
+ *  the chain in forno-sized windows from the tip backward and stopping early
+ *  once every id is accounted for. Never throws — a window that fails is
+ *  skipped, so partial results still beat the old all-or-nothing [0,latest]. */
+async function settledOutcomes(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any,
+  escrow: Address,
+  ids: bigint[],
+): Promise<Map<string, { winner: number; prize: bigint }>> {
+  const out = new Map<string, { winner: number; prize: bigint }>();
+  const need = new Set(ids.map((i) => i.toString()));
+  let tip: bigint;
+  try {
+    tip = await getBlockNumber(client);
+  } catch {
+    return out;
+  }
+  const floor = tip > MAX_LOOKBACK ? tip - MAX_LOOKBACK : 0n;
+  let to = tip;
+  while (to >= floor && need.size > 0) {
+    const from = to > LOG_WINDOW ? to - LOG_WINDOW + 1n : 0n;
+    try {
+      const logs = await getLogs(client, { address: escrow, event: SETTLED, args: { matchId: ids }, fromBlock: from, toBlock: to });
+      for (const l of logs) {
+        const a = l.args as { matchId?: bigint; winner?: number; prize?: bigint };
+        if (a.matchId == null) continue;
+        out.set(a.matchId.toString(), { winner: Number(a.winner), prize: a.prize ?? 0n });
+        need.delete(a.matchId.toString());
+      }
+    } catch {
+      /* skip a window the RPC rejected */
+    }
+    if (from === 0n) break;
+    to = from - 1n;
+  }
+  return out;
+}
 
 interface Stats {
   played: number;
@@ -63,23 +105,12 @@ export function PlayerStats() {
       }
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
 
-      // one pass for the settled outcomes among our matches
-      const winnerOf = new Map<string, { winner: number; prize: bigint }>();
-      try {
-        const logs = await getLogs(client, {
-          address: cfg.escrow,
-          event: SETTLED,
-          args: { matchId: ids },
-          fromBlock: 0n,
-          toBlock: "latest",
-        });
-        for (const l of logs) {
-          const a = l.args as { matchId?: bigint; winner?: number; prize?: bigint };
-          if (a.matchId != null) winnerOf.set(a.matchId.toString(), { winner: Number(a.winner), prize: a.prize ?? 0n });
-        }
-      } catch {
-        /* RPC may reject wide ranges — fall back to status-only counts */
-      }
+      // Settled outcomes among our matches. The public RPC (forno) rejects a
+      // getLogs over a wide block range, so a single [0, latest] scan silently
+      // failed — leaving winnerOf empty and Net winnings / won / lost frozen at
+      // zero (the "placeholder, not connected" bug). Scan in bounded windows
+      // from the tip backward, stopping as soon as every match is found.
+      const winnerOf = await settledOutcomes(client, cfg.escrow, ids);
 
       const s: Stats = { played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n };
       for (const id of ids) {
