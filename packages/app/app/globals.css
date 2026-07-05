@@ -563,6 +563,78 @@ body {
   animation-delay: calc(var(--i, 0) * 55ms);
 }
 
+/* ============================ premium home motion ======================== */
+@keyframes float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-9px);
+  }
+}
+@keyframes glow-breathe {
+  0%,
+  100% {
+    opacity: 0.4;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+@keyframes sheen {
+  0% {
+    transform: translateX(-140%) skewX(-18deg);
+  }
+  55%,
+  100% {
+    transform: translateX(280%) skewX(-18deg);
+  }
+}
+
+/* the self-playing board, floating as a living backdrop behind the headline */
+.hero-board {
+  position: absolute;
+  inset: 0;
+  opacity: 0.52;
+  display: grid;
+  place-items: center;
+  filter: blur(0.5px) saturate(1.06);
+  -webkit-mask-image: radial-gradient(135% 82% at 50% 20%, #000 34%, transparent 74%);
+  mask-image: radial-gradient(135% 82% at 50% 20%, #000 34%, transparent 74%);
+  animation: float 6.5s var(--ease-out) infinite;
+  pointer-events: none;
+}
+/* a warm ambient glow that gently breathes under the board */
+.hero-glow {
+  position: absolute;
+  inset: -30% -12% 18% -12%;
+  background:
+    radial-gradient(55% 60% at 50% 30%, rgba(76, 229, 132, 0.22), transparent 70%),
+    radial-gradient(48% 52% at 72% 16%, rgba(246, 200, 99, 0.15), transparent 72%);
+  animation: glow-breathe 5.5s var(--ease-out) infinite;
+  pointer-events: none;
+}
+
+/* premium light-sweep across a primary CTA — the "shine" of a game-app button */
+.btn.shine {
+  overflow: hidden;
+}
+.btn.shine::after {
+  content: "";
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  left: 0;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.38), transparent);
+  transform: translateX(-140%) skewX(-18deg);
+  animation: sheen 4.8s var(--ease-out) infinite 1.2s;
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

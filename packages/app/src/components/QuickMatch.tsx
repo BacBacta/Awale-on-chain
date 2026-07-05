@@ -108,7 +108,7 @@ export function QuickMatch({ account, autoStart }: { account?: Address; autoStar
   if (!SERVER_URL) {
     // server not configured — still give a game: straight to the AI
     return (
-      <a className="btn block" href="/play" style={{ fontSize: 16, padding: "12px 18px" }}>
+      <a className="btn block shine" href="/play" style={{ fontSize: 16, padding: "12px 18px" }}>
         {face}
       </a>
     );
@@ -127,7 +127,7 @@ export function QuickMatch({ account, autoStart }: { account?: Address; autoStar
       <Icon name="spinner" size={18} /> Finding an opponent… · tap to cancel
     </button>
   ) : (
-    <button className="btn block" onClick={find} style={{ fontSize: 16, padding: "12px 18px" }}>
+    <button className="btn block shine" onClick={find} style={{ fontSize: 16, padding: "12px 18px" }}>
       {face}
     </button>
   );

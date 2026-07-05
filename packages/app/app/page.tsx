@@ -159,32 +159,25 @@ export default function Lobby() {
       {/* what happened while you were away — push's guaranteed fallback */}
       <InboxCard address={address} />
 
-      {/* hero — tight: the headline earns ~2 lines, not a quarter of the screen */}
-      <div className="card animate-in" style={{ position: "relative", overflow: "hidden", padding: "16px 18px" }}>
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            inset: 0,
-            opacity: 0.22,
-            display: "grid",
-            placeItems: "center",
-            filter: "blur(5px)",
-            WebkitMaskImage: "radial-gradient(130% 75% at 50% 28%, #000 30%, transparent 70%)",
-            maskImage: "radial-gradient(130% 75% at 50% 28%, #000 30%, transparent 70%)",
-          }}
-        >
-          <div style={{ width: "168%", transform: "translateY(-30%)" }}>
+      {/* hero — a living, floating board as the centerpiece, a breathing glow
+          under it, and the headline over a legibility gradient. Reads like a
+          game splash, not a text banner. */}
+      <div className="card animate-in" style={{ position: "relative", overflow: "hidden", padding: "24px 18px 20px", minHeight: 156 }}>
+        <div aria-hidden className="hero-glow" />
+        <div aria-hidden className="hero-board">
+          <div style={{ width: "156%", transform: "translateY(-26%)" }}>
             <HeroBoard />
           </div>
         </div>
         <div
           aria-hidden
-          style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(11,10,8,0.3), rgba(11,10,8,0.86))" }}
+          style={{ position: "absolute", inset: 0, background: "linear-gradient(180deg, rgba(11,10,8,0.12) 20%, rgba(11,10,8,0.72) 72%, rgba(11,10,8,0.92))" }}
         />
-        <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 4 }}>
-          <span className="display" style={{ fontSize: 24, textShadow: "0 2px 16px rgba(0,0,0,0.6)" }}>
-            Play Awalé, win real money
+        <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: 6 }}>
+          <span className="display" style={{ fontSize: 27, lineHeight: 1.06, textShadow: "0 2px 22px rgba(0,0,0,0.75)" }}>
+            Play Awalé,
+            <br />
+            win real money
           </span>
           <span className="muted" style={{ fontSize: 13 }}>
             Play free, or put a few dollars on a match.
@@ -195,7 +188,7 @@ export default function Lobby() {
       {/* THE decision, sized by importance: one dominant button, two smaller
           siblings. Everything below this block is habit or help — visibly
           lighter, so the screen reads as a game, not a menu. */}
-      <div className="stack" style={{ gap: 10 }}>
+      <div className="stack animate-in" style={{ gap: 10, animationDelay: "70ms" }}>
         <QuickMatch account={address ?? undefined} autoStart={autoPlay} />
         <div className="row" style={{ gap: 8 }}>
           <Link className="btn secondary" href="/matches" style={{ flex: 1, justifyContent: "center", gap: 6, padding: "10px 12px" }}>
@@ -267,7 +260,7 @@ export default function Lobby() {
       )}
 
       {/* daily habits — two slim rows, not a wall */}
-      <div className="stack" style={{ gap: 8 }}>
+      <div className="stack animate-in" style={{ gap: 8, animationDelay: "140ms" }}>
         <NavRow
           href="/daily"
           icon="bolt"
