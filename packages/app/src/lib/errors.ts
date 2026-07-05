@@ -25,7 +25,7 @@ const RULES: Rule[] = [
   // network
   { test: /invalid chain id|chain mismatch|does not match the target chain/i, msg: "Wrong network — switch your wallet to Celo and retry." },
   { test: /nonce|replacement transaction underpriced/i, msg: "Network was busy — please retry." },
-  { test: /timeout|timed out|network|fetch failed|econnreset/i, msg: "Network hiccup — please retry." },
+  { test: /timeout|timed out|network|fetch failed|failed to fetch|http request failed|load failed|econnreset/i, msg: "Network hiccup — please retry." },
 ];
 
 export function humanizeError(e: unknown): string {

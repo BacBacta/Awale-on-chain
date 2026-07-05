@@ -33,8 +33,32 @@ export async function confirmTx(client: Client, hash: Hex, label: string): Promi
   throw new Error(`${label} is taking unusually long — check Your matches before retrying.`);
 }
 
+// A dropped request against the load-balanced RPC — the browser/webview
+// surfaces this as "Failed to fetch" / "HTTP request failed" (forno rotating a
+// bad node, a flaky preflight, a transient network blip). Read-only calls that
+// hit it should simply try again, not fail the user's action.
+const NETWORK_DROP = /failed to fetch|http request failed|fetch failed|load failed|networkerror|timeout|timed out|econnreset|econnrefused/i;
+
+/** Retry a read (eth_call) when the RPC drops the request. Transient forno
+ *  flakiness was surfacing as "Something went wrong" on the very first step of
+ *  a purchase (the allowance read), killing the buy before any tx was sent. */
+export async function readWithRetry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (!NETWORK_DROP.test(String(e))) throw e;
+      await sleep(1200);
+    }
+  }
+  throw lastErr;
+}
+
 /** Run `send` with retries when the revert is a stale-node artifact (a mined
- *  approve not yet visible where the wallet estimated the tx). */
+ *  approve not yet visible where the wallet estimated the tx) or the RPC just
+ *  dropped the request. */
 export async function sendWithStaleRetry(label: string, send: () => Promise<Hex>): Promise<Hex> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < 8; attempt++) {
@@ -47,10 +71,11 @@ export async function sendWithStaleRetry(label: string, send: () => Promise<Hex>
       if (/user rejected|denied|4001/i.test(text)) throw e;
       // Anything that smells like a stale node view gets retried: unseen
       // approve (allowance), unseen match (not open / no such), unseen
-      // balance, or an opaque estimation revert against old state. Real
-      // reverts fail all 8 tries and surface after ~30s — a slower true
-      // error beats an instant FALSE one on a money button.
-      if (/allowance|transfer amount exceeds|insufficient|not open|not active|no such|execution reverted|0xfb8f41b2/i.test(text)) {
+      // balance, an opaque estimation revert against old state, or a dropped
+      // request (Failed to fetch). Real reverts fail all 8 tries and surface
+      // after ~30s — a slower true error beats an instant FALSE one on a
+      // money button.
+      if (NETWORK_DROP.test(text) || /allowance|transfer amount exceeds|insufficient|not open|not active|no such|execution reverted|0xfb8f41b2/i.test(text)) {
         await sleep(4000);
         continue;
       }
