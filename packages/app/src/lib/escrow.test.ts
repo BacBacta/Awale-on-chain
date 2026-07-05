@@ -19,6 +19,16 @@ function recorder() {
   return { wallet, calls };
 }
 
+describe("escrowConfig", () => {
+  // a fresh object per call put effect deps in an infinite refetch loop
+  // (shop/league): every render made a new config, which re-ran the effect,
+  // which set state, which re-rendered…
+  it("returns a STABLE reference across calls", async () => {
+    const { escrowConfig } = await import("./escrow.js");
+    expect(escrowConfig()).toBe(escrowConfig());
+  });
+});
+
 describe("parseStake", () => {
   it("converts human amounts to base units", () => {
     expect(parseStake("2.5", 6)).toBe(2_500_000n);

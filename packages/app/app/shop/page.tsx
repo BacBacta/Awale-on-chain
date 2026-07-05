@@ -289,7 +289,7 @@ export default function Shop() {
   };
 
   return (
-    <main className="pad stack" style={{ flex: 1, gap: 14 }} data-build="sc10">
+    <main className="pad stack" style={{ flex: 1, gap: 14 }} data-build="sc11">
       {/* fixed-height header: the test-money chip pops in when the wallet
           connects — without a reserved slot that shifted the whole page */}
       <div className="row" style={{ height: 32 }}>

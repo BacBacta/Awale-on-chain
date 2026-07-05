@@ -27,14 +27,27 @@ export interface EscrowConfig {
   rpcUrl: string;
 }
 
-/** Read the deployed-contract wiring from NEXT_PUBLIC_* env (null if unset). */
+/** Read the deployed-contract wiring from NEXT_PUBLIC_* env (null if unset).
+ *
+ *  The result is cached at module level so repeated calls return the SAME
+ *  object. The env can't change at runtime, and a fresh object per call is a
+ *  render-loop trap: components that put `escrowConfig()` in a hook dependency
+ *  array (shop, league) re-ran their effects on every render — each effect
+ *  set state, which re-rendered, which made a new config… an infinite
+ *  refetch/repaint loop that kept the page visibly "moving" and hammered the
+ *  RPC into its rate limits. */
+let cachedConfig: EscrowConfig | null | undefined;
 export function escrowConfig(): EscrowConfig | null {
+  if (cachedConfig !== undefined) return cachedConfig;
   const escrow = process.env.NEXT_PUBLIC_ESCROW_ADDRESS;
   const verifier = process.env.NEXT_PUBLIC_VERIFIER_ADDRESS;
   const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL;
   const chainId = process.env.NEXT_PUBLIC_CHAIN_ID;
-  if (!escrow || !verifier || !rpcUrl || !chainId) return null;
-  return { chainId: Number(chainId), escrow: escrow as Address, verifier: verifier as Address, rpcUrl };
+  cachedConfig =
+    !escrow || !verifier || !rpcUrl || !chainId
+      ? null
+      : { chainId: Number(chainId), escrow: escrow as Address, verifier: verifier as Address, rpcUrl };
+  return cachedConfig;
 }
 
 /** Convert a human stake (e.g. "2.5") to base units for the token's decimals. */
