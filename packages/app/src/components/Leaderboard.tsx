@@ -6,6 +6,7 @@ import { getInjectedProvider, connect } from "../lib/minipay.js";
 import { escrowConfig } from "../lib/escrow.js";
 import { loadLeaderboard, type LeaderRow } from "../lib/leaderboard.js";
 import { friendlyName } from "../lib/names.js";
+import { shortAddress } from "../lib/identity.js";
 import { fmt } from "../lib/money.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
@@ -67,8 +68,10 @@ export function Leaderboard() {
               <span style={{ fontWeight: 700, fontSize: 14 }}>
                 {friendlyName(r.address)} {mine && <span className="faint">(you)</span>}
               </span>
-              <span className="faint">
-                {r.wins} {r.wins === 1 ? "win" : "wins"}
+              {/* the wallet suffix anchors the pseudonym to a REAL account —
+                  a column of bare generated handles read as placeholder data */}
+              <span className="faint" style={{ fontVariantNumeric: "tabular-nums" }}>
+                {r.wins} {r.wins === 1 ? "win" : "wins"} · {shortAddress(r.address)}
               </span>
             </span>
             <span className="score" style={{ fontWeight: 750, color: "var(--accent)" }}>
