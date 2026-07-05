@@ -430,6 +430,24 @@ if ("unref" in lobbyTimer) lobbyTimer.unref?.();
 
 const httpServer = createServer((req, res) => {
   const url = new URL(req.url ?? "/", "http://localhost");
+
+  // CORS preflight: a cross-origin POST with a JSON content-type (every
+  // /async/* + /self/verify call from the app on vercel → this server on fly)
+  // triggers an OPTIONS preflight. Without the allow-methods/headers below the
+  // browser BLOCKS the real request — which is why "Invite a friend" (and the
+  // whole play-with-a-friend flow) silently did nothing. curl doesn't preflight,
+  // so it looked fine from the CLI. Answer every preflight here, up top.
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, POST, OPTIONS",
+      "access-control-allow-headers": "content-type",
+      "access-control-max-age": "86400",
+    });
+    res.end();
+    return;
+  }
+
   const json = (code: number, payload: unknown) => {
     res.writeHead(code, { "content-type": "application/json", "access-control-allow-origin": "*" });
     res.end(JSON.stringify(payload));
