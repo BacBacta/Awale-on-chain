@@ -66,7 +66,9 @@ interface Stats {
   net: bigint; // realised P&L on finished matches (prize-stake on wins, -stake on losses)
 }
 
-export function PlayerStats() {
+/** `hideRank` drops the rank/Elo row — used on the Profile page, whose hero
+ *  card already shows it (no double rank). */
+export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
   const [stats, setStats] = useState<Stats | null>(null);
   const [connected, setConnected] = useState(true);
   // The ONE rating in the app: the server Elo, shown as the Seedling →
@@ -195,7 +197,7 @@ export function PlayerStats() {
         </div>
       )}
 
-      {tier && elo !== null && (
+      {!hideRank && tier && elo !== null && (
         <div className="card row" style={{ alignItems: "center" }}>
           <div className="col" style={{ gap: 1 }}>
             <span className="faint">Rank</span>

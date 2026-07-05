@@ -71,82 +71,76 @@ export default function Profile() {
   const boardSkin = ALL_SKINS.find((s) => s.asset === equipped.wood);
   const seedSkin = ALL_SKINS.find((s) => s.asset === equipped.seed);
 
+  const rank = profile ? rankFor(profile.elo) : null;
+  const ranked = !!profile && profile.gamesPlayed > 0;
+
   return (
-    <main className="pad stack" style={{ flex: 1, gap: 16 }}>
+    <main className="pad stack" style={{ flex: 1, gap: 14 }}>
       <span className="title">Profile</span>
 
-      {/* identity */}
-      <div className="card row animate-in" style={{ gap: 14 }}>
-        <div className="row" style={{ gap: 14 }}>
+      {/* HERO — identity + rank in ONE premium card (no more duplicated rank) */}
+      <div className="card animate-in" style={{ padding: 0, overflow: "hidden", gap: 0 }}>
+        <div className="row" style={{ gap: 14, alignItems: "center", padding: 18 }}>
           <div
             aria-hidden
             style={{
-              width: 56,
-              height: 56,
+              width: 58,
+              height: 58,
               borderRadius: "50%",
               background: avatarGradient(name),
               display: "grid",
               placeItems: "center",
               fontWeight: 800,
-              fontSize: 24,
+              fontSize: 25,
               color: "#0b0f0a",
-              boxShadow: "0 0 0 2px var(--accent)",
+              boxShadow: "0 0 0 2px var(--accent), 0 8px 24px rgba(61,220,111,0.18)",
             }}
           >
             {initial}
           </div>
-          <div className="col" style={{ gap: 2 }}>
-            <span style={{ fontWeight: 750, fontSize: 18 }}>{name}</span>
+          <div className="col" style={{ flex: 1, gap: 3, minWidth: 0 }}>
+            <span style={{ fontWeight: 750, fontSize: 19, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {name}
+            </span>
             <span className="faint">{address ? shortAddress(address) : "Open in MiniPay"}</span>
           </div>
+          {ranked && (
+            <div className="col" style={{ alignItems: "flex-end", gap: 0 }}>
+              <span className="title score" style={{ color: "var(--gold)", lineHeight: 1 }}>
+                {profile!.elo}
+              </span>
+              <span className="faint" style={{ fontSize: 10.5, letterSpacing: 0.4, textTransform: "uppercase" }}>
+                rating
+              </span>
+            </div>
+          )}
         </div>
-      </div>
-
-      {/* skill rank — the durable server-side rating (casual + async play) */}
-      {profile && profile.gamesPlayed > 0 && (
-        <div className="card row animate-in">
-          <div className="col" style={{ gap: 4 }}>
-            <span className="chip gold" style={{ alignSelf: "flex-start" }}>
-              {rankFor(profile.elo).icon} {rankFor(profile.elo).name}
+        {ranked && rank && (
+          <div
+            className="row"
+            style={{
+              gap: 10,
+              alignItems: "center",
+              padding: "12px 18px",
+              borderTop: "1px solid var(--line)",
+              background: "rgba(255,255,255,0.02)",
+            }}
+          >
+            <span className="chip gold" style={{ flexShrink: 0 }}>
+              {rank.icon} {rank.name}
             </span>
-            <span className="faint">
-              {profile.gamesWon} wins · {profile.gamesPlayed} games
-              {(profile.perfectDays ?? 0) > 0 ? ` · ✨ ${profile.perfectDays} perfect day${profile.perfectDays > 1 ? "s" : ""}` : ""}
+            <span className="faint" style={{ fontSize: 12.5 }}>
+              {profile!.gamesWon} wins · {profile!.gamesPlayed} games
+              {(profile!.perfectDays ?? 0) > 0 ? ` · ✨ ${profile!.perfectDays}` : ""}
             </span>
           </div>
-          <span className="title score" style={{ color: "var(--gold)" }}>
-            {profile.elo}
-          </span>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* record */}
-      <span className="section-label">Record</span>
-      <PlayerStats />
+      {/* record — the numbers (rank lives in the hero above, so hide it here) */}
+      <PlayerStats hideRank />
 
-      {/* equipped skin */}
-      <span className="section-label">Equipped</span>
-      <Link className="list-row" href="/shop">
-        <span
-          className="lead"
-          style={{
-            width: 46,
-            height: 46,
-            borderRadius: 12,
-            background: `url(${equipped.wood}) center/cover`,
-            boxShadow: "inset 0 0 0 1px var(--line)",
-          }}
-        />
-        <span className="col" style={{ flex: 1, gap: 1 }}>
-          <span style={{ fontWeight: 700, fontSize: 14.5 }}>{boardSkin?.name ?? "Board"}</span>
-          <span className="faint">Seeds · {seedSkin?.name ?? "Amber"}</span>
-        </span>
-        <img src={equipped.seed} alt="" width={28} height={28} style={{ marginRight: 6 }} />
-        <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
-      </Link>
-
-      {/* money — deposits live here now, not on the play screen */}
-      <span className="section-label">Money</span>
+      {/* one clean actions block — money + activity together, no section clutter */}
       <div className="stack" style={{ gap: 8 }}>
         <a className="list-row" href={addCashDeeplink()}>
           <span className="lead gold">
@@ -158,11 +152,6 @@ export default function Profile() {
           </span>
           <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
         </a>
-      </div>
-
-      {/* quick links */}
-      <span className="section-label">Activity</span>
-      <div className="stack" style={{ gap: 8 }}>
         <Link className="list-row" href="/matches">
           <span className="lead neutral">
             <Icon name="target" size={19} />
@@ -178,54 +167,61 @@ export default function Profile() {
             <Icon name="chart" size={19} />
           </span>
           <span className="col" style={{ flex: 1, gap: 1 }}>
-            <span style={{ fontWeight: 700, fontSize: 14.5 }}>Stats</span>
-            <span className="faint">Your record & the money leaderboard</span>
+            <span style={{ fontWeight: 700, fontSize: 14.5 }}>Stats & leaderboard</span>
+            <span className="faint">Your record & the money ladder</span>
+          </span>
+          <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
+        </Link>
+        <Link className="list-row" href="/shop">
+          <span
+            className="lead"
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: 10,
+              background: `url(${equipped.wood}) center/cover`,
+              boxShadow: "inset 0 0 0 1px var(--line)",
+            }}
+          />
+          <span className="col" style={{ flex: 1, gap: 1 }}>
+            <span style={{ fontWeight: 700, fontSize: 14.5 }}>{boardSkin?.name ?? "Board"} skin</span>
+            <span className="faint">Seeds · {seedSkin?.name ?? "Amber"} — tap to change</span>
           </span>
           <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
         </Link>
       </div>
 
-      {/* rivals — opponents you've faced */}
-      {(opponents.length > 0 || asyncEnabled()) && (
-        <>
+      {/* rivals — only when there are any, kept tight */}
+      {opponents.length > 0 && (
+        <div className="stack" style={{ gap: 8 }}>
           <span className="section-label">Rivals</span>
-          {opponents.length === 0 ? (
-            <span className="faint">Play someone to start a rivalry.</span>
-          ) : (
-            <div className="stack" style={{ gap: 8 }}>
-              {opponents.slice(0, 6).map((addr) => (
-                <div className="list-row" key={addr} style={{ cursor: "default" }}>
-                  <span className="lead neutral">
-                    <Icon name="versus" size={18} />
-                  </span>
-                  <span className="col" style={{ flex: 1, gap: 1 }}>
-                    <span style={{ fontWeight: 700, fontSize: 14 }}>{friendlyName(addr)}</span>
-                    <span className="faint">{shortAddress(addr)}</span>
-                  </span>
-                </div>
-              ))}
+          {opponents.slice(0, 4).map((addr) => (
+            <div className="list-row" key={addr} style={{ cursor: "default" }}>
+              <span className="lead neutral">
+                <Icon name="versus" size={18} />
+              </span>
+              <span className="col" style={{ flex: 1, gap: 1 }}>
+                <span style={{ fontWeight: 700, fontSize: 14 }}>{friendlyName(addr)}</span>
+                <span className="faint">{shortAddress(addr)}</span>
+              </span>
             </div>
-          )}
-          {asyncEnabled() && (
-            <button className="btn secondary block" onClick={challenge} disabled={challenging}>
-              <Icon name="versus" size={16} /> {challenging ? "Creating…" : "Challenge a friend"}
-            </button>
-          )}
-        </>
+          ))}
+        </div>
       )}
 
-      {/* referral — the growth loop: your link, their first money game, your league points */}
-      {address && (
-        <>
-          <span className="section-label">Invite &amp; earn</span>
+      {/* social actions grouped */}
+      <div className="stack" style={{ gap: 8, marginTop: 2 }}>
+        {asyncEnabled() && (
+          <button className="btn secondary block" onClick={challenge} disabled={challenging}>
+            <Icon name="versus" size={16} /> {challenging ? "Creating…" : "Challenge a friend"}
+          </button>
+        )}
+        {address && (
           <button className="btn secondary block" onClick={shareReferral}>
             <Icon name="share" size={16} /> Invite friends — earn league points
           </button>
-          <span className="faint" style={{ textAlign: "center", fontSize: 12 }}>
-            When a friend you invited plays their first money game, you earn league points.
-          </span>
-        </>
-      )}
+        )}
+      </div>
 
       <div className="spacer" />
     </main>
