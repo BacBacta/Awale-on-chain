@@ -89,4 +89,19 @@ export const cosmeticsAbi = [
     inputs: [],
     outputs: [{ type: "address" }],
   },
+  {
+    // public `items` mapping getter — the on-chain source of truth for price,
+    // supply cap and units minted. Lets the shop show the real price (no drift
+    // from the hardcoded fallbacks above), "sold out", and scarcity ("N left").
+    type: "function",
+    name: "items",
+    stateMutability: "view",
+    inputs: [{ name: "id", type: "uint256" }],
+    outputs: [
+      { name: "exists", type: "bool" },
+      { name: "price", type: "uint256" },
+      { name: "maxSupply", type: "uint256" },
+      { name: "minted", type: "uint256" },
+    ],
+  },
 ] as const;

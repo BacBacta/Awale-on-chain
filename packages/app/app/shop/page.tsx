@@ -5,8 +5,9 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { readContract, waitForTransactionReceipt } from "viem/actions";
 import { parseUnits, type Address } from "viem";
-import { getInjectedProvider, connect, publicClient } from "../../src/lib/minipay.js";
+import { getInjectedProvider, connect, publicClient, effectiveFeeCurrency } from "../../src/lib/minipay.js";
 import { escrowConfig } from "../../src/lib/escrow.js";
+import { fmt } from "../../src/lib/money.js";
 import {
   BOARD_SKINS,
   SEED_SKINS,
@@ -36,13 +37,42 @@ export default function Shop() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // on-chain catalogue per itemId: is it actually on sale, its real price, and
+  // how many are left (null = unlimited). Until an item is created on-chain
+  // (createItem) `onSale` is false and we show "Coming soon" rather than a Buy
+  // button that would revert.
+  const [catalog, setCatalog] = useState<Record<number, { onSale: boolean; price: bigint; left: number | null }>>({});
+
+  // Gas paid in stablecoin inside MiniPay (its users hold no CELO); native gas
+  // everywhere else. Same rule the stake flow uses — the earlier shop omitted
+  // this, so buys failed for MiniPay users with a zero CELO balance.
+  const feeCurrency = useCallback(
+    () => effectiveFeeCurrency((process.env.NEXT_PUBLIC_FEE_CURRENCY as Address) || currency || undefined),
+    [currency],
+  );
 
   const refresh = useCallback(async () => {
     if (!cos || !cfg) return;
     const client = publicClient(cfg.rpcUrl, cfg.chainId);
     setCurrency((await readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "currency" })) as Address);
-    if (!account) return;
     const paid = [...BOARD_SKINS, ...SEED_SKINS].filter((s) => s.itemId > 0);
+
+    // real catalogue state (price / supply / sold-out) — independent of wallet
+    const rows = await Promise.all(
+      paid.map((s) =>
+        readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "items", args: [BigInt(s.itemId)] }).catch(() => null),
+      ),
+    );
+    const cat: Record<number, { onSale: boolean; price: bigint; left: number | null }> = {};
+    paid.forEach((s, i) => {
+      const r = rows[i] as readonly [boolean, bigint, bigint, bigint] | null;
+      if (!r) return;
+      const [exists, price, maxSupply, minted] = r;
+      cat[s.itemId] = { onSale: exists && price > 0n, price, left: maxSupply > 0n ? Number(maxSupply - minted) : null };
+    });
+    setCatalog(cat);
+
+    if (!account) return;
     const bals = await Promise.all(
       paid.map((s) =>
         readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "balanceOf", args: [account, BigInt(s.itemId)] }),
@@ -64,6 +94,22 @@ export default function Shop() {
         })
         .catch(() => {});
   }, [cos, cfg]);
+
+  // Desktop wallets (MetaMask & co) return no address until the user approves
+  // the site — a passive mount leaves `account` null and the Buy button
+  // permanently disabled. Prompt on intent, from a button.
+  async function connectInteractive() {
+    if (!cfg) return;
+    const p = getInjectedProvider();
+    if (!p) return;
+    try {
+      const c = await connect(p, cfg.chainId, { interactive: true });
+      setWallet(c.wallet);
+      setAccount(c.address);
+    } catch {
+      /* user declined */
+    }
+  }
 
   useEffect(() => {
     // background refresh: fail silent — a red banner the user never caused
@@ -91,14 +137,21 @@ export default function Shop() {
 
   function faucet() {
     if (!wallet || !account || !currency) return;
+    const fee = feeCurrency();
     void run("Minting test aUSD", () =>
-      wallet.writeContract({ address: currency, abi: faucetAbi, functionName: "mint", args: [account, parseUnits("100", DECIMALS)] }),
+      wallet.writeContract({ address: currency, abi: faucetAbi, functionName: "mint", args: [account, parseUnits("100", DECIMALS)], feeCurrency: fee }),
     );
   }
 
   function buy(s: Skin) {
-    if (!wallet || !account || !cos || !currency || !s.price) return;
-    const cost = parseUnits(String(s.price), DECIMALS);
+    if (!wallet || !account || !cos || !currency) return;
+    // charge the on-chain price when the item is created; fall back to the
+    // hardcoded price only before the catalogue is read. Never let the app's
+    // number diverge from what the contract actually charges.
+    const chainPrice = catalog[s.itemId]?.price ?? 0n;
+    const cost = chainPrice > 0n ? chainPrice : s.price ? parseUnits(String(s.price), DECIMALS) : 0n;
+    if (cost <= 0n) return;
+    const fee = feeCurrency();
     void run(`Buying ${s.name}`, async () => {
       const client = publicClient(cfg!.rpcUrl, cfg!.chainId);
       const allowance = (await readContract(client, {
@@ -108,10 +161,10 @@ export default function Shop() {
         args: [account, cos],
       })) as bigint;
       if (allowance < cost) {
-        const ah = await wallet.writeContract({ address: currency, abi: erc20Abi, functionName: "approve", args: [cos, cost] });
+        const ah = await wallet.writeContract({ address: currency, abi: erc20Abi, functionName: "approve", args: [cos, cost], feeCurrency: fee });
         await waitForTransactionReceipt(client, { hash: ah });
       }
-      return wallet.writeContract({ address: cos, abi: cosmeticsAbi, functionName: "buy", args: [BigInt(s.itemId), 1n] });
+      return wallet.writeContract({ address: cos, abi: cosmeticsAbi, functionName: "buy", args: [BigInt(s.itemId), 1n], feeCurrency: fee });
     });
   }
 
@@ -148,6 +201,12 @@ export default function Shop() {
   const Card = (s: Skin) => {
     const own = ownedBy(s);
     const eq = isEquipped(s);
+    const c = catalog[s.itemId];
+    // real price once the item exists on-chain, else the hardcoded fallback
+    const priceLabel = c && c.price > 0n ? fmt(c.price, DECIMALS) : s.price != null ? String(s.price) : "";
+    const soldOut = c?.left === 0;
+    // limited edition, some left → a quiet scarcity nudge (the desire lever)
+    const scarce = c?.left != null && c.left > 0;
     return (
       <div className="card stack" key={s.key} style={{ gap: 8, padding: 12 }}>
         <div
@@ -165,7 +224,7 @@ export default function Shop() {
         </div>
         <div className="row">
           <span style={{ fontWeight: 700, fontSize: 13 }}>{s.name}</span>
-          {s.itemId === 0 && <span className="faint">Free</span>}
+          {s.itemId === 0 ? <span className="faint">Free</span> : scarce ? <span className="chip gold" style={{ fontSize: 10 }}>Only {c!.left} left</span> : null}
         </div>
         {eq ? (
           <span className="chip positive" style={{ justifyContent: "center" }}>
@@ -175,11 +234,23 @@ export default function Shop() {
           <button className="btn secondary" onClick={() => choose(s)} disabled={busy}>
             Equip
           </button>
+        ) : !account ? (
+          // no wallet yet — a passive mount never prompts desktop wallets
+          <button className="btn secondary" onClick={connectInteractive} disabled={busy}>
+            Connect to buy
+          </button>
+        ) : soldOut ? (
+          <button className="btn secondary" disabled>
+            Sold out
+          </button>
+        ) : c && !c.onSale ? (
+          // item not created / priced on-chain yet — a Buy here would revert
+          <span className="faint" style={{ textAlign: "center", padding: "8px 0", fontSize: 12.5 }}>Coming soon</span>
         ) : (
           // quiet outline, price on the button: a shop full of shouting green
           // "Buy" reads as pressure, not premium — green stays for "Equipped"
-          <button className="btn secondary" onClick={() => buy(s)} disabled={busy || !account}>
-            Buy · {s.price} {SYMBOL}
+          <button className="btn secondary" onClick={() => buy(s)} disabled={busy}>
+            Buy · {priceLabel} {SYMBOL}
           </button>
         )}
       </div>
