@@ -52,26 +52,24 @@ export function WeeklyLeague() {
   const pool = BigInt(data.poolWei);
   const entered = data.me !== null && data.me.games >= data.minGames;
   const played = data.me?.games ?? 0;
-  const lastWinner = data.lastWeek?.winners[0];
 
   return (
     <>
-      <span className="section-label">This week&apos;s race</span>
-      <div className="card stack animate-in" style={{ gap: 10 }}>
+      <div className="card stack animate-in" style={{ gap: 14, padding: 18 }}>
         <div className="row">
           <span className="chip gold">🏁 Weekly league</span>
           <span className="faint">Ends in {raceEndsIn(data.endsAt)}</span>
         </div>
 
+        {/* the pot is the hero — one big number */}
         {pool > 0n ? (
-          <div className="row" style={{ alignItems: "baseline", gap: 6 }}>
-            <span className="title score" style={{ color: "var(--gold)" }}>
+          <div className="col" style={{ gap: 2 }}>
+            <span className="display" style={{ color: "var(--gold)", fontSize: 34, lineHeight: 0.95, fontVariantNumeric: "tabular-nums" }}>
               {fmt(pool, STAKE_DECIMALS)} {STAKE_SYMBOL}
             </span>
-            <span className="faint">prize pot — top 5 share it Monday</span>
+            <span className="faint">prize pot · top 5 split it Monday</span>
           </div>
         ) : (
-          // a bare "0" pot reads as "dead app" — sell the mechanic instead
           <span className="muted">The pot grows with every money game this week — top 5 share it Monday.</span>
         )}
 
@@ -82,9 +80,7 @@ export function WeeklyLeague() {
               : `${data.me.points} pts so far — keep winning to enter the top 5.`}
           </span>
         ) : (
-          // one sentence, not two overlapping paragraphs; secondary button —
-          // Compete keeps a single primary green (the new player's first game)
-          <div className="stack" style={{ gap: 8 }}>
+          <div className="stack" style={{ gap: 10 }}>
             <span className="muted">
               Play {data.minGames} money games to enter — {played}/{data.minGames} so far, counted automatically.
             </span>
@@ -94,28 +90,25 @@ export function WeeklyLeague() {
           </div>
         )}
 
+        {/* top 3 standings — a tease, not the whole board (the ladder is below) */}
         {data.standings.length > 0 && (
-          <div className="stack" style={{ gap: 6 }}>
-            {data.standings.slice(0, 5).map((r, i) => {
+          <div className="card flat stack" style={{ gap: 2, padding: 6 }}>
+            {data.standings.slice(0, 3).map((r, i) => {
               const mine = me && r.address.toLowerCase() === me.toLowerCase();
               return (
-                <div className="row" key={r.address} style={{ gap: 8 }}>
-                  <span
-                    style={{
-                      color: i < 3 ? MEDAL[i] : "var(--faint)",
-                      fontWeight: 800,
-                      fontVariantNumeric: "tabular-nums",
-                      width: 16,
-                    }}
-                  >
+                <div
+                  className="row"
+                  key={r.address}
+                  style={{ gap: 10, padding: "8px 10px", borderRadius: "var(--r-sm)", background: mine ? "var(--accent-soft)" : "transparent" }}
+                >
+                  <span style={{ color: MEDAL[i] ?? "var(--faint)", fontWeight: 800, fontVariantNumeric: "tabular-nums", width: 16 }}>
                     {i + 1}
                   </span>
-                  <span style={{ flex: 1, fontWeight: 650, fontSize: 13.5 }}>
-                    {friendlyName(r.address)} {mine && <span className="faint">(you)</span>}
+                  <span style={{ flex: 1, fontWeight: 650, fontSize: 13.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    {friendlyName(r.address)}
+                    {mine && <span style={{ color: "var(--accent)" }}> · you</span>}
                   </span>
-                  <span className="faint" style={{ fontVariantNumeric: "tabular-nums" }}>
-                    {r.points} pts
-                  </span>
+                  <span className="faint" style={{ fontVariantNumeric: "tabular-nums" }}>{r.points} pts</span>
                 </div>
               );
             })}
@@ -123,11 +116,7 @@ export function WeeklyLeague() {
         )}
 
         <span className="faint" style={{ fontSize: 11.5 }}>
-          Win 3 pts · first {data.pairCap} games vs the same opponent count
-          {SELF_CONFIGURED ? " · prizes require a one-time identity check" : ""}
-          {lastWinner
-            ? ` · last week ${friendlyName(lastWinner.address)} won ${fmt(BigInt(lastWinner.amountWei), STAKE_DECIMALS)} ${STAKE_SYMBOL}`
-            : ""}
+          Win = 3 pts{SELF_CONFIGURED ? " · prizes require a one-time identity check" : ""}
         </span>
       </div>
     </>

@@ -9,11 +9,12 @@ import { friendlyName } from "../../src/lib/names.js";
 import { shortAddress } from "../../src/lib/identity.js";
 import { getEquipped, ALL_SKINS } from "../../src/lib/skins.js";
 import { PlayerStats } from "../../src/components/PlayerStats.js";
+import { RankHero } from "../../src/components/RankHero.js";
 import { Icon } from "../../src/components/Icon.js";
 import { listOpponents } from "../../src/lib/social.js";
 import { asyncEnabled, createAsync, recordAsyncMatch } from "../../src/lib/asyncClient.js";
 import { createSessionKey, persistSession } from "../../src/lib/session.js";
-import { getProfile, rankFor, type PlayerProfile } from "../../src/lib/profile.js";
+import { getProfile, type PlayerProfile } from "../../src/lib/profile.js";
 import { addCashDeeplink } from "../../src/lib/deeplinks.js";
 
 function avatarGradient(seed: string): string {
@@ -71,71 +72,47 @@ export default function Profile() {
   const boardSkin = ALL_SKINS.find((s) => s.asset === equipped.wood);
   const seedSkin = ALL_SKINS.find((s) => s.asset === equipped.seed);
 
-  const rank = profile ? rankFor(profile.elo) : null;
   const ranked = !!profile && profile.gamesPlayed > 0;
 
   return (
     <main className="pad stack" style={{ flex: 1, gap: 14 }}>
       <span className="title">Profile</span>
 
-      {/* HERO — identity + rank in ONE premium card (no more duplicated rank) */}
-      <div className="card animate-in" style={{ padding: 0, overflow: "hidden", gap: 0 }}>
-        <div className="row" style={{ gap: 14, alignItems: "center", padding: 18 }}>
+      {/* HERO — one premium card: identity + rank + climb (shared with Compete) */}
+      {ranked && profile ? (
+        <RankHero
+          name={name}
+          address={address}
+          elo={profile.elo}
+          wins={profile.gamesWon}
+          games={profile.gamesPlayed}
+          perfectDays={profile.perfectDays ?? 0}
+        />
+      ) : (
+        <div className="card row animate-in" style={{ gap: 14, alignItems: "center" }}>
           <div
             aria-hidden
             style={{
-              width: 58,
-              height: 58,
+              width: 54,
+              height: 54,
               borderRadius: "50%",
               background: avatarGradient(name),
               display: "grid",
               placeItems: "center",
               fontWeight: 800,
-              fontSize: 25,
+              fontSize: 23,
               color: "#0b0f0a",
-              boxShadow: "0 0 0 2px var(--accent), 0 8px 24px rgba(61,220,111,0.18)",
+              boxShadow: "0 0 0 2px var(--accent)",
             }}
           >
             {initial}
           </div>
-          <div className="col" style={{ flex: 1, gap: 3, minWidth: 0 }}>
-            <span style={{ fontWeight: 750, fontSize: 19, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {name}
-            </span>
+          <div className="col" style={{ flex: 1, gap: 2, minWidth: 0 }}>
+            <span style={{ fontWeight: 750, fontSize: 18 }}>{name}</span>
             <span className="faint">{address ? shortAddress(address) : "Open in MiniPay"}</span>
           </div>
-          {ranked && (
-            <div className="col" style={{ alignItems: "flex-end", gap: 0 }}>
-              <span className="title score" style={{ color: "var(--gold)", lineHeight: 1 }}>
-                {profile!.elo}
-              </span>
-              <span className="faint" style={{ fontSize: 10.5, letterSpacing: 0.4, textTransform: "uppercase" }}>
-                rating
-              </span>
-            </div>
-          )}
         </div>
-        {ranked && rank && (
-          <div
-            className="row"
-            style={{
-              gap: 10,
-              alignItems: "center",
-              padding: "12px 18px",
-              borderTop: "1px solid var(--line)",
-              background: "rgba(255,255,255,0.02)",
-            }}
-          >
-            <span className="chip gold" style={{ flexShrink: 0 }}>
-              {rank.icon} {rank.name}
-            </span>
-            <span className="faint" style={{ fontSize: 12.5 }}>
-              {profile!.gamesWon} wins · {profile!.gamesPlayed} games
-              {(profile!.perfectDays ?? 0) > 0 ? ` · ✨ ${profile!.perfectDays}` : ""}
-            </span>
-          </div>
-        )}
-      </div>
+      )}
 
       {/* record — the numbers (rank lives in the hero above, so hide it here) */}
       <PlayerStats hideRank />

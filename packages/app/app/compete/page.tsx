@@ -16,6 +16,7 @@ import { DailyQuests } from "../../src/components/DailyQuests.js";
 import { SkillLeaderboard } from "../../src/components/SkillLeaderboard.js";
 import { WeeklyLeague } from "../../src/components/WeeklyLeague.js";
 import { Icon, type IconName } from "../../src/components/Icon.js";
+import { RankHero } from "../../src/components/RankHero.js";
 import { harvestAddress } from "../../src/lib/league.js";
 
 const TIERS = [
@@ -74,20 +75,7 @@ export default function Compete() {
 
       {ranked && rank && profile ? (
         // my rank — the reason to come back after a loss
-        <div className="card row animate-in">
-          <div className="col" style={{ gap: 4 }}>
-            <span className="chip gold" style={{ alignSelf: "flex-start" }}>
-              {rank.icon} {rank.name}
-            </span>
-            <span className="faint">
-              {profile.gamesWon} wins · {profile.gamesPlayed} games
-              {(profile.perfectDays ?? 0) > 0 ? ` · ✨ ${profile.perfectDays} perfect day${profile.perfectDays > 1 ? "s" : ""}` : ""}
-            </span>
-          </div>
-          <span className="title score" style={{ color: "var(--gold)" }}>
-            {profile.elo}
-          </span>
-        </div>
+        <RankHero elo={profile.elo} wins={profile.gamesWon} games={profile.gamesPlayed} perfectDays={profile.perfectDays ?? 0} />
       ) : (
         // new player — one card that explains the whole tab, one action
         <div className="card stack animate-in" style={{ gap: 14, padding: "18px 16px" }}>
