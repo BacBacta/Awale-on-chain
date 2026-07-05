@@ -2,7 +2,7 @@
 // no "Connect Wallet" button. We never request message signing from the wallet
 // (MiniPay forbids it); all signing is done with per-match session keys.
 
-import { createWalletClient, createPublicClient, custom, http, type Address, type Chain, type WalletClient } from "viem";
+import { createWalletClient, createPublicClient, custom, http, fallback, type Address, type Chain, type WalletClient } from "viem";
 import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 
 /** Resolve the viem chain for a chainId (the wallet client's chain must match
@@ -74,6 +74,17 @@ export async function connect(
   return { wallet, address };
 }
 
+// Public backup RPCs per chain. forno is load-balanced across nodes that can
+// individually drop requests ("Failed to fetch") — and from some mobile
+// networks it fails almost permanently, which killed shop purchases at the
+// very first allowance read. A viem fallback transport fails over to these
+// automatically, app-wide (both verified: right chainId + CORS for our origin).
+const BACKUP_RPCS: Record<number, string[]> = {
+  [celoSepolia.id]: ["https://celo-sepolia.drpc.org", "https://rpc.ankr.com/celo_sepolia"],
+};
+
 export function publicClient(rpcUrl: string, chainId: number = celo.id) {
-  return createPublicClient({ chain: chainById(chainId), transport: http(rpcUrl) });
+  const backups = (BACKUP_RPCS[chainId] ?? []).filter((u) => u !== rpcUrl);
+  const transport = backups.length ? fallback([http(rpcUrl), ...backups.map((u) => http(u))]) : http(rpcUrl);
+  return createPublicClient({ chain: chainById(chainId), transport });
 }
