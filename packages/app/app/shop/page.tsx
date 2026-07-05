@@ -285,37 +285,47 @@ export default function Shop() {
         >
           {s.kind === "seed" && <img src={s.asset} alt={s.name} width={48} height={48} />}
         </div>
-        <div className="row">
-          <span style={{ fontWeight: 700, fontSize: 13 }}>{s.name}</span>
+        {/* both rows have FIXED heights: state changes (price chip arriving,
+            Buy → Equip → Equipped) used to resize the card and reflow the whole
+            grid mid-purchase — the "page won't stop moving" bug */}
+        <div className="row" style={{ minHeight: 22 }}>
+          <span style={{ fontWeight: 700, fontSize: 13, whiteSpace: "nowrap" }}>{s.name}</span>
           {s.itemId === 0 ? <span className="faint">Free</span> : scarce ? <span className="chip gold" style={{ fontSize: 10 }}>Only {c!.left} left</span> : null}
         </div>
-        {eq ? (
-          <span className="chip positive" style={{ justifyContent: "center" }}>
-            <span className="dot" /> Equipped
-          </span>
-        ) : own ? (
-          <button className="btn secondary" onClick={() => choose(s)} disabled={busy}>
-            Equip
-          </button>
-        ) : !account ? (
-          // no wallet yet — a passive mount never prompts desktop wallets
-          <button className="btn secondary" onClick={connectInteractive} disabled={busy}>
-            Connect to buy
-          </button>
-        ) : soldOut ? (
-          <button className="btn secondary" disabled>
-            Sold out
-          </button>
-        ) : c && !c.onSale ? (
-          // item not created / priced on-chain yet — a Buy here would revert
-          <span className="faint" style={{ textAlign: "center", padding: "8px 0", fontSize: 12.5 }}>Coming soon</span>
-        ) : (
-          // quiet outline, price on the button: a shop full of shouting green
-          // "Buy" reads as pressure, not premium — green stays for "Equipped"
-          <button className="btn secondary" onClick={() => buy(s)} disabled={busy}>
-            Buy · {priceLabel} {SYMBOL}
-          </button>
-        )}
+        <div style={{ height: 40, display: "flex", alignItems: "stretch" }}>
+          {eq ? (
+            <span className="chip positive" style={{ flex: 1, justifyContent: "center" }}>
+              <span className="dot" /> Equipped
+            </span>
+          ) : own ? (
+            <button className="btn secondary" style={{ flex: 1, whiteSpace: "nowrap" }} onClick={() => choose(s)} disabled={busy}>
+              Equip
+            </button>
+          ) : !account ? (
+            // no wallet yet — a passive mount never prompts desktop wallets
+            <button className="btn secondary" style={{ flex: 1, whiteSpace: "nowrap", fontSize: 12.5 }} onClick={connectInteractive} disabled={busy}>
+              Connect to buy
+            </button>
+          ) : soldOut ? (
+            <button className="btn secondary" style={{ flex: 1 }} disabled>
+              Sold out
+            </button>
+          ) : c && !c.onSale ? (
+            // item not created / priced on-chain yet — a Buy here would revert
+            <span className="faint" style={{ flex: 1, alignSelf: "center", textAlign: "center", fontSize: 12.5 }}>Coming soon</span>
+          ) : (
+            // quiet outline, price on the button: a shop full of shouting green
+            // "Buy" reads as pressure, not premium — green stays for "Equipped"
+            <button
+              className="btn secondary"
+              style={{ flex: 1, whiteSpace: "nowrap", fontSize: 12.5, padding: "0 8px" }}
+              onClick={() => buy(s)}
+              disabled={busy}
+            >
+              Buy · {priceLabel} {SYMBOL}
+            </button>
+          )}
+        </div>
       </div>
     );
   };
@@ -359,7 +369,7 @@ export default function Shop() {
           </span>
         )}
       </div>
-      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc8</span>
+      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc9</span>
     </main>
   );
 }
