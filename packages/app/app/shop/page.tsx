@@ -1,5 +1,13 @@
 "use client";
 
+// Style shop. Two hard rules, learned the hard way:
+//  1. NOTHING may change size after mount — every slot (header chip, card
+//     rows, action buttons, status line) has a fixed height, so the grid
+//     never reflows mid-purchase ("the page won't stop moving").
+//  2. Money language only — prices are "$0.25", steps say "Preparing
+//     payment", never token symbols, approvals or chain jargon. The raw
+//     error detail goes to the console, not the screen.
+
 import { Icon } from "../../src/components/Icon.js";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -7,8 +15,8 @@ import { readContract } from "viem/actions";
 import { parseUnits, type Address } from "viem";
 import { getInjectedProvider, connect, publicClient, effectiveFeeCurrency } from "../../src/lib/minipay.js";
 import { escrowConfig } from "../../src/lib/escrow.js";
-import { fmt } from "../../src/lib/money.js";
 import { readWithRetry, sendWithStaleRetry, confirmTx } from "../../src/lib/tx.js";
+import { cardState, purchaseCost, priceTag, type CatalogEntry } from "../../src/lib/shop-logic.js";
 import {
   BOARD_SKINS,
   SEED_SKINS,
@@ -23,33 +31,8 @@ import { humanizeError } from "../../src/lib/errors.js";
 import { erc20Abi } from "../../../protocol/src/abis.js";
 
 const DECIMALS = 18;
-const SYMBOL = "aUSD";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Wallet = any;
-
-// Pull the useful bits out of a viem/wallet error for on-screen diagnosis —
-// shortMessage + details + the nested cause, which is where MiniPay's real
-// revert/gas reason hides behind the humanized headline.
-function rawErrorDetail(e: unknown): string | null {
-  if (!e || typeof e !== "object") return typeof e === "string" ? e : null;
-  const parts: string[] = [];
-  const pick = (o: unknown, k: string) => {
-    const v = o && typeof o === "object" ? (o as Record<string, unknown>)[k] : undefined;
-    if (typeof v === "string" && v) parts.push(v);
-  };
-  pick(e, "shortMessage");
-  pick(e, "details");
-  pick(e, "message");
-  const cause = (e as { cause?: unknown }).cause;
-  if (cause) {
-    pick(cause, "shortMessage");
-    pick(cause, "details");
-    pick(cause, "message");
-  }
-  const seen = new Set<string>();
-  const text = parts.filter((p) => (seen.has(p) ? false : seen.add(p))).join(" · ");
-  return text ? text.slice(0, 400) : null;
-}
 
 export default function Shop() {
   const cos = cosmeticsAddress();
@@ -62,20 +45,12 @@ export default function Shop() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // raw error detail, surfaced under the humanized message — a generic
-  // "Something went wrong" hides the actual revert/gas reason in MiniPay.
-  const [detail, setDetail] = useState<string | null>(null);
-  // on-chain catalogue per itemId: is it actually on sale, its real price, and
-  // how many are left (null = unlimited). Until an item is created on-chain
-  // (createItem) `onSale` is false and we show "Coming soon" rather than a Buy
-  // button that would revert.
-  const [catalog, setCatalog] = useState<Record<number, { onSale: boolean; price: bigint; left: number | null }>>({});
+  const [catalog, setCatalog] = useState<Record<number, CatalogEntry>>({});
 
   // Gas paid in stablecoin inside MiniPay (its users hold no CELO); native gas
   // everywhere else. Use ONLY an explicitly-configured CIP-64 adapter — never
-  // fall back to the purchase currency: aUSD is a mock, not a registered fee
+  // fall back to the purchase currency: it's a mock, not a registered fee
   // currency, so paying gas in it makes MiniPay reject the tx at estimation.
-  // Same contract the stake flow honours (NEXT_PUBLIC_FEE_CURRENCY or nothing).
   const feeCurrency = useCallback(
     () => effectiveFeeCurrency((process.env.NEXT_PUBLIC_FEE_CURRENCY as Address) || undefined),
     [],
@@ -86,9 +61,8 @@ export default function Shop() {
     const client = publicClient(cfg.rpcUrl, cfg.chainId);
     const paid = [...BOARD_SKINS, ...SEED_SKINS].filter((s) => s.itemId > 0);
 
-    // ONE multicall for everything (currency + catalogue + ownership). The
-    // previous 11 separate eth_calls per refresh exhausted the public backup
-    // endpoints' rate limits the moment forno was down.
+    // ONE multicall for everything (currency + catalogue + ownership):
+    // separate eth_calls exhausted the public backup endpoints' rate limits.
     const calls = [
       { address: cos, abi: cosmeticsAbi, functionName: "currency" as const },
       ...paid.map((s) => ({ address: cos, abi: cosmeticsAbi, functionName: "items" as const, args: [BigInt(s.itemId)] })),
@@ -102,7 +76,7 @@ export default function Shop() {
     const cur = res[0];
     if (cur?.status === "success") setCurrency(cur.result as Address);
 
-    const cat: Record<number, { onSale: boolean; price: bigint; left: number | null }> = {};
+    const cat: Record<number, CatalogEntry> = {};
     paid.forEach((s, i) => {
       const r = res[1 + i];
       if (r?.status !== "success") return;
@@ -159,21 +133,20 @@ export default function Shop() {
     if (!cfg) return false;
     setBusy(true);
     setError(null);
-    setDetail(null);
     setStatus(`${label}…`);
     try {
       const h = await fn();
-      setStatus("Confirming on-chain…");
+      setStatus("Finalizing…");
       await confirmTx(publicClient(cfg.rpcUrl, cfg.chainId), h, label);
       setStatus(`${label} ✓`);
       // the tx LANDED — a failed post-action refresh must never repaint the
-      // success as an error (it did: an ankr rate-limit on the refresh masked
-      // the user's first successful purchase). Ownership catches up next load.
+      // success as an error. Ownership catches up on the next load anyway.
       refresh().catch(() => {});
       return true;
     } catch (e) {
+      // the raw reason (revert / gas / RPC) belongs in the console, not the UI
+      console.error("[shop]", label, e);
       setError(humanizeError(e));
-      setDetail(rawErrorDetail(e));
       setStatus(null);
       return false;
     } finally {
@@ -184,7 +157,7 @@ export default function Shop() {
   function faucet() {
     if (!wallet || !account || !currency) return;
     const fee = feeCurrency();
-    void run("Minting test aUSD", () =>
+    void run("Adding test money", () =>
       sendWithStaleRetry("Mint", () =>
         wallet.writeContract({ address: currency, abi: faucetAbi, functionName: "mint", args: [account, parseUnits("100", DECIMALS)], account, feeCurrency: fee }),
       ),
@@ -193,40 +166,34 @@ export default function Shop() {
 
   function buy(s: Skin) {
     if (!wallet || !account || !cos || !currency) return;
-    // charge the on-chain price when the item is created; fall back to the
-    // hardcoded price only before the catalogue is read. Never let the app's
-    // number diverge from what the contract actually charges.
-    const chainPrice = catalog[s.itemId]?.price ?? 0n;
-    const cost = chainPrice > 0n ? chainPrice : s.price ? parseUnits(String(s.price), DECIMALS) : 0n;
+    const cost = purchaseCost(catalog[s.itemId], s.price, DECIMALS);
     if (cost <= 0n) return;
     const fee = feeCurrency();
     void run(`Buying ${s.name}`, async () => {
       const client = publicClient(cfg!.rpcUrl, cfg!.chainId);
-      // the allowance read is the first RPC hop and was the exact step forno
-      // dropped ("Failed to fetch") — retry it before giving up.
+      // the allowance read is the first RPC hop and the one flaky endpoints
+      // drop most — retry it before giving up.
       const allowance = (await readWithRetry(() =>
         readContract(client, { address: currency, abi: erc20Abi, functionName: "allowance", args: [account, cos] }),
       )) as bigint;
       if (allowance < cost) {
-        setStatus("Approving aUSD (1/2)…");
-        const ah = await sendWithStaleRetry("Approval", () =>
-          // `account` is required: the wallet client is created unbound
-          // (createWalletClient without an account), so every write must name
-          // its signer — same as every write in the stake flow.
-          // 20× headroom: one approval covers the whole catalogue, so later
+        setStatus("Preparing payment (1/2)…");
+        const ah = await sendWithStaleRetry("Payment setup", () =>
+          // `account` names the signer (the wallet client is created unbound).
+          // 20× headroom: one setup covers the whole catalogue, so later
           // purchases skip an entire tx + confirmation round.
           wallet.writeContract({ address: currency, abi: erc20Abi, functionName: "approve", args: [cos, cost * 20n], account, feeCurrency: fee }),
         );
-        await confirmTx(client, ah, "Approval");
+        await confirmTx(client, ah, "Payment setup");
       }
       setStatus(`Buying ${s.name} (2/2)…`);
       return sendWithStaleRetry("Purchase", () =>
         wallet.writeContract({ address: cos, abi: cosmeticsAbi, functionName: "buy", args: [BigInt(s.itemId), 1n], account, feeCurrency: fee }),
       );
     }).then((ok) => {
-      // the receipt is confirmed — the skin is provably yours. Flip the card
-      // to "Equip" NOW instead of waiting on a background refresh the flaky
-      // RPC may delay: the user must never wonder whether the buy worked.
+      // the receipt is confirmed — the skin is provably theirs. Flip the card
+      // to "Equip" NOW instead of waiting on a background refresh a flaky
+      // RPC may delay: the buyer must never wonder whether the buy worked.
       if (ok) setOwned((o) => ({ ...o, [s.itemId]: true }));
     });
   }
@@ -234,13 +201,6 @@ export default function Shop() {
   function choose(s: Skin) {
     equip(s);
     setEquippedState(getEquipped());
-  }
-
-  function ownedBy(s: Skin) {
-    return s.itemId === 0 || owned[s.itemId];
-  }
-  function isEquipped(s: Skin) {
-    return s.kind === "board" ? equipped.wood === s.asset : equipped.seed === s.asset;
   }
 
   if (!cos) {
@@ -252,7 +212,7 @@ export default function Shop() {
             <Icon name="palette" size={26} />
           </span>
           <span className="h2">Coming soon</span>
-          <span className="muted">Board and seed styles aren’t available on this deployment yet.</span>
+          <span className="muted">Board and seed styles aren’t available here yet.</span>
           <Link className="btn block" href="/" style={{ marginTop: 4 }}>
             Back to lobby
           </Link>
@@ -262,14 +222,16 @@ export default function Shop() {
   }
 
   const Card = (s: Skin) => {
-    const own = ownedBy(s);
-    const eq = isEquipped(s);
-    const c = catalog[s.itemId];
-    // real price once the item exists on-chain, else the hardcoded fallback
-    const priceLabel = c && c.price > 0n ? fmt(c.price, DECIMALS) : s.price != null ? String(s.price) : "";
-    const soldOut = c?.left === 0;
-    // limited edition, some left → a quiet scarcity nudge (the desire lever)
-    const scarce = c?.left != null && c.left > 0;
+    const entry = catalog[s.itemId];
+    const state = cardState({
+      itemId: s.itemId,
+      owned: !!owned[s.itemId],
+      equipped: s.kind === "board" ? equipped.wood === s.asset : equipped.seed === s.asset,
+      hasAccount: !!account,
+      entry,
+      fallbackPrice: s.price,
+    });
+    const scarce = entry?.left != null && entry.left > 0;
     return (
       <div className="card stack" key={s.key} style={{ gap: 8, padding: 12 }}>
         <div
@@ -285,33 +247,29 @@ export default function Shop() {
         >
           {s.kind === "seed" && <img src={s.asset} alt={s.name} width={48} height={48} />}
         </div>
-        {/* both rows have FIXED heights: state changes (price chip arriving,
-            Buy → Equip → Equipped) used to resize the card and reflow the whole
-            grid mid-purchase — the "page won't stop moving" bug */}
-        <div className="row" style={{ minHeight: 22 }}>
+        {/* fixed-height rows: a card that resizes reflows the whole grid */}
+        <div className="row" style={{ height: 22 }}>
           <span style={{ fontWeight: 700, fontSize: 13, whiteSpace: "nowrap" }}>{s.name}</span>
-          {s.itemId === 0 ? <span className="faint">Free</span> : scarce ? <span className="chip gold" style={{ fontSize: 10 }}>Only {c!.left} left</span> : null}
+          {s.itemId === 0 ? <span className="faint">Free</span> : scarce ? <span className="chip gold" style={{ fontSize: 10 }}>Only {entry!.left} left</span> : null}
         </div>
         <div style={{ height: 40, display: "flex", alignItems: "stretch" }}>
-          {eq ? (
+          {state === "equipped" ? (
             <span className="chip positive" style={{ flex: 1, justifyContent: "center" }}>
               <span className="dot" /> Equipped
             </span>
-          ) : own ? (
+          ) : state === "equip" ? (
             <button className="btn secondary" style={{ flex: 1, whiteSpace: "nowrap" }} onClick={() => choose(s)} disabled={busy}>
               Equip
             </button>
-          ) : !account ? (
-            // no wallet yet — a passive mount never prompts desktop wallets
+          ) : state === "connect" ? (
             <button className="btn secondary" style={{ flex: 1, whiteSpace: "nowrap", fontSize: 12.5 }} onClick={connectInteractive} disabled={busy}>
               Connect to buy
             </button>
-          ) : soldOut ? (
+          ) : state === "sold-out" ? (
             <button className="btn secondary" style={{ flex: 1 }} disabled>
               Sold out
             </button>
-          ) : c && !c.onSale ? (
-            // item not created / priced on-chain yet — a Buy here would revert
+          ) : state === "coming-soon" ? (
             <span className="faint" style={{ flex: 1, alignSelf: "center", textAlign: "center", fontSize: 12.5 }}>Coming soon</span>
           ) : (
             // quiet outline, price on the button: a shop full of shouting green
@@ -322,7 +280,7 @@ export default function Shop() {
               onClick={() => buy(s)}
               disabled={busy}
             >
-              Buy · {priceLabel} {SYMBOL}
+              Buy · {priceTag(entry, s.price, DECIMALS)}
             </button>
           )}
         </div>
@@ -331,12 +289,14 @@ export default function Shop() {
   };
 
   return (
-    <main className="pad stack" style={{ flex: 1, gap: 14 }}>
-      <div className="row">
+    <main className="pad stack" style={{ flex: 1, gap: 14 }} data-build="sc10">
+      {/* fixed-height header: the test-money chip pops in when the wallet
+          connects — without a reserved slot that shifted the whole page */}
+      <div className="row" style={{ height: 32 }}>
         <span className="title">Style</span>
-        {account && (
+        {account && currency && (
           <button className="chip" onClick={faucet} disabled={busy} style={{ cursor: "pointer" }}>
-            + test {SYMBOL}
+            + $100 test money
           </button>
         )}
       </div>
@@ -349,12 +309,12 @@ export default function Shop() {
       </span>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{SEED_SKINS.map(Card)}</div>
 
-      {/* reserved-height status area: content appearing/disappearing below the
-          grid made the whole page jump around during a purchase */}
+      {/* reserved-height status area; the dot is ALWAYS in the line so the
+          centered text never shifts sideways when busy toggles */}
       <div className="col" style={{ gap: 6, minHeight: 44, justifyContent: "center" }}>
         {status && (
           <span className="muted" style={{ textAlign: "center" }}>
-            {busy && <span className="dot pulse" style={{ marginRight: 6 }} />}
+            <span className={`dot ${busy ? "pulse" : ""}`} style={{ marginRight: 6 }} />
             {status}
           </span>
         )}
@@ -363,13 +323,7 @@ export default function Shop() {
             {error}
           </div>
         )}
-        {error && detail && (
-          <span className="faint" style={{ fontSize: 11, lineHeight: 1.4, wordBreak: "break-word", textAlign: "center" }}>
-            {detail}
-          </span>
-        )}
       </div>
-      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc9</span>
     </main>
   );
 }

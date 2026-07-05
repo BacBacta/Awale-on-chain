@@ -26,8 +26,11 @@ describe("parseStake", () => {
   });
 });
 
-describe("escrow writes set feeCurrency (CIP-64)", () => {
-  it("createMatch builds the right request", async () => {
+describe("escrow writes gate feeCurrency (CIP-64)", () => {
+  // Outside MiniPay (this test env: no injected provider) effectiveFeeCurrency
+  // STRIPS the adapter — browser wallets reject the unknown Celo tx type. The
+  // old assertions expected a pass-through and went stale when the gate landed.
+  it("createMatch builds the right request — no feeCurrency outside MiniPay", async () => {
     const { wallet, calls } = recorder();
     await createMatch(wallet, {
       account: ACCOUNT,
@@ -42,7 +45,7 @@ describe("escrow writes set feeCurrency (CIP-64)", () => {
       functionName: "createMatch",
       args: [TOKEN, 5_000_000n, SESSION],
       account: ACCOUNT,
-      feeCurrency: ADAPTER,
+      feeCurrency: undefined,
     });
   });
 
@@ -52,8 +55,19 @@ describe("escrow writes set feeCurrency (CIP-64)", () => {
     expect(calls[0]).toMatchObject({
       functionName: "joinMatch",
       args: [7n, SESSION],
-      feeCurrency: ADAPTER,
+      feeCurrency: undefined,
     });
+  });
+
+  it("passes the adapter through inside MiniPay", async () => {
+    (globalThis as { window?: unknown }).window = { ethereum: { isMiniPay: true, request: async () => [] } };
+    try {
+      const { wallet, calls } = recorder();
+      await joinMatch(wallet, { account: ACCOUNT, escrow: ESCROW, matchId: 7n, session: SESSION, feeCurrency: ADAPTER });
+      expect(calls[0]).toMatchObject({ feeCurrency: ADAPTER });
+    } finally {
+      delete (globalThis as { window?: unknown }).window;
+    }
   });
 
   it("approve targets the token and the escrow spender", async () => {

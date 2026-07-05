@@ -13,7 +13,7 @@ const RULES: Rule[] = [
   // user-initiated
   { test: /user rejected|user denied|rejected the request|action_rejected|4001/i, msg: "Cancelled in your wallet." },
   // funds
-  { test: /insufficient allowance|erc20insufficientallowance/i, msg: "Token approval needed — try again." },
+  { test: /insufficient allowance|erc20insufficientallowance/i, msg: "Payment setup needed — try again." },
   { test: /insufficient balance|erc20insufficientbalance|transfer amount exceeds balance/i, msg: "Not enough balance for this stake." },
   { test: /insufficient funds/i, msg: "Not enough funds to cover the stake and network fee." },
   // match lifecycle (MatchEscrow reverts)
