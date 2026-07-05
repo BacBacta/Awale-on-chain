@@ -25,6 +25,13 @@ afterEach(() => {
   http?.close();
 });
 
+/** Resolve once a socket is connected — robust to the socket already having
+ *  connected before the handler is attached (a race that flakes under load:
+ *  a plain `.on("connect")` never fires if connection already happened). */
+function waitConnect(s: Socket): Promise<void> {
+  return s.connected ? Promise.resolve() : new Promise((r) => s.once("connect", () => r()));
+}
+
 let lastHandle: SocketHandle;
 function start(hub: GameHub, extra: Partial<ServerDeps> = {}): Promise<number> {
   return new Promise((resolve) => {
@@ -265,8 +272,8 @@ describe("Socket.IO transport (integration)", () => {
 
       const mA = new Promise<{ role: string; stakeWei: string }>((r) => a.once("cash-matched", r));
       const mB = new Promise<{ role: string; stakeWei: string }>((r) => b.once("cash-matched", r));
-      await new Promise<void>((r) => a.on("connect", () => r()));
-      await new Promise<void>((r) => b.on("connect", () => r()));
+      await waitConnect(a);
+      await waitConnect(b);
       a.emit("cash-queue", { address: acct0.address, stakeWei: STAKE, token: TOKEN });
       b.emit("cash-queue", { address: acct1.address, stakeWei: STAKE, token: TOKEN });
 
@@ -290,8 +297,8 @@ describe("Socket.IO transport (integration)", () => {
       let matched = false;
       a.on("cash-matched", () => (matched = true));
       b.on("cash-matched", () => (matched = true));
-      await new Promise<void>((r) => a.on("connect", () => r()));
-      await new Promise<void>((r) => b.on("connect", () => r()));
+      await waitConnect(a);
+      await waitConnect(b);
       a.emit("cash-queue", { address: acct0.address, stakeWei: STAKE, token: TOKEN });
       b.emit("cash-queue", { address: acct1.address, stakeWei: STAKE, token: TOKEN });
       await new Promise((r) => setTimeout(r, 80));
@@ -316,8 +323,8 @@ describe("Socket.IO transport (integration)", () => {
       let matched = false;
       a.on("cash-matched", () => (matched = true));
       b.on("cash-matched", () => (matched = true));
-      await new Promise<void>((r) => a.on("connect", () => r()));
-      await new Promise<void>((r) => b.on("connect", () => r()));
+      await waitConnect(a);
+      await waitConnect(b);
       // no `v` field = old client = exact-stake bucket
       a.emit("cash-queue", { address: acct0.address, stakeWei: "1000000000000000000", token: TOKEN });
       b.emit("cash-queue", { address: acct1.address, stakeWei: "2000000000000000000", token: TOKEN });
@@ -336,8 +343,8 @@ describe("Socket.IO transport (integration)", () => {
       const TEN = "1000000000000000000"; // 1.0 — same "low" band as 0.9
       const mA = new Promise<{ role: string; stakeWei: string }>((r) => a.once("cash-matched", r));
       const mB = new Promise<{ role: string; stakeWei: string }>((r) => b.once("cash-matched", r));
-      await new Promise<void>((r) => a.on("connect", () => r()));
-      await new Promise<void>((r) => b.on("connect", () => r()));
+      await waitConnect(a);
+      await waitConnect(b);
       a.emit("cash-queue", { address: acct0.address, stakeWei: TEN, token: TOKEN, v: 2 });
       b.emit("cash-queue", { address: acct1.address, stakeWei: NINE, token: TOKEN, v: 2 });
 
@@ -356,8 +363,8 @@ describe("Socket.IO transport (integration)", () => {
       let matched = false;
       a.on("cash-matched", () => (matched = true));
       b.on("cash-matched", () => (matched = true));
-      await new Promise<void>((r) => a.on("connect", () => r()));
-      await new Promise<void>((r) => b.on("connect", () => r()));
+      await waitConnect(a);
+      await waitConnect(b);
       a.emit("cash-queue", { address: acct0.address, stakeWei: "900000000000000000", token: TOKEN, v: 2 }); // low
       b.emit("cash-queue", { address: acct1.address, stakeWei: "5000000000000000000", token: TOKEN, v: 2 }); // mid
       await new Promise((r) => setTimeout(r, 80));
@@ -380,8 +387,8 @@ describe("Socket.IO transport (integration)", () => {
       let matched = false;
       a.on("matched", () => (matched = true));
       b.on("matched", () => (matched = true));
-      await new Promise<void>((r) => a.on("connect", () => r()));
-      await new Promise<void>((r) => b.on("connect", () => r()));
+      await waitConnect(a);
+      await waitConnect(b);
       // veteran queues ranked, waits; window widens to cover 400
       a.emit("queue", { address: acct0.address, elo: 1000, mode: "ranked", sessionPubKey: acct0.address });
       await new Promise((r) => setTimeout(r, 40));
@@ -417,7 +424,7 @@ describe("Socket.IO transport (integration)", () => {
       const a = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
       client = a;
       const abort = new Promise<{ reason: string }>((r) => a.once("cash-abort", r));
-      await new Promise<void>((r) => a.on("connect", () => r()));
+      await waitConnect(a);
       a.emit("cash-queue", { address: acct0.address, stakeWei: "1000000000000000000", token: TOKEN, v: 2 });
       const msg = await abort;
       expect(msg.reason).toMatch(/restart/i);
