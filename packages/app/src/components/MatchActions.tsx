@@ -18,7 +18,7 @@ import { CrossMatchOffer } from "./CrossMatchOffer.js";
 import { friendlyName } from "../lib/names.js";
 import { faucetAbi } from "../lib/league.js";
 import { track } from "../lib/analytics.js";
-import { confirmTx, sendWithStaleRetry } from "../lib/tx.js";
+import { confirmTx, sendWithStaleRetry, readWithRetry } from "../lib/tx.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
 
 const TOKENS = stakeTokens();
@@ -78,14 +78,18 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   useEffect(() => {
     if (TOKENS.length === 0) return;
     const client = publicClient(cfg.rpcUrl, cfg.chainId);
-    readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "rakeBps" })
+    // readWithRetry: a single dropped forno request used to silently blank
+    // the fee preview and the balance on the money panel
+    readWithRetry(() => readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "rakeBps" }))
       .then((rake) => setRakeBps(Number(rake)))
       .catch(() => setRakeBps(null));
-    readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "minStake" })
+    readWithRetry(() => readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "minStake" }))
       .then((floor) => setMinStake(floor as bigint))
       .catch(() => {});
     Promise.all(
-      TOKENS.map((t) => readContract(client, { address: t.address, abi: erc20Abi, functionName: "balanceOf", args: [account] })),
+      TOKENS.map((t) =>
+        readWithRetry(() => readContract(client, { address: t.address, abi: erc20Abi, functionName: "balanceOf", args: [account] })),
+      ),
     )
       .then((bals) => {
         const balances = bals as bigint[];
@@ -436,7 +440,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       // to be predicted by reading nextMatchId before sending — two creations
       // racing meant the number on screen (and in the shared invite!) could be
       // someone else's match, greeting both players with "not a player".
-      const receipt = await client.waitForTransactionReceipt({ hash });
+      // confirmTx, not viem's default waiter: lagging nodes made the default
+      // throw while the stake had in fact landed ("fails 4 times out of 5").
+      const receipt = await confirmTx(client, hash, "Your stake");
       const created = parseEventLogs({ abi: matchEscrowAbi, logs: receipt.logs, eventName: "MatchCreated" });
       const matchId = (created[0]?.args as { matchId?: bigint } | undefined)?.matchId;
       if (matchId === undefined) throw new Error("match created but its id couldn't be read — check Your matches");
@@ -480,8 +486,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       });
       // wait until mined, then go straight into the game: the joiner fills
       // the match — showing them the creator's "waiting for an opponent"
-      // room (or reading the match pre-confirmation) was pure confusion
-      await client.waitForTransactionReceipt({ hash });
+      // room (or reading the match pre-confirmation) was pure confusion.
+      // confirmTx tolerates the lagging nodes the default waiter chokes on.
+      await confirmTx(client, hash, "Your stake");
       track("match_joined");
       window.location.href = `/play?match=${matchId.toString()}`;
     } catch (e) {

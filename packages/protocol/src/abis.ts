@@ -176,6 +176,13 @@ export const matchEscrowAbi = [
     outputs: [],
   },
   {
+    type: "function",
+    name: "voidExpired",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [],
+  },
+  {
     type: "event",
     name: "ResultProposed",
     inputs: [

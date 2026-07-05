@@ -7,9 +7,9 @@ import { readContract } from "viem/actions";
 import type { Address, Hex } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
 import { loadSession, createSessionKey, persistSession, signMove, signResult, signResign, signDrawOffer, type SessionKey } from "../lib/session.js";
-import { escrowConfig, proposeResult, challengeResult, cancelMatch, approve, joinMatch, type WriteClient } from "../lib/escrow.js";
+import { escrowConfig, proposeResult, challengeResult, cancelMatch, approve, joinMatch, finalizeResult, type WriteClient } from "../lib/escrow.js";
 import { humanizeError } from "../lib/errors.js";
-import { readWithRetry } from "../lib/tx.js";
+import { readWithRetry, confirmTx } from "../lib/tx.js";
 import { stakeTokens } from "../lib/stakeTokens.js";
 import { recordLocalMatch } from "../lib/matches.js";
 import { track } from "../lib/analytics.js";
@@ -102,7 +102,11 @@ export function LiveMatch({
   // game-over instead of leaving the loser staring at a frozen board forever
   // and paying the winner in silence.
   const [settleWatch, setSettleWatch] = useState(false);
-  const [chainEnded, setChainEnded] = useState<"won" | "lost" | "refunded" | null>(null);
+  const [chainEnded, setChainEnded] = useState<"won" | "lost" | "refunded" | "ended" | null>(null);
+  // the keeper should finalize a past-window claim; when it hasn't, the winner
+  // gets a "Collect now" button instead of waiting on a machine that may be down
+  const [collectReady, setCollectReady] = useState(false);
+  const [collecting, setCollecting] = useState(false);
   // Per-move clock: a fresh window every turn. Miss it and you forfeit —
   // the app never plays your money for you. Settles instantly when the loser
   // is present (their client signs the forfeit result). turnStartedAt marks
@@ -162,7 +166,16 @@ export function LiveMatch({
         wallet.current = w as unknown as WriteClient;
         myAddress.current = address;
         const client = publicClient(cfg.rpcUrl, cfg.chainId);
-        type ChainMatch = { token: Address; player0: Address; player1: Address; stake: bigint; rakeBps: number; status: number; proposedWinner: number };
+        type ChainMatch = {
+          token: Address;
+          player0: Address;
+          player1: Address;
+          stake: bigint;
+          rakeBps: number;
+          status: number;
+          proposedWinner: number;
+          challengeDeadline: bigint;
+        };
         const readMatch = () =>
           readWithRetry(() =>
             readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "getMatch", args: [matchId] }),
@@ -187,6 +200,35 @@ export function LiveMatch({
         stakeInfo.current = { stake: m.stake, rakeBps: Number(m.rakeBps) };
         tokenRef.current = m.token; // captured for a same-opponent cash rematch
         feeCurrency.current = stakeTokens().find((t) => t.address.toLowerCase() === m.token.toLowerCase())?.feeCurrency;
+
+        // A finished match must greet a returning player with the OUTCOME —
+        // the loser who abandoned used to land on a dead "Connected" screen
+        // and never learn the pot was gone.
+        const st0 = Number(m.status);
+        if (r !== null && st0 >= 4) {
+          setRole(r);
+          roleRef.current = r;
+          setOppAddr(r === 0 ? m.player1 : m.player0);
+          if (st0 === 4) {
+            // the winner is only recorded on-chain when the claim path ran
+            // (challengeDeadline is set at proposeResult); the instant
+            // two-signature settle leaves it blank — then we only know the
+            // pot was paid while this player was away.
+            if (Number(m.challengeDeadline) > 0) {
+              const won = Number(m.proposedWinner) === r;
+              setChainEnded(won ? "won" : "lost");
+              setOutcome(won ? 0 : 1);
+              setStatus(won ? "You win — paid out ✅" : "Game over — your opponent won the pot");
+            } else {
+              setChainEnded("ended");
+              setStatus("This game has ended");
+            }
+          } else {
+            setChainEnded("refunded");
+            setStatus("Match expired — stakes refunded");
+          }
+          return;
+        }
         if (r === null) {
           if (Number(m.status) === 1) {
             // Open match, visitor isn't the creator: this is an invitee —
@@ -357,7 +399,7 @@ export function LiveMatch({
   async function selfClaim(winner: 0 | 1 | 2, transcript: WireTranscript) {
     const cfg = escrowConfig();
     if (!cfg || !wallet.current || !myAddress.current) return;
-    setClaimStatus("Opponent ran out of time — settling on-chain…");
+    setClaimStatus("Opponent ran out of time — securing your win…");
     try {
       await proposeResult(wallet.current, {
         account: myAddress.current,
@@ -370,7 +412,10 @@ export function LiveMatch({
       });
       setOutcome(0); // show the victory screen immediately, not a frozen board
       setStatus("You win 🎉");
-      setClaimStatus("Opponent left — paying out. It lands in your wallet shortly.");
+      // honest: the claim opens a ~10-minute window the opponent could contest;
+      // only after it closes does the payout land (the keeper sends it — and if
+      // it doesn't, the poll below surfaces a "Collect now" button).
+      setClaimStatus("Opponent left — you win. Your payout arrives automatically in about 10 minutes.");
       setSettleWatch(true);
     } catch (e) {
       setClaimStatus(`Claim failed: ${humanizeError(e)}`);
@@ -384,7 +429,7 @@ export function LiveMatch({
   async function dispute() {
     const cfg = escrowConfig();
     if (!cfg || !wallet.current || !myAddress.current || !theirClaim) return;
-    setClaimStatus("Disputing with the real transcript…");
+    setClaimStatus("Restoring the real result…");
     try {
       await challengeResult(wallet.current, {
         account: myAddress.current,
@@ -403,6 +448,32 @@ export function LiveMatch({
     } catch (e) {
       setClaimStatus(`Dispute failed: ${humanizeError(e)}`);
     }
+  }
+
+  // Self-service payout: the challenge window is over and the win is mine,
+  // but the keeper hasn't finalized (down, out of gas…). finalize() is
+  // permissionless on-chain, so the winner can always collect themselves.
+  async function collectNow() {
+    const cfg = escrowConfig();
+    if (!cfg || !wallet.current || !myAddress.current || collecting) return;
+    setCollecting(true);
+    setClaimStatus("Collecting your winnings…");
+    try {
+      const h = await finalizeResult(wallet.current, {
+        account: myAddress.current,
+        escrow: cfg.escrow,
+        matchId,
+        feeCurrency: feeCurrency.current,
+      });
+      await confirmTx(publicClient(cfg.rpcUrl, cfg.chainId), h, "Payout");
+      setCollectReady(false);
+      setChainEnded("won");
+      setOutcome(0);
+      setClaimStatus("Paid ✓ — your winnings are in your wallet.");
+    } catch (e) {
+      setClaimStatus(humanizeError(e));
+    }
+    setCollecting(false);
   }
 
   async function replyToDraw(accept: boolean) {
@@ -464,7 +535,7 @@ export function LiveMatch({
           amount: joinOffer.stake * 100n, // headroom: one approval, ~100 games
           feeCurrency: feeCurrency.current,
         });
-        await client.waitForTransactionReceipt({ hash: ah });
+        await confirmTx(client, ah, "Approval");
       }
       // NEVER overwrite an existing session key: if this match was already
       // joined from this device (a stale read mis-offered the seat), replacing
@@ -479,7 +550,7 @@ export function LiveMatch({
         session: sk.address,
         feeCurrency: feeCurrency.current,
       });
-      await client.waitForTransactionReceipt({ hash: jh });
+      await confirmTx(client, jh, "Your stake");
       track("match_joined");
       window.location.reload();
     } catch (e) {
@@ -551,7 +622,7 @@ export function LiveMatch({
           abi: matchEscrowAbi,
           functionName: "getMatch",
           args: [matchId],
-        })) as { status: number; proposedWinner: number };
+        })) as { status: number; proposedWinner: number; challengeDeadline: bigint };
         const st = Number(m.status);
         if (st === 4) {
           // Resolved — the pot has been paid out
@@ -560,8 +631,17 @@ export function LiveMatch({
           setOutcome(won ? 0 : 1);
           setTimedOut(false);
           setTheirClaim(null);
+          setCollectReady(false);
           setClaimStatus(won ? "Paid ✓ — your winnings are in your wallet." : null);
           setStatus(won ? "You win — paid out ✅" : "You lose — out of time");
+        } else if (
+          st === 3 &&
+          Number(m.proposedWinner) === roleRef.current &&
+          Number(m.challengeDeadline) > 0 &&
+          Date.now() / 1000 > Number(m.challengeDeadline)
+        ) {
+          // my win, window closed, keeper hasn't paid yet → offer self-service
+          setCollectReady(true);
         } else if (st >= 5) {
           // Cancelled/Voided — both stakes went back in full
           setChainEnded("refunded");
@@ -695,6 +775,12 @@ export function LiveMatch({
         </div>
       )}
 
+      {collectReady && !chainEnded && (
+        <button className="btn block" onClick={collectNow} disabled={collecting}>
+          {collecting ? "Collecting…" : "Collect your winnings now"}
+        </button>
+      )}
+
       {state ? (
         <div className="stack" style={{ gap: 14, marginTop: 4 }}>
           <PlayerPanel
@@ -773,12 +859,13 @@ export function LiveMatch({
           {cancelError && <span className="muted" style={{ color: "var(--danger)" }}>{cancelError}</span>}
         </div>
         </div>
-      ) : (
+      ) : !chainEnded ? (
         // fallback for non-board states: connecting, or a terminal/error
         // message ("match full", "session key not found", "open in MiniPay",
         // "not available"). Always offer a way back so it's never a dead end,
         // and only pulse for genuine loading (a static error shouldn't imply
-        // "still working").
+        // "still working"). When the match ended on-chain, the outcome card
+        // below is the whole story — don't stack a stale "Connected" over it.
         <div className="card stack" style={{ gap: 12, alignItems: "center", textAlign: "center" }}>
           <span className="chip">
             {/^(Connecting|Connected|Loading)/i.test(status) && <span className="dot pulse" />}
@@ -788,7 +875,7 @@ export function LiveMatch({
             <Icon name="play" size={16} /> Back to lobby
           </Link>
         </div>
-      )}
+      ) : null}
 
       {chainEnded === "refunded" && (
         <div className="card stack animate-in" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
@@ -796,6 +883,21 @@ export function LiveMatch({
           <span className="muted">Nobody claimed the result in time — both stakes were refunded in full.</span>
           <Link className="btn block" href="/?play=1">
             <Icon name="play" size={17} /> Play again
+          </Link>
+        </div>
+      )}
+
+      {chainEnded === "ended" && (
+        // settled while this player was away via the instant two-signature
+        // path — the chain doesn't record who won there, only that it paid
+        <div className="card stack animate-in" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
+          <span className="h2">This game has ended</span>
+          <span className="muted">The pot was paid out while you were away. Your balance reflects the result.</span>
+          <Link className="btn block" href="/?play=1">
+            <Icon name="play" size={17} /> Play again
+          </Link>
+          <Link className="faint" href="/matches" style={{ fontSize: 12.5 }}>
+            Your matches
           </Link>
         </div>
       )}

@@ -6,7 +6,8 @@ import Link from "next/link";
 import { readContract } from "viem/actions";
 import type { Address } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../../src/lib/minipay.js";
-import { escrowConfig, cancelMatch } from "../../src/lib/escrow.js";
+import { escrowConfig, cancelMatch, voidExpired, finalizeResult } from "../../src/lib/escrow.js";
+import { readWithRetry, confirmTx } from "../../src/lib/tx.js";
 import { listLocalMatches, statusView } from "../../src/lib/matches.js";
 import { computePayout, fmt } from "../../src/lib/money.js";
 import { humanizeError } from "../../src/lib/errors.js";
@@ -29,6 +30,13 @@ interface Row {
   rakeBps: number;
   /** match creator — the only wallet allowed to cancel an open match. */
   player0: Address;
+  player1: Address;
+  /** unix seconds; 0 until joined. Past it, a player can reclaim both stakes. */
+  activeDeadline: number;
+  /** unix seconds; set while a result is Proposed. */
+  challengeDeadline: number;
+  /** 0/1/2 — only meaningful while status is Proposed. */
+  proposedWinner: number;
 }
 
 interface AsyncRow {
@@ -147,13 +155,34 @@ export default function Matches() {
     // out every other match the player actually has.
     Promise.allSettled(
       ids.map(async (id) => {
-        const m = (await readContract(client, {
-          address: cfg.escrow,
-          abi: matchEscrowAbi,
-          functionName: "getMatch",
-          args: [id],
-        })) as { status: number; stake: bigint; rakeBps: number; player0: Address };
-        return { id, status: Number(m.status), stake: m.stake, rakeBps: Number(m.rakeBps), player0: m.player0 };
+        const m = (await readWithRetry(() =>
+          readContract(client, {
+            address: cfg.escrow,
+            abi: matchEscrowAbi,
+            functionName: "getMatch",
+            args: [id],
+          }),
+        )) as {
+          status: number;
+          stake: bigint;
+          rakeBps: number;
+          player0: Address;
+          player1: Address;
+          activeDeadline: bigint;
+          challengeDeadline: bigint;
+          proposedWinner: number;
+        };
+        return {
+          id,
+          status: Number(m.status),
+          stake: m.stake,
+          rakeBps: Number(m.rakeBps),
+          player0: m.player0,
+          player1: m.player1,
+          activeDeadline: Number(m.activeDeadline),
+          challengeDeadline: Number(m.challengeDeadline),
+          proposedWinner: Number(m.proposedWinner),
+        };
       }),
     ).then((results) => {
       const ok = results
@@ -204,13 +233,57 @@ export default function Matches() {
     setCancelling(null);
   }
 
+  // Recovery for stuck money — the two situations where funds sit locked and
+  // ONLY the player can free them (the contract gates voidExpired to players;
+  // the server keeper cannot do it in their place):
+  //  - a match that expired without finishing → reclaim both stakes in full
+  //  - my own win, proposed and past its challenge window, that the keeper
+  //    hasn't paid out yet → collect it now
+  const [recovering, setRecovering] = useState<bigint | null>(null);
+  async function reclaimStake(id: bigint) {
+    const cfg = escrowConfig();
+    if (!cfg || !wallet || !account || recovering !== null) return;
+    setRecovering(id);
+    try {
+      const h = await voidExpired(wallet, { account, escrow: cfg.escrow, matchId: id, feeCurrency: FEE_CURRENCY });
+      await confirmTx(publicClient(cfg.rpcUrl, cfg.chainId), h, "Refund");
+      setRows((r) => (r ? r.filter((x) => x.id !== id) : r));
+    } catch (e) {
+      setError(humanizeError(e));
+    }
+    setRecovering(null);
+  }
+  async function collectWin(id: bigint) {
+    const cfg = escrowConfig();
+    if (!cfg || !wallet || !account || recovering !== null) return;
+    setRecovering(id);
+    try {
+      const h = await finalizeResult(wallet, { account, escrow: cfg.escrow, matchId: id, feeCurrency: FEE_CURRENCY });
+      await confirmTx(publicClient(cfg.rpcUrl, cfg.chainId), h, "Payout");
+      setRows((r) => (r ? r.filter((x) => x.id !== id) : r));
+    } catch (e) {
+      setError(humanizeError(e));
+    }
+    setRecovering(null);
+  }
+
   // Safety net: my open matches found by the CHAIN scan that the device's
   // local list doesn't know about (the pre-receipt id prediction could record
   // the wrong number) — surfaced so the stake is always visible & cancellable.
   const chainMine: Row[] = account
     ? openMatches
         .filter((o) => o.mine && !(rows ?? []).some((r) => r.id === o.id))
-        .map((o) => ({ id: o.id, status: 1, stake: o.stake, rakeBps: o.rakeBps, player0: o.creator }))
+        .map((o) => ({
+          id: o.id,
+          status: 1,
+          stake: o.stake,
+          rakeBps: o.rakeBps,
+          player0: o.creator,
+          player1: "0x0000000000000000000000000000000000000000" as Address,
+          activeDeadline: 0,
+          challengeDeadline: 0,
+          proposedWinner: 0,
+        }))
     : [];
   const myRows = rows === null ? null : [...rows, ...chainMine];
 
@@ -319,8 +392,15 @@ export default function Matches() {
           {myRows.map((r) => {
             const sv = statusView(r.status);
             const { prize } = computePayout(r.stake, r.rakeBps);
-            const mineOpen =
-              r.status === 1 && account !== null && r.player0.toLowerCase() === account.toLowerCase();
+            const me = account?.toLowerCase();
+            const mineOpen = r.status === 1 && me !== undefined && r.player0.toLowerCase() === me;
+            const mySeat =
+              me === undefined ? null : r.player0.toLowerCase() === me ? 0 : r.player1.toLowerCase() === me ? 1 : null;
+            const now = Math.floor(Date.now() / 1000);
+            // stuck money, and only THIS wallet can free it (contract rule)
+            const expired =
+              mySeat !== null && (r.status === 2 || r.status === 3) && r.activeDeadline > 0 && now > r.activeDeadline;
+            const collectable = mySeat !== null && r.status === 3 && now > r.challengeDeadline && r.proposedWinner === mySeat;
             return (
               <div className="card stack animate-in" key={r.id.toString()} style={{ gap: 8 }}>
                 <div className="row">
@@ -335,7 +415,27 @@ export default function Matches() {
                     {sv.label}
                   </span>
                 </div>
-                {sv.live && (
+                {collectable && (
+                  <>
+                    <span className="muted" style={{ fontSize: 12.5 }}>
+                      You won this game — the payout is ready to collect.
+                    </span>
+                    <button className="btn block" onClick={() => collectWin(r.id)} disabled={recovering !== null}>
+                      {recovering === r.id ? "Collecting…" : `Collect ${fmt(prize, STAKE_DECIMALS)} ${STAKE_SYMBOL}`}
+                    </button>
+                  </>
+                )}
+                {expired && !collectable && (
+                  <>
+                    <span className="muted" style={{ fontSize: 12.5 }}>
+                      This game never finished. Get your full stake back — no fee.
+                    </span>
+                    <button className="btn block" onClick={() => reclaimStake(r.id)} disabled={recovering !== null}>
+                      {recovering === r.id ? "Refunding…" : "Get my stake back"}
+                    </button>
+                  </>
+                )}
+                {sv.live && !expired && !collectable && (
                   <div className="row" style={{ gap: 8 }}>
                     <Link className="btn secondary" href={`/play?match=${r.id.toString()}`} style={{ flex: 1, justifyContent: "center" }}>
                       {r.status === 1 ? "Open & invite" : "Resume"}

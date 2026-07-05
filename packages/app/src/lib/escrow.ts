@@ -170,6 +170,23 @@ export function challengeResult(
   });
 }
 
+/** Reclaim both stakes from a match that expired without settling (Active or
+ *  Proposed past its TTL). Player-only on-chain — the keeper CANNOT do this
+ *  for you, which is why the UI must offer it. Full refund, no fee. */
+export function voidExpired(
+  wallet: WriteClient,
+  p: { account: Address; escrow: Address; matchId: bigint; feeCurrency?: Address },
+): Promise<Hex> {
+  return wallet.writeContract({
+    address: p.escrow,
+    abi: matchEscrowAbi,
+    functionName: "voidExpired",
+    args: [p.matchId],
+    account: p.account,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
+  });
+}
+
 /** Pay out a proposed result once its challenge window has elapsed. Anyone
  *  can call this — normally the server's keeper does, but a player can too. */
 export function finalizeResult(
