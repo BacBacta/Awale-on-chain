@@ -7,6 +7,7 @@ import { getInjectedProvider, isMiniPay, connect } from "../src/lib/minipay.js";
 import { shortAddress } from "../src/lib/identity.js";
 import { friendlyName } from "../src/lib/names.js";
 import { escrowConfig, type WriteClient, type EscrowConfig } from "../src/lib/escrow.js";
+import { WINNER_PCT } from "../src/lib/money.js";
 import { MatchActions } from "../src/components/MatchActions.js";
 import { PersonhoodVerify } from "../src/components/PersonhoodVerify.js";
 import { QuickMatch } from "../src/components/QuickMatch.js";
@@ -209,7 +210,7 @@ export default function Lobby() {
               <span className="row" style={{ gap: 6 }}>
                 <Icon name="wallet" size={15} /> For money
               </span>
-              <span style={{ fontSize: 10.5, fontWeight: 500, opacity: 0.65 }}>Stake $0.25–1 · winner takes 92%</span>
+              <span style={{ fontSize: 10.5, fontWeight: 500, opacity: 0.65 }}>Stake $0.25–1 · winner takes {WINNER_PCT}</span>
             </span>
           </button>
         </div>

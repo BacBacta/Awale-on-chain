@@ -8,23 +8,7 @@
 
 import type { Address } from "viem";
 import { shortAddress } from "../lib/identity.js";
-
-const TIERS = [
-  { name: "Seedling", icon: "🌱", min: 0 },
-  { name: "Sower", icon: "✋", min: 1150 },
-  { name: "Harvester", icon: "🌾", min: 1275 },
-  { name: "Captor", icon: "🏆", min: 1400 },
-  { name: "Grandmaster", icon: "👑", min: 1550 },
-] as const;
-
-function climb(elo: number) {
-  let i = 0;
-  for (let k = 0; k < TIERS.length; k++) if (elo >= TIERS[k].min) i = k;
-  const cur = TIERS[i];
-  const next = TIERS[i + 1] ?? null;
-  const pct = next ? Math.max(0.04, Math.min(1, (elo - cur.min) / (next.min - cur.min))) : 1;
-  return { cur, next, pct, toNext: next ? next.min - elo : 0 };
-}
+import { tierProgress } from "../lib/profile.js";
 
 export function avatarGradient(seed: string): string {
   let h = 0;
@@ -48,7 +32,7 @@ export function RankHero({
   name?: string;
   address?: Address | null;
 }) {
-  const { cur, next, pct, toNext } = climb(elo);
+  const { cur, next, pct, toNext } = tierProgress(elo);
   const initial = name?.trim()[0]?.toUpperCase() ?? "?";
 
   return (

@@ -10,7 +10,7 @@ import Link from "next/link";
 import type { Address } from "viem";
 import { getInjectedProvider, connect } from "../../src/lib/minipay.js";
 import { escrowConfig } from "../../src/lib/escrow.js";
-import { getProfile, rankFor, type PlayerProfile } from "../../src/lib/profile.js";
+import { getProfile, rankFor, TIERS, type PlayerProfile } from "../../src/lib/profile.js";
 import { streakCount } from "../../src/lib/daily.js";
 import { DailyQuests } from "../../src/components/DailyQuests.js";
 import { SkillLeaderboard } from "../../src/components/SkillLeaderboard.js";
@@ -18,14 +18,6 @@ import { WeeklyLeague } from "../../src/components/WeeklyLeague.js";
 import { Icon, type IconName } from "../../src/components/Icon.js";
 import { RankHero } from "../../src/components/RankHero.js";
 import { harvestAddress } from "../../src/lib/league.js";
-
-const TIERS = [
-  { icon: "🌱", name: "Seedling" },
-  { icon: "✋", name: "Sower" },
-  { icon: "🌾", name: "Harvester" },
-  { icon: "🏆", name: "Captor" },
-  { icon: "👑", name: "Grandmaster" },
-];
 
 function Row({ href, icon, title, sub }: { href: string; icon: IconName; title: string; sub: string }) {
   return (

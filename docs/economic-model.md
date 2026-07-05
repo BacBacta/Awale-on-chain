@@ -14,7 +14,20 @@ and actually earns. Grounded in the code as built.
 | **Cosmetics** | `Cosmetics.buy` → stablecoin to Treasury; **5% ERC-2981** resale royalty | Tiny; board/seed skins, low willingness-to-pay. |
 | **League yield** | `HarvestVault`: **100% of yield → players**, principal returned | **Protocol takes 0%.** Pure cost/feature, no revenue. |
 
-**Net:** revenue ≈ *2.5% of cash-match volume*. Everything else earns ~nothing.
+**Net:** revenue ≈ *rake × cash-match volume* (deployed rake is **800 bps = 8%**, not the 250 code default — set via `RAKE_BPS` at deploy). Everything else earns ~nothing.
+
+> ⚠️ **Weekly-league pool funding — operator-funded, NOT on-chain (mainnet item, "D9").**
+> The UI says "half of every house fee feeds the weekly pot, so the fee partly comes back
+> to players" (`guide`). That is an **accounting convention**, not an on-chain flow:
+> - On-chain, 100% of the rake goes to the **Treasury** (`MatchEscrow._payout` → `treasury`).
+> - The weekly-league pool is a **number in Redis** (`WeeklyLeague.recordGame`, `poolShareBps=5000`).
+> - Prizes are paid **from the operator wallet** via a plain ERC-20 `transfer` (`main.ts leaguePayout`),
+>   so ops must keep the operator funded to cover the promised pool share.
+>
+> There is **no smart-contract link routing rake → league prizes**. Before mainnet, either
+> (a) accept and monitor the operator-funding obligation (treasury → operator top-up routine),
+> or (b) route the pool share on-chain (a `MatchEscrow`/Treasury change). Until then the
+> "fee comes back to players" promise depends entirely on ops discipline.
 
 ---
 

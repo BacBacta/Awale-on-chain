@@ -11,8 +11,11 @@
 
 import Link from "next/link";
 import { Icon, type IconName } from "../../src/components/Icon.js";
+import { TIERS as RANK_TIERS } from "../../src/lib/profile.js";
+import { WINNER_PCT, FEE_PCT } from "../../src/lib/money.js";
 
-const TIERS = "🌱 Seedling → ✋ Sower → 🌾 Harvester → 🏆 Captor → 👑 Grandmaster";
+// the ladder string, built from the single source so it never drifts
+const TIERS = RANK_TIERS.map((t) => `${t.icon} ${t.name}`).join(" → ");
 
 function Way({ icon, title, sub }: { icon: IconName; title: string; sub: string }) {
   return (
@@ -70,7 +73,7 @@ export default function Guide() {
       <div className="stack" style={{ gap: 8 }}>
         <Way icon="bolt" title="Quick match" sub="Free · live vs a real player · no clock" />
         <Way icon="versus" title="With a friend" sub="Free · share a link · play at your own pace" />
-        <Way icon="wallet" title="For money" sub="You each stake $0.25–1 · winner takes 92%" />
+        <Way icon="wallet" title="For money" sub={`You each stake $0.25–1 · winner takes ${WINNER_PCT}`} />
         <Way icon="play" title="Practice vs AI" sub="Free · warm up anytime · pick your level" />
         <Way icon="target" title="Daily puzzle" sub="Free · one a day · keeps your streak alive" />
       </div>
@@ -81,7 +84,7 @@ export default function Guide() {
       </span>
       <div className="card stack" style={{ gap: 10 }}>
         <Point n={1}>You and your opponent each put the same amount in the pot.</Point>
-        <Point n={2}>The winner takes 92% of the pot. The 8% house fee is always shown before you stake.</Point>
+        <Point n={2}>The winner takes {WINNER_PCT} of the pot. The {FEE_PCT} house fee is always shown before you stake.</Point>
         <Point n={3}>A draw refunds both players in full — no fee taken.</Point>
         <Point n={4}>Nobody joined your match yet? Cancel anytime — your stake comes back in full.</Point>
         <Point n={5}>Stakes are held by a smart contract on Celo until the game settles — not by us.</Point>

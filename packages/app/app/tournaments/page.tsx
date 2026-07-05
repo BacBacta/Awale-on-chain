@@ -20,7 +20,7 @@ export default function TournamentsMoved() {
         Tournaments have grown into the weekly league — every money game now counts.
       </span>
       <Link className="btn" href="/compete">
-        See this week&apos;s race
+        Go to the Weekly league
       </Link>
     </main>
   );

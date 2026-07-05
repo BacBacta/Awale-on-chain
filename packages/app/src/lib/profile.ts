@@ -36,13 +36,38 @@ export interface LeaderRow {
   gamesWon: number;
 }
 
-/** Display tier for a skill rating — themed on the game's own verbs. */
-export function rankFor(elo: number): { name: string; icon: string } {
-  if (elo >= 1550) return { name: "Grandmaster", icon: "👑" };
-  if (elo >= 1400) return { name: "Captor", icon: "🏆" };
-  if (elo >= 1275) return { name: "Harvester", icon: "🌾" };
-  if (elo >= 1150) return { name: "Sower", icon: "✋" };
-  return { name: "Seedling", icon: "🌱" };
+/** THE single source of truth for the skill-rank ladder (Seedling →
+ *  Grandmaster), themed on the game's own verbs. `min` = the rating at which
+ *  the tier is reached. Everything that shows tiers or the climb imports this
+ *  — no more four copies drifting apart. Ordered low → high. */
+export interface Tier {
+  name: string;
+  icon: string;
+  min: number;
+}
+export const TIERS: readonly Tier[] = [
+  { name: "Seedling", icon: "🌱", min: 0 },
+  { name: "Sower", icon: "✋", min: 1150 },
+  { name: "Harvester", icon: "🌾", min: 1275 },
+  { name: "Captor", icon: "🏆", min: 1400 },
+  { name: "Grandmaster", icon: "👑", min: 1550 },
+];
+
+/** Display tier for a skill rating. */
+export function rankFor(elo: number): Tier {
+  let tier = TIERS[0];
+  for (const t of TIERS) if (elo >= t.min) tier = t;
+  return tier;
+}
+
+/** Progress toward the next tier: current + next tier and 0..1 fraction. */
+export function tierProgress(elo: number): { cur: Tier; next: Tier | null; pct: number; toNext: number } {
+  let i = 0;
+  for (let k = 0; k < TIERS.length; k++) if (elo >= TIERS[k].min) i = k;
+  const cur = TIERS[i];
+  const next = TIERS[i + 1] ?? null;
+  const pct = next ? Math.max(0.04, Math.min(1, (elo - cur.min) / (next.min - cur.min))) : 1;
+  return { cur, next, pct, toNext: next ? next.min - elo : 0 };
 }
 
 export function profileEnabled(): boolean {

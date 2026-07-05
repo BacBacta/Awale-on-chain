@@ -34,3 +34,14 @@ export function fmt(raw: bigint, decimals: number, maxFractionDigits = 2): strin
 export function rakePct(rakeBps: number): string {
   return `${(rakeBps / 100).toFixed(rakeBps % 100 === 0 ? 0 : 1)}%`;
 }
+
+// Single source for the STATIC marketing copy's "winner takes X% · Y% fee"
+// (the guide, the home hero). The live per-match fee is still read from the
+// contract in MatchActions; this is just so the headline numbers aren't
+// hardcoded in three places and can't silently disagree with the rake. Set
+// NEXT_PUBLIC_RAKE_BPS to match the deployed MatchEscrow rake.
+export const RAKE_BPS = Number(process.env.NEXT_PUBLIC_RAKE_BPS ?? "800");
+/** e.g. "92%" — winner's share of the pot. */
+export const WINNER_PCT = `${Math.round((10_000 - RAKE_BPS) / 100)}%`;
+/** e.g. "8%" — the house fee. */
+export const FEE_PCT = rakePct(RAKE_BPS);
