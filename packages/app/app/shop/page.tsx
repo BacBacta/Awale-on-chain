@@ -178,7 +178,7 @@ export default function Shop() {
     const fee = feeCurrency();
     void run("Minting test aUSD", () =>
       sendWithStaleRetry("Mint", () =>
-        wallet.writeContract({ address: currency, abi: faucetAbi, functionName: "mint", args: [account, parseUnits("100", DECIMALS)], feeCurrency: fee }),
+        wallet.writeContract({ address: currency, abi: faucetAbi, functionName: "mint", args: [account, parseUnits("100", DECIMALS)], account, feeCurrency: fee }),
       ),
     );
   }
@@ -201,12 +201,15 @@ export default function Shop() {
       )) as bigint;
       if (allowance < cost) {
         const ah = await sendWithStaleRetry("Approval", () =>
-          wallet.writeContract({ address: currency, abi: erc20Abi, functionName: "approve", args: [cos, cost], feeCurrency: fee }),
+          // `account` is required: the wallet client is created unbound
+          // (createWalletClient without an account), so every write must name
+          // its signer — same as every write in the stake flow.
+          wallet.writeContract({ address: currency, abi: erc20Abi, functionName: "approve", args: [cos, cost], account, feeCurrency: fee }),
         );
         await confirmTx(client, ah, "Approval");
       }
       return sendWithStaleRetry("Purchase", () =>
-        wallet.writeContract({ address: cos, abi: cosmeticsAbi, functionName: "buy", args: [BigInt(s.itemId), 1n], feeCurrency: fee }),
+        wallet.writeContract({ address: cos, abi: cosmeticsAbi, functionName: "buy", args: [BigInt(s.itemId), 1n], account, feeCurrency: fee }),
       );
     });
   }
@@ -332,7 +335,7 @@ export default function Shop() {
           )}
         </div>
       )}
-      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc5</span>
+      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc6</span>
     </main>
   );
 }
