@@ -1044,8 +1044,15 @@ async function keeperTick(): Promise<void> {
   const actions = keeperActions(matches, now, blockNumber);
   if (actions.length === 0) return;
   try {
-    await runKeeper(settlement, actions);
+    // per-action failures are reported, not thrown — one un-voidable match
+    // must not starve the rest of the batch
+    const failed = new Set<string>();
+    await runKeeper(settlement, actions, (a, err) => {
+      failed.add(`${a.action}:${a.matchId}`);
+      console.warn(`[keeper] ${a.action} match ${a.matchId} failed: ${(err as Error).message}`);
+    });
     for (const a of actions) {
+      if (failed.has(`${a.action}:${a.matchId}`)) continue;
       console.log(`[keeper] ${a.action} match ${a.matchId}`);
       if (a.action === "voidExpired") {
         // an expired match just refunded both stakes — a silent refund reads

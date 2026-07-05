@@ -77,13 +77,25 @@ export function idsToRescan(next: bigint, trackedIds: ReadonlySet<string>, termi
   return out;
 }
 
-/** Execute keeper actions, returning the submitted transaction hashes. */
-export async function runKeeper(client: SettlementClient, actions: KeeperAction[]): Promise<Hex[]> {
+/** Execute keeper actions, returning the hashes of those that were submitted.
+ *  Each action gets its own try: one revert (e.g. voidExpired on a match the
+ *  operator isn't a player of — the contract gates it to players) must not
+ *  abort the whole batch, or a single poisoned match starves every other
+ *  stuck match behind it, tick after tick. */
+export async function runKeeper(
+  client: SettlementClient,
+  actions: KeeperAction[],
+  onError?: (a: KeeperAction, err: unknown) => void,
+): Promise<Hex[]> {
   const hashes: Hex[] = [];
   for (const a of actions) {
-    if (a.action === "finalize") hashes.push(await client.finalize(a.matchId));
-    else if (a.action === "finalizeStart") hashes.push(await client.finalizeStart(a.matchId));
-    else hashes.push(await client.voidExpired(a.matchId));
+    try {
+      if (a.action === "finalize") hashes.push(await client.finalize(a.matchId));
+      else if (a.action === "finalizeStart") hashes.push(await client.finalizeStart(a.matchId));
+      else hashes.push(await client.voidExpired(a.matchId));
+    } catch (err) {
+      onError?.(a, err);
+    }
   }
   return hashes;
 }
