@@ -24,6 +24,7 @@ const RULES: Rule[] = [
   { test: /stake|rake too high|window too short/i, msg: "Invalid match parameters." },
   // network
   { test: /invalid chain id|chain mismatch|does not match the target chain/i, msg: "Wrong network — switch your wallet to Celo and retry." },
+  { test: /too many requests|rate limit|429/i, msg: "Network is busy — wait a few seconds and retry." },
   { test: /nonce|replacement transaction underpriced/i, msg: "Network was busy — please retry." },
   { test: /timeout|timed out|network|fetch failed|failed to fetch|http request failed|load failed|econnreset/i, msg: "Network hiccup — please retry." },
 ];

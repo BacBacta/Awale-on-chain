@@ -38,10 +38,13 @@ export async function confirmTx(client: Client, hash: Hex, label: string): Promi
 // bad node, a flaky preflight, a transient network blip). Read-only calls that
 // hit it should simply try again, not fail the user's action.
 const NETWORK_DROP = /failed to fetch|http request failed|fetch failed|load failed|networkerror|timeout|timed out|econnreset|econnrefused/i;
+// public endpoints (ankr & co) throttle hard; they ask for ~10s before retrying
+const RATE_LIMIT = /too many requests|rate limit|429/i;
 
-/** Retry a read (eth_call) when the RPC drops the request. Transient forno
- *  flakiness was surfacing as "Something went wrong" on the very first step of
- *  a purchase (the allowance read), killing the buy before any tx was sent. */
+/** Retry a read (eth_call) when the RPC drops the request or throttles us.
+ *  Transient forno flakiness was surfacing as "Something went wrong" on the
+ *  very first step of a purchase (the allowance read), killing the buy before
+ *  any tx was sent. */
 export async function readWithRetry<T>(fn: () => Promise<T>, tries = 5): Promise<T> {
   let lastErr: unknown;
   for (let i = 0; i < tries; i++) {
@@ -49,8 +52,10 @@ export async function readWithRetry<T>(fn: () => Promise<T>, tries = 5): Promise
       return await fn();
     } catch (e) {
       lastErr = e;
-      if (!NETWORK_DROP.test(String(e))) throw e;
-      await sleep(1200);
+      const text = String(e);
+      if (RATE_LIMIT.test(text)) await sleep(10_000);
+      else if (NETWORK_DROP.test(text)) await sleep(1200);
+      else throw e;
     }
   }
   throw lastErr;
@@ -75,6 +80,10 @@ export async function sendWithStaleRetry(label: string, send: () => Promise<Hex>
       // request (Failed to fetch). Real reverts fail all 8 tries and surface
       // after ~30s — a slower true error beats an instant FALSE one on a
       // money button.
+      if (RATE_LIMIT.test(text)) {
+        await sleep(10_000);
+        continue;
+      }
       if (NETWORK_DROP.test(text) || /allowance|transfer amount exceeds|insufficient|not open|not active|no such|execution reverted|0xfb8f41b2/i.test(text)) {
         await sleep(4000);
         continue;

@@ -84,38 +84,39 @@ export default function Shop() {
   const refresh = useCallback(async () => {
     if (!cos || !cfg) return;
     const client = publicClient(cfg.rpcUrl, cfg.chainId);
-    setCurrency(
-      (await readWithRetry(() => readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "currency" }))) as Address,
-    );
     const paid = [...BOARD_SKINS, ...SEED_SKINS].filter((s) => s.itemId > 0);
 
-    // real catalogue state (price / supply / sold-out) — independent of wallet
-    const rows = await Promise.all(
-      paid.map((s) =>
-        readWithRetry(() =>
-          readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "items", args: [BigInt(s.itemId)] }),
-        ).catch(() => null),
-      ),
-    );
+    // ONE multicall for everything (currency + catalogue + ownership). The
+    // previous 11 separate eth_calls per refresh exhausted the public backup
+    // endpoints' rate limits the moment forno was down.
+    const calls = [
+      { address: cos, abi: cosmeticsAbi, functionName: "currency" as const },
+      ...paid.map((s) => ({ address: cos, abi: cosmeticsAbi, functionName: "items" as const, args: [BigInt(s.itemId)] })),
+      ...(account
+        ? paid.map((s) => ({ address: cos, abi: cosmeticsAbi, functionName: "balanceOf" as const, args: [account, BigInt(s.itemId)] }))
+        : []),
+    ];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const res = await readWithRetry(() => client.multicall({ contracts: calls as any, allowFailure: true }));
+
+    const cur = res[0];
+    if (cur?.status === "success") setCurrency(cur.result as Address);
+
     const cat: Record<number, { onSale: boolean; price: bigint; left: number | null }> = {};
     paid.forEach((s, i) => {
-      const r = rows[i] as readonly [boolean, bigint, bigint, bigint] | null;
-      if (!r) return;
-      const [exists, price, maxSupply, minted] = r;
+      const r = res[1 + i];
+      if (r?.status !== "success") return;
+      const [exists, price, maxSupply, minted] = r.result as readonly [boolean, bigint, bigint, bigint];
       cat[s.itemId] = { onSale: exists && price > 0n, price, left: maxSupply > 0n ? Number(maxSupply - minted) : null };
     });
     setCatalog(cat);
 
     if (!account) return;
-    const bals = await Promise.all(
-      paid.map((s) =>
-        readWithRetry(() =>
-          readContract(client, { address: cos, abi: cosmeticsAbi, functionName: "balanceOf", args: [account, BigInt(s.itemId)] }),
-        ),
-      ),
-    );
     const o: Record<number, boolean> = {};
-    paid.forEach((s, i) => (o[s.itemId] = (bals[i] as bigint) > 0n));
+    paid.forEach((s, i) => {
+      const r = res[1 + paid.length + i];
+      if (r?.status === "success") o[s.itemId] = (r.result as bigint) > 0n;
+    });
     setOwned(o);
   }, [cos, cfg, account]);
 
@@ -163,7 +164,10 @@ export default function Shop() {
       const h = await fn();
       await confirmTx(publicClient(cfg.rpcUrl, cfg.chainId), h, label);
       setStatus(`${label} ✓`);
-      await refresh();
+      // the tx LANDED — a failed post-action refresh must never repaint the
+      // success as an error (it did: an ankr rate-limit on the refresh masked
+      // the user's first successful purchase). Ownership catches up next load.
+      refresh().catch(() => {});
     } catch (e) {
       setError(humanizeError(e));
       setDetail(rawErrorDetail(e));
@@ -335,7 +339,7 @@ export default function Shop() {
           )}
         </div>
       )}
-      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc6</span>
+      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc7</span>
     </main>
   );
 }
