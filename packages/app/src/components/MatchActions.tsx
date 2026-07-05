@@ -9,7 +9,7 @@ import { publicClient, effectiveFeeCurrency } from "../lib/minipay.js";
 import { createMatch, joinMatch, approve, cancelMatch, parseStake, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
 import { createSessionKey, persistSession } from "../lib/session.js";
 import { receiptDeeplink } from "../lib/deeplinks.js";
-import { computePayout, fmt, rakePct } from "../lib/money.js";
+import { computePayout, fmt, rakePct, stakeFloor } from "../lib/money.js";
 import { humanizeError } from "../lib/errors.js";
 import { recordLocalMatch, listLocalMatches } from "../lib/matches.js";
 import { stakeTokens, preferredIndex } from "../lib/stakeTokens.js";
@@ -268,14 +268,19 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     return matchId;
   }
 
+  // the floor the UI enforces: the higher of the client minimum (kills dust
+  // matches even when the contract's minStake is 0) and the on-chain minStake.
+  const floor = (): bigint => stakeFloor(minStake, dec);
+
   function validateStake(): bigint | null {
     const amount = parseStake(stake || "0", dec);
     if (amount <= 0n) {
       setError("Enter an amount greater than zero.");
       return null;
     }
-    if (minStake > 0n && amount < minStake) {
-      setError(`Minimum is ${fmt(minStake, dec)} ${sym}.`);
+    const min = floor();
+    if (amount < min) {
+      setError(`Minimum stake is ${fmt(min, dec)} ${sym}.`);
       return null;
     }
     if (balance !== null && amount > balance) {
@@ -411,7 +416,8 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     try {
       const amount = parseStake(stake, dec);
       if (amount <= 0n) return setError("Enter an amount greater than zero.");
-      if (minStake > 0n && amount < minStake) return setError(`Minimum is ${fmt(minStake, dec)} ${sym}.`);
+      const min = floor();
+      if (amount < min) return setError(`Minimum stake is ${fmt(min, dec)} ${sym}.`);
       if (balance !== null && amount > balance) return setError(`Not enough ${sym} — add money to MiniPay first.`);
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
 

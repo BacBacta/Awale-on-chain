@@ -5,7 +5,7 @@
 //   rake  = pot * rakeBps / 10_000   (no rake on a draw)
 //   prize = pot - rake
 
-import { formatUnits } from "viem";
+import { formatUnits, parseUnits } from "viem";
 
 const BPS = 10_000n;
 
@@ -41,6 +41,21 @@ export function rakePct(rakeBps: number): string {
 // hardcoded in three places and can't silently disagree with the rake. Set
 // NEXT_PUBLIC_RAKE_BPS to match the deployed MatchEscrow rake.
 export const RAKE_BPS = Number(process.env.NEXT_PUBLIC_RAKE_BPS ?? "800");
+
+// Client-side minimum stake, in whole tokens. The contract enforces its own
+// `minStake` too; this is a fail-fast floor for the UI and a backstop when the
+// on-chain minStake is 0. Below this, the rake truncates toward zero (integer
+// math) while the match still costs gas + infra — a net-negative game. Set
+// NEXT_PUBLIC_MIN_STAKE to override (matches the lowest quick-stake preset).
+export const MIN_STAKE = process.env.NEXT_PUBLIC_MIN_STAKE ?? "0.25";
+
+/** The stake floor the UI enforces, in base units: the higher of the on-chain
+ *  `minStake` and the client `MIN_STAKE`. Enforcing the client floor kills
+ *  dust matches even when the contract's minStake is 0. */
+export function stakeFloor(minStakeOnChain: bigint, decimals: number): bigint {
+  const client = parseUnits(MIN_STAKE as `${number}`, decimals);
+  return minStakeOnChain > client ? minStakeOnChain : client;
+}
 /** e.g. "92%" — winner's share of the pot. */
 export const WINNER_PCT = `${Math.round((10_000 - RAKE_BPS) / 100)}%`;
 /** e.g. "8%" — the house fee. */
