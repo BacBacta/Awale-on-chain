@@ -44,11 +44,13 @@ export default function Shop() {
   const [catalog, setCatalog] = useState<Record<number, { onSale: boolean; price: bigint; left: number | null }>>({});
 
   // Gas paid in stablecoin inside MiniPay (its users hold no CELO); native gas
-  // everywhere else. Same rule the stake flow uses — the earlier shop omitted
-  // this, so buys failed for MiniPay users with a zero CELO balance.
+  // everywhere else. Use ONLY an explicitly-configured CIP-64 adapter — never
+  // fall back to the purchase currency: aUSD is a mock, not a registered fee
+  // currency, so paying gas in it makes MiniPay reject the tx at estimation.
+  // Same contract the stake flow honours (NEXT_PUBLIC_FEE_CURRENCY or nothing).
   const feeCurrency = useCallback(
-    () => effectiveFeeCurrency((process.env.NEXT_PUBLIC_FEE_CURRENCY as Address) || currency || undefined),
-    [currency],
+    () => effectiveFeeCurrency((process.env.NEXT_PUBLIC_FEE_CURRENCY as Address) || undefined),
+    [],
   );
 
   const refresh = useCallback(async () => {
