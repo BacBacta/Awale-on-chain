@@ -549,6 +549,17 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     // don't meet, exactly as two v1 clients at different stakes wouldn't.)
     socket.on("cash-queue", async (msg: { address: Address; stakeWei: string; token: Address; v?: number }) => {
       if (!msg?.address || !msg.stakeWei || !msg.token) return;
+      // real-money play is personhood-gated by policy (DEFAULT_POLICY requires
+      // "cash") — but this handler never called the gate, so the whole check
+      // only ever bit at league payout. Enforce it where the money starts.
+      if (deps.personhood) {
+        try {
+          await assertPersonhood(deps.personhood, msg.address, "cash");
+        } catch (err) {
+          socket.emit("cash-abort", { reason: (err as Error).message });
+          return;
+        }
+      }
       // a pair we recovered+aborted on boot: tell this returning player now, so
       // a creator whose stake was mid-flight can reclaim it (their Open match
       // is cancellable from "Your matches"). Don't also queue them into a new
@@ -583,11 +594,33 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
       // client-supplied elo on cash-queue, and we wouldn't trust one)
       const elo = (deps.eloOf ? await deps.eloOf(msg.address).catch(() => null) : null) ?? DEFAULT_ELO;
       cashMeta.set(socket.id, { address: msg.address, stake, token: msg.token, poolKey });
-      const pairing = cashPool(poolKey).enqueue({ id: socket.id, address: msg.address, elo });
-      if (pairing) startCashPairing(pairing, poolKey);
+      const pool = cashPool(poolKey);
+      const pairing = pool.enqueue({ id: socket.id, address: msg.address, elo });
+      if (pairing) {
+        startCashPairing(pairing, poolKey);
+      } else {
+        // same signal the casual queue sends: how many OTHERS wait here. The
+        // cash search used to be totally mute — a lone staker had no way to
+        // know if anyone was around, or if the app was even alive.
+        socket.emit("queue-ack", { depth: Math.max(0, pool.queueSize - 1) });
+      }
     });
 
-    socket.on("cash-cancel", () => removeFromCash(socket.id));
+    socket.on("cash-cancel", () => {
+      removeFromCash(socket.id);
+      // mid-pairing walk-away: release the OTHER side immediately instead of
+      // letting them hang until the 240s timer (mirrors cash-failed)
+      if (cashPairs.has(socket.id)) {
+        abortCashPair(socket.id, "Your opponent left — searching again.");
+        return;
+      }
+      for (const [creator, pair] of cashPairs) {
+        if (pair.joinerSocket === socket.id) {
+          abortCashPair(creator, "Your opponent left — searching again.");
+          return;
+        }
+      }
+    });
 
     // --- rematch: agree to play again without returning to the lobby ---
     socket.on(

@@ -452,3 +452,41 @@ describe("Socket.IO transport (integration)", () => {
     });
   });
 });
+
+describe("cash queue UX (integration)", () => {
+  const TOKEN = "0x0000000000000000000000000000000000000001" as Address;
+
+  it("a lone staker gets a queue-ack with depth 0 — the search is not mute", async () => {
+    const hub = new GameHub();
+    const port = await start(hub, {});
+    const a = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+    client = a;
+    const ack = await new Promise<{ depth: number }>((resolve) => {
+      a.on("connect", () => a.emit("cash-queue", { address: acct0.address, stakeWei: "1000000", token: TOKEN, v: 2 }));
+      a.once("queue-ack", resolve);
+    });
+    expect(ack.depth).toBe(0);
+  });
+
+  it("walking away mid-pairing releases the opponent immediately (no 240s hang)", async () => {
+    const hub = new GameHub();
+    const port = await start(hub, {});
+    const a = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+    const b = ioClient(`http://localhost:${port}`, { transports: ["websocket"] });
+    client = a;
+    client2 = b;
+    const matchedA = new Promise((r) => a.once("cash-matched", r));
+    const matchedB = new Promise((r) => b.once("cash-matched", r));
+    await waitConnect(a);
+    a.emit("cash-queue", { address: acct0.address, stakeWei: "1000000", token: TOKEN, v: 2 });
+    await waitConnect(b);
+    b.emit("cash-queue", { address: acct1.address, stakeWei: "1000000", token: TOKEN, v: 2 });
+    await Promise.all([matchedA, matchedB]);
+
+    // the joiner walks away before staking — the creator must be released now
+    const aborted = new Promise<{ reason: string }>((r) => a.once("cash-abort", r));
+    b.emit("cash-cancel");
+    const msg = await aborted;
+    expect(msg.reason).toMatch(/opponent left/i);
+  });
+});

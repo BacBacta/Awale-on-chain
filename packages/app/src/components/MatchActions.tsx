@@ -62,6 +62,14 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   // set only when the server resolved the pair to a stake LOWER than we typed
   // (matched inside a stake band, P0-3) — surfaced so the final amount is shown
   const [matchedStake, setMatchedStake] = useState<bigint | null>(null);
+  // the queue finally talks: how many OTHERS wait at this stake (null until
+  // the server's first queue-ack), when the search started (drives the
+  // elapsed display + the give-up watchdog), and whether OUR stake tx has
+  // been committed — the point of no return for the cancel button.
+  const [queueDepth, setQueueDepth] = useState<number | null>(null);
+  const [searchStartedAt, setSearchStartedAt] = useState<number | null>(null);
+  const [, setSearchTick] = useState(0);
+  const [stakeCommitted, setStakeCommitted] = useState(false);
   const cashSock = useRef<Socket | null>(null);
 
   const busy = step === "approving" || step === "staking";
@@ -310,6 +318,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     const amount = validateStake();
     if (amount === null) return;
     setFinding("searching");
+    setQueueDepth(null);
+    setSearchStartedAt(Date.now());
+    setStakeCommitted(false);
     const client = publicClient(cfg.rpcUrl, cfg.chainId);
     // warm the approval while we search — hides ~30-60s of setup time
     const allowanceReady = ensureAllowance(client, token, amount);
@@ -324,6 +335,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       setFinding("idle");
       setFoundOpp(null);
       setMatchedStake(null);
+      setQueueDepth(null);
+      setSearchStartedAt(null);
+      setStakeCommitted(false);
       setStep("idle");
       if (msg) setError(msg);
     };
@@ -331,7 +345,15 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     // server sends in cash-matched, so the server may pair us within a stake
     // band and settle at the lower amount (P0-3).
     sock.on("connect", () => sock.emit("cash-queue", { address: account, stakeWei: amount.toString(), token, v: 2 }));
-    sock.on("connect_error", () => bail("Network hiccup — please try again."));
+    // how many OTHERS wait at this stake — the search is no longer mute
+    sock.on("queue-ack", (m: { depth: number }) => setQueueDepth(m.depth));
+    // socket.io retries on its own; killing the whole search on the FIRST
+    // failed attempt turned every transient DNS/handshake blip into an error
+    let connErrors = 0;
+    sock.on("connect_error", () => {
+      connErrors += 1;
+      if (connErrors >= 3) bail("Can’t reach the game server — check your connection and try again.");
+    });
     sock.on("cash-abort", async (m: { reason: string }) => {
       // our stake is already on the table? bring it home automatically —
       // a player must never have to hunt for a refund button
@@ -360,6 +382,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       if (resolved !== amount) setMatchedStake(resolved); // show the final amount
       if (m.role !== "create") return; // joiner waits for cash-join
       try {
+        setStakeCommitted(true); // creator's stake goes on-chain now — no more cancel
         await allowanceReady; // approved for our amount ≥ resolved, so it covers it
         createdId = await createOnChain(resolved);
         sock.emit("cash-created", { matchId: createdId.toString() });
@@ -377,6 +400,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     });
     sock.on("cash-join", async (m: { matchId: string; token?: Address; stakeWei?: string }) => {
       try {
+        setStakeCommitted(true); // joiner's stake goes on-chain now — no more cancel
         await allowanceReady; // warmed during the search
         setStep("staking");
         // token+stake come from the server — never read the seconds-old match
@@ -406,12 +430,31 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoFind, adultOk, token, stake]);
 
+  // search watchdog: tick every second (drives the elapsed display), and give
+  // up honestly after 3 minutes instead of spinning forever on an empty pool
+  useEffect(() => {
+    if (finding !== "searching" || searchStartedAt === null) return;
+    const iv = setInterval(() => {
+      setSearchTick((t) => t + 1);
+      if (Date.now() - searchStartedAt > 180_000) {
+        cancelFind();
+        setError("No one is playing at this stake right now. Try again in a few minutes — or open a private table and share the invite.");
+      }
+    }, 1000);
+    return () => clearInterval(iv);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [finding, searchStartedAt]);
+
   function cancelFind() {
     cashSock.current?.emit("cash-cancel");
     cashSock.current?.close();
     cashSock.current = null;
     setFinding("idle");
     setFoundOpp(null);
+    setMatchedStake(null);
+    setQueueDepth(null);
+    setSearchStartedAt(null);
+    setStakeCommitted(false);
   }
 
   async function onCreate() {
@@ -680,8 +723,30 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
             ⚡ Play for {stake || "0"} {sym} — find an opponent
           </button>
         ) : finding === "searching" ? (
+          <>
+            <button className="btn block" onClick={cancelFind}>
+              <span className="dot pulse" />{" "}
+              {queueDepth === null
+                ? `Finding an opponent for ${stake} ${sym}…`
+                : queueDepth === 0
+                  ? "You’re first at this stake — waiting for an opponent…"
+                  : `${queueDepth} other player${queueDepth > 1 ? "s" : ""} at this stake — matching…`}{" "}
+              tap to cancel
+            </button>
+            {searchStartedAt !== null && (
+              <span className="faint" style={{ fontSize: 12, textAlign: "center" }}>
+                {Math.floor((Date.now() - searchStartedAt) / 1000)}s
+                {queueDepth === 0 && Date.now() - searchStartedAt > 45_000
+                  ? " — quiet right now; a private table with an invite link may be faster"
+                  : ""}
+              </span>
+            )}
+          </>
+        ) : !stakeCommitted && step === "idle" ? (
+          // matched, but OUR money hasn't moved yet — walking away is still
+          // free (the server releases the opponent back into the queue)
           <button className="btn block" onClick={cancelFind}>
-            <span className="dot pulse" /> Finding an opponent for {stake} {sym}… tap to cancel
+            <span className="dot pulse" /> Matched with {foundOpp ? friendlyName(foundOpp) : "…"} — setting the table… tap to cancel
           </button>
         ) : (
           <button className="btn block" disabled>
