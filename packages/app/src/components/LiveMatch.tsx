@@ -108,6 +108,10 @@ export function LiveMatch({
   // when the current turn began — set from the last state broadcast so both
   // clients agree on the countdown.
   const [turnStartedAt, setTurnStartedAt] = useState(0);
+  // Same-opponent rematch handshake (offer → accept → new game, no lobby).
+  const [rematchState, setRematchState] = useState<"idle" | "offered" | "incoming" | "declined">("idle");
+  const rematchSession = useRef<SessionKey | null>(null); // the NEW casual match's key
+  const tokenRef = useRef<Address | null>(null); // the cash match's token, for a cash rematch
 
   useEffect(() => {
     setSkin(getEquipped());
@@ -164,6 +168,7 @@ export function LiveMatch({
           args: [matchId],
         })) as { token: Address; player0: Address; player1: Address; stake: bigint; rakeBps: number; status: number; proposedWinner: number };
         stakeInfo.current = { stake: m.stake, rakeBps: Number(m.rakeBps) };
+        tokenRef.current = m.token; // captured for a same-opponent cash rematch
         feeCurrency.current = stakeTokens().find((t) => t.address.toLowerCase() === m.token.toLowerCase())?.feeCurrency;
         const r =
           address.toLowerCase() === m.player0.toLowerCase()
@@ -236,6 +241,19 @@ export function LiveMatch({
       sock.on("draw-offer", (msg: { from: 0 | 1 }) => {
         if (msg.from !== myRole) setDrawOffered(true);
       });
+      // --- rematch handshake ---
+      sock.on("rematch-offered", () => setRematchState((s) => (s === "offered" ? "offered" : "incoming")));
+      sock.on("rematch-declined", () => setRematchState("declined"));
+      // casual: the server opened a fresh match — go straight to the board
+      sock.on("rematch-ready", (m: { matchId: string; role: 0 | 1; opponent?: Address }) => {
+        if (rematchSession.current) persistSession(BigInt(m.matchId), rematchSession.current);
+        const opp = m.opponent ? `&opp=${m.opponent}` : "";
+        window.location.href = `/play?match=${m.matchId}&casual=1&role=${m.role}${opp}`;
+      });
+      // cash: re-stake through the money flow, guaranteed paired with the same opponent
+      sock.on("rematch-go", (m: { mode: string; stakeWei: string }) => {
+        window.location.href = `/?money=1&auto=1&stake=${fmt(BigInt(m.stakeWei), STAKE_DECIMALS)}`;
+      });
       // A staked match's move-clock ran out, or a natural ending never
       // settled via the two-signature fast path. Whoever the payload names as
       // `winner` should self-claim; if it's the *other* player, offer to
@@ -264,6 +282,35 @@ export function LiveMatch({
     if (!session.current || !ctx.current) return;
     const sig = await signMove(session.current, matchId, BigInt(ply), house, ctx.current);
     socket.current?.emit("move", { matchId: matchId.toString(), player: role, house, signature: sig as Hex });
+  }
+
+  // Offer a rematch to the SAME opponent — or accept theirs (same call). Casual
+  // opens a new game in place; cash re-stakes but is guaranteed the same
+  // opponent (server-reserved), never the general matchmaking.
+  function requestRematch() {
+    const sock = socket.current;
+    if (!sock) return;
+    if (casualRole != null) {
+      // fresh session key for the new off-chain match
+      const sk = createSessionKey();
+      rematchSession.current = sk;
+      sock.emit("rematch-offer", {
+        matchId: matchId.toString(),
+        address: myAddress.current ?? sk.address,
+        mode: "casual",
+        sessionPubKey: sk.address,
+      });
+    } else {
+      if (!myAddress.current || !stakeInfo.current || !tokenRef.current) return;
+      sock.emit("rematch-offer", {
+        matchId: matchId.toString(),
+        address: myAddress.current,
+        mode: "cash",
+        stakeWei: stakeInfo.current.stake.toString(),
+        token: tokenRef.current,
+      });
+    }
+    setRematchState((s) => (s === "incoming" ? "offered" : "offered"));
   }
 
 
@@ -723,13 +770,8 @@ export function LiveMatch({
             // they're now in, not a Season page whose deposits may be closed
             outcome === 0 && stakeInfo.current ? "/compete" : undefined
           }
-          rematchHref={
-            casualRole != null
-              ? "/?play=1" // casual: straight back into quick match
-              : stakeInfo.current
-                ? `/?money=1&auto=1&stake=${fmt(stakeInfo.current.stake, STAKE_DECIMALS)}`
-                : undefined
-          }
+          onRematch={requestRematch}
+          rematchState={rematchState}
           onPlayAgain={() => (window.location.href = "/")}
           onShare={() =>
             shareResult({

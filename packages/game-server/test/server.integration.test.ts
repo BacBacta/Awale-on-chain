@@ -152,6 +152,32 @@ describe("Socket.IO transport (integration)", () => {
       expect(hub.matchmaker.queueSize).toBe(0);
     });
 
+    it("rematch: two casual players who both offer are reunited in a NEW match directly (no lobby)", async () => {
+      const hub = new GameHub();
+      const port = await start(hub, { casualCtx: { chainId: CHAIN_ID, verifier: VERIFIER } });
+      const { a, b, matchId } = await matchTwoCasualPlayers(port);
+      client = a;
+      client2 = b;
+      a.emit("watch", { matchId });
+      b.emit("watch", { matchId });
+      await new Promise((r) => setTimeout(r, 30));
+
+      // A offers a rematch; B is told, then accepts (also an offer) → new match
+      const readyA = new Promise<{ matchId: string; role: 0 | 1 }>((res) => a.once("rematch-ready", res));
+      const readyB = new Promise<{ matchId: string; role: 0 | 1 }>((res) => b.once("rematch-ready", res));
+      const offered = new Promise<void>((res) => b.once("rematch-offered", () => res()));
+
+      a.emit("rematch-offer", { matchId, address: acct0.address, mode: "casual", sessionPubKey: acct0.address });
+      await offered; // B saw the offer
+      b.emit("rematch-offer", { matchId, address: acct1.address, mode: "casual", sessionPubKey: acct1.address });
+
+      const [ra, rb] = await Promise.all([readyA, readyB]);
+      expect(ra.matchId).toBe(rb.matchId); // same NEW match
+      expect(ra.matchId).not.toBe(matchId); // and it's a fresh one
+      expect(new Set([ra.role, rb.role])).toEqual(new Set([0, 1]));
+      expect(hub.get(BigInt(ra.matchId))).toBeDefined(); // opened and playable
+    });
+
     it("P2-8: a queued player gets a queue-ack with the pool depth (for the adaptive AI fallback)", async () => {
       const hub = new GameHub();
       const port = await start(hub, { casualCtx: { chainId: CHAIN_ID, verifier: VERIFIER } });

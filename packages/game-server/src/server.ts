@@ -168,6 +168,22 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
   const socketSeats = new Map<string, { roomId: string; player: 0 | 1 }>();
   const graceUsed = new Set<string>(); // `${roomId}:${player}`
 
+  // Rematch: after a game the two STILL-CONNECTED sockets can agree to play
+  // again without going back to the lobby. Keyed by finished-match room id →
+  // the offer each socket made. When both are in, we reunite them directly.
+  interface RematchOffer {
+    address: Address;
+    mode: "casual" | "cash";
+    sessionPubKey?: Address; // casual: the new match's session key
+    stakeWei?: string; // cash: the rematch stake
+    token?: Address; // cash
+  }
+  const rematchOffers = new Map<string, Map<string, RematchOffer>>();
+  // Cash rematch: reservations that GUARANTEE the same two re-pair when they
+  // re-queue (a private per-pair pool), instead of the general skill pool.
+  // addrLower → the opponent it's reserved with.
+  const rematchReservations = new Map<string, string>();
+
   // Staked quick-match: pick a stake, tap once, get paired. The #1 friction
   // in real two-player tests was both friends CREATING a match and waiting in
   // parallel rooms forever. The server now pairs money players like casual
@@ -276,6 +292,49 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     void deps.cashPairStore?.remove(pair.creator);
     io.to(creatorSocket).emit("cash-abort", { reason });
     io.to(pair.joinerSocket).emit("cash-abort", { reason });
+  }
+
+  /** Both players in a finished room agreed to a rematch — reunite them
+   *  directly. Casual opens a fresh off-chain match in place (no lobby). Cash
+   *  reserves the pair (so they re-pair with EACH OTHER on re-queue) and sends
+   *  both into the money flow to re-stake. */
+  function completeRematch(roomId: string, offers: Map<string, RematchOffer>): void {
+    const entries = [...offers.entries()];
+    rematchOffers.delete(roomId);
+    if (entries.length < 2) return;
+    const [[sockA, offA], [sockB, offB]] = entries;
+
+    if (offA.mode === "cash" && offB.mode === "cash") {
+      const a = offA.address.toLowerCase();
+      const b = offB.address.toLowerCase();
+      rematchReservations.set(a, b);
+      rematchReservations.set(b, a);
+      const stakeWei = offA.stakeWei ?? offB.stakeWei ?? "";
+      io.to(sockA).emit("rematch-go", { mode: "cash", stakeWei });
+      io.to(sockB).emit("rematch-go", { mode: "cash", stakeWei });
+      return;
+    }
+
+    // casual: open a new match right here — both go straight to the board
+    if (!deps.casualCtx || !offA.sessionPubKey || !offB.sessionPubKey) return;
+    const matchId = casualMatchId();
+    const startTurn = (Math.random() < 0.5 ? 0 : 1) as 0 | 1;
+    hub.open({
+      matchId,
+      chainId: deps.casualCtx.chainId,
+      verifier: deps.casualCtx.verifier,
+      sessions: [offA.sessionPubKey, offB.sessionPubKey],
+      startTurn,
+      clockMs: BLITZ_CLOCK_MS,
+    });
+    const m = hub.get(matchId)!;
+    const id = matchId.toString();
+    casualPlayers.set(id, [offA.address, offB.address]); // role 0 = A, role 1 = B
+    armTurnClockIfNeeded(matchId, id);
+    io.to(sockA).emit("rematch-ready", { matchId: id, role: 0, opponent: offB.address });
+    io.to(sockB).emit("rematch-ready", { matchId: id, role: 1, opponent: offA.address });
+    io.to(sockA).emit("state", { matchId: id, state: m.state, ply: 0, clocks: clocksOf(m) });
+    io.to(sockB).emit("state", { matchId: id, state: m.state, ply: 0, clocks: clocksOf(m) });
   }
 
   function clearTurnClock(roomId: string): void {
@@ -500,10 +559,16 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
       // re-queue idempotency: drop any prior waiting entry for this socket
       removeFromCash(socket.id);
       const token = msg.token.toLowerCase();
-      const poolKey =
-        msg.v && msg.v >= 2
+      const addrLower = msg.address.toLowerCase();
+      // rematch reservation: a private per-pair pool so the SAME two reunite,
+      // never the general skill pool (guaranteed same-opponent rematch)
+      const reservedWith = rematchReservations.get(addrLower);
+      const poolKey = reservedWith
+        ? `rematch:${[addrLower, reservedWith].sort().join(":")}`
+        : msg.v && msg.v >= 2
           ? `${token}:band:${bandFor(stake, STAKE_DECIMALS)}` // cross-stake within a band
           : `${token}:exact:${msg.stakeWei}`; // old client: exact stake only
+      if (reservedWith) rematchReservations.delete(addrLower); // one-shot
       // rating from the server profile only — never the client (there's no
       // client-supplied elo on cash-queue, and we wouldn't trust one)
       const elo = (deps.eloOf ? await deps.eloOf(msg.address).catch(() => null) : null) ?? DEFAULT_ELO;
@@ -513,6 +578,34 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     });
 
     socket.on("cash-cancel", () => removeFromCash(socket.id));
+
+    // --- rematch: agree to play again without returning to the lobby ---
+    socket.on(
+      "rematch-offer",
+      (msg: { matchId: string; address: Address; mode: "casual" | "cash"; sessionPubKey?: Address; stakeWei?: string; token?: Address }) => {
+        if (!msg?.matchId || !msg.address || !msg.mode) return;
+        let offers = rematchOffers.get(msg.matchId);
+        if (!offers) {
+          offers = new Map();
+          rematchOffers.set(msg.matchId, offers);
+        }
+        offers.set(socket.id, {
+          address: msg.address,
+          mode: msg.mode,
+          sessionPubKey: msg.sessionPubKey,
+          stakeWei: msg.stakeWei,
+          token: msg.token,
+        });
+        // tell the opponent (everyone else in the room) an offer is on the table
+        socket.to(msg.matchId).emit("rematch-offered", { matchId: msg.matchId });
+        if (offers.size >= 2) completeRematch(msg.matchId, offers);
+      },
+    );
+    socket.on("rematch-decline", (msg: { matchId: string }) => {
+      if (!msg?.matchId) return;
+      rematchOffers.delete(msg.matchId);
+      socket.to(msg.matchId).emit("rematch-declined", { matchId: msg.matchId });
+    });
 
     // the creator's stake landed — hand the joiner the real match id. The
     // pair stays open until the joiner confirms: if they fail, the creator
@@ -674,6 +767,13 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
     socket.on("disconnect", () => {
       hub.matchmaker.remove(socket.id);
       rankedMatchmaker.remove(socket.id);
+      // drop any pending rematch offer this socket made (tell the opponent)
+      for (const [roomId, offers] of rematchOffers) {
+        if (offers.delete(socket.id)) {
+          if (offers.size === 0) rematchOffers.delete(roomId);
+          socket.to(roomId).emit("rematch-declined", { matchId: roomId });
+        }
+      }
       // staked quick-match cleanup: leave the queue; abort a half-built pair
       removeFromCash(socket.id);
       if (cashPairs.has(socket.id)) abortCashPair(socket.id, "Your opponent disconnected — searching again.");

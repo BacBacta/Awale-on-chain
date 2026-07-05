@@ -25,6 +25,8 @@ export function GameOverlay({
   stats,
   saveHref,
   rematchHref,
+  onRematch,
+  rematchState = "idle",
   onPlayAgain,
   onShare,
 }: {
@@ -35,9 +37,13 @@ export function GameOverlay({
   stats?: { mine: number; opp: number; moves?: number };
   /** When set (cash win), offer to grow a share of the winnings in the League. */
   saveHref?: string;
-  /** One-tap revenge: both players tap it, both auto-queue at the same stake,
-   *  the matchmaker reunites them — no lobby, no setup. */
+  /** Fallback one-tap rematch link (practice / no live opponent socket). */
   rematchHref?: string;
+  /** Interactive same-opponent rematch: called to offer OR to accept an
+   *  incoming offer. When provided, it supersedes rematchHref. */
+  onRematch?: () => void;
+  /** Drives the rematch button's label/state. */
+  rematchState?: "idle" | "offered" | "incoming" | "declined";
   onPlayAgain: () => void;
   onShare?: () => void;
 }) {
@@ -145,7 +151,30 @@ export function GameOverlay({
       )}
 
       <div className="stack" style={{ width: "100%", maxWidth: 260, marginTop: 8 }}>
-        {rematchHref && (
+        {/* Interactive same-opponent rematch (preferred): offer → accept →
+            straight into a new game with the SAME player, no lobby detour. */}
+        {onRematch && rematchState === "idle" && (
+          <button className="btn block" onClick={onRematch}>
+            <Icon name="versus" size={17} /> Rematch — same opponent
+          </button>
+        )}
+        {onRematch && rematchState === "offered" && (
+          <button className="btn block" disabled>
+            <span className="dot pulse" /> Waiting for opponent to accept…
+          </button>
+        )}
+        {onRematch && rematchState === "incoming" && (
+          <button className="btn block" onClick={onRematch} style={{ animation: "pulse 1.2s ease-in-out infinite" }}>
+            <Icon name="versus" size={17} /> Opponent wants a rematch — accept
+          </button>
+        )}
+        {onRematch && rematchState === "declined" && (
+          <button className="btn block" onClick={onRematch}>
+            <Icon name="versus" size={17} /> Opponent left — offer a rematch
+          </button>
+        )}
+        {/* Fallback link (e.g. practice) when no live opponent socket exists. */}
+        {!onRematch && rematchHref && (
           <a className="btn block" href={rematchHref}>
             <Icon name="versus" size={17} /> Rematch — same stake
           </a>
