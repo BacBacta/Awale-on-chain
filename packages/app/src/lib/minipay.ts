@@ -85,6 +85,13 @@ const BACKUP_RPCS: Record<number, string[]> = {
 
 export function publicClient(rpcUrl: string, chainId: number = celo.id) {
   const backups = (BACKUP_RPCS[chainId] ?? []).filter((u) => u !== rpcUrl);
-  const transport = backups.length ? fallback([http(rpcUrl), ...backups.map((u) => http(u))]) : http(rpcUrl);
+  // fail over FAST: with viem's defaults (10s timeout × 3 retries) a dead
+  // primary cost ~40s per request before the fallback even got a chance —
+  // purchases took a minute. 4s + no per-transport retry bounds the penalty
+  // of a dead endpoint to ~4s per hop; readWithRetry/confirmTx retry above.
+  const opts = { timeout: 4_000, retryCount: 0 } as const;
+  const transport = backups.length
+    ? fallback([http(rpcUrl, opts), ...backups.map((u) => http(u, opts))], { retryCount: 1 })
+    : http(rpcUrl);
   return createPublicClient({ chain: chainById(chainId), transport });
 }

@@ -154,24 +154,28 @@ export default function Shop() {
     refresh().catch(() => {});
   }, [refresh]);
 
-  async function run(label: string, fn: () => Promise<`0x${string}`>) {
-    if (!cfg) return;
+  /** Returns true iff the tx landed — callers flip local state on it. */
+  async function run(label: string, fn: () => Promise<`0x${string}`>): Promise<boolean> {
+    if (!cfg) return false;
     setBusy(true);
     setError(null);
     setDetail(null);
     setStatus(`${label}…`);
     try {
       const h = await fn();
+      setStatus("Confirming on-chain…");
       await confirmTx(publicClient(cfg.rpcUrl, cfg.chainId), h, label);
       setStatus(`${label} ✓`);
       // the tx LANDED — a failed post-action refresh must never repaint the
       // success as an error (it did: an ankr rate-limit on the refresh masked
       // the user's first successful purchase). Ownership catches up next load.
       refresh().catch(() => {});
+      return true;
     } catch (e) {
       setError(humanizeError(e));
       setDetail(rawErrorDetail(e));
       setStatus(null);
+      return false;
     } finally {
       setBusy(false);
     }
@@ -204,17 +208,26 @@ export default function Shop() {
         readContract(client, { address: currency, abi: erc20Abi, functionName: "allowance", args: [account, cos] }),
       )) as bigint;
       if (allowance < cost) {
+        setStatus("Approving aUSD (1/2)…");
         const ah = await sendWithStaleRetry("Approval", () =>
           // `account` is required: the wallet client is created unbound
           // (createWalletClient without an account), so every write must name
           // its signer — same as every write in the stake flow.
-          wallet.writeContract({ address: currency, abi: erc20Abi, functionName: "approve", args: [cos, cost], account, feeCurrency: fee }),
+          // 20× headroom: one approval covers the whole catalogue, so later
+          // purchases skip an entire tx + confirmation round.
+          wallet.writeContract({ address: currency, abi: erc20Abi, functionName: "approve", args: [cos, cost * 20n], account, feeCurrency: fee }),
         );
         await confirmTx(client, ah, "Approval");
       }
+      setStatus(`Buying ${s.name} (2/2)…`);
       return sendWithStaleRetry("Purchase", () =>
         wallet.writeContract({ address: cos, abi: cosmeticsAbi, functionName: "buy", args: [BigInt(s.itemId), 1n], account, feeCurrency: fee }),
       );
+    }).then((ok) => {
+      // the receipt is confirmed — the skin is provably yours. Flip the card
+      // to "Equip" NOW instead of waiting on a background refresh the flaky
+      // RPC may delay: the user must never wonder whether the buy worked.
+      if (ok) setOwned((o) => ({ ...o, [s.itemId]: true }));
     });
   }
 
@@ -326,20 +339,27 @@ export default function Shop() {
       </span>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>{SEED_SKINS.map(Card)}</div>
 
-      {status && <span className="muted">{status}</span>}
-      {error && (
-        <div className="col" style={{ gap: 6 }}>
+      {/* reserved-height status area: content appearing/disappearing below the
+          grid made the whole page jump around during a purchase */}
+      <div className="col" style={{ gap: 6, minHeight: 44, justifyContent: "center" }}>
+        {status && (
+          <span className="muted" style={{ textAlign: "center" }}>
+            {busy && <span className="dot pulse" style={{ marginRight: 6 }} />}
+            {status}
+          </span>
+        )}
+        {error && (
           <div className="chip danger" style={{ alignSelf: "stretch", justifyContent: "center", padding: 10 }}>
             {error}
           </div>
-          {detail && (
-            <span className="faint" style={{ fontSize: 11, lineHeight: 1.4, wordBreak: "break-word", textAlign: "center" }}>
-              {detail}
-            </span>
-          )}
-        </div>
-      )}
-      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc7</span>
+        )}
+        {error && detail && (
+          <span className="faint" style={{ fontSize: 11, lineHeight: 1.4, wordBreak: "break-word", textAlign: "center" }}>
+            {detail}
+          </span>
+        )}
+      </div>
+      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc8</span>
     </main>
   );
 }
