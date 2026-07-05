@@ -332,7 +332,7 @@ export default function Shop() {
           )}
         </div>
       )}
-      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc4</span>
+      <span className="faint" style={{ fontSize: 10, textAlign: "center", opacity: 0.5 }}>shop build sc5</span>
     </main>
   );
 }
