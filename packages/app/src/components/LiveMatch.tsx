@@ -9,6 +9,7 @@ import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
 import { loadSession, createSessionKey, persistSession, signMove, signResult, signResign, signDrawOffer, type SessionKey } from "../lib/session.js";
 import { escrowConfig, proposeResult, challengeResult, cancelMatch, approve, joinMatch, type WriteClient } from "../lib/escrow.js";
 import { humanizeError } from "../lib/errors.js";
+import { readWithRetry } from "../lib/tx.js";
 import { stakeTokens } from "../lib/stakeTokens.js";
 import { recordLocalMatch } from "../lib/matches.js";
 import { track } from "../lib/analytics.js";
@@ -161,21 +162,31 @@ export function LiveMatch({
         wallet.current = w as unknown as WriteClient;
         myAddress.current = address;
         const client = publicClient(cfg.rpcUrl, cfg.chainId);
-        const m = (await readContract(client, {
-          address: cfg.escrow,
-          abi: matchEscrowAbi,
-          functionName: "getMatch",
-          args: [matchId],
-        })) as { token: Address; player0: Address; player1: Address; stake: bigint; rakeBps: number; status: number; proposedWinner: number };
+        type ChainMatch = { token: Address; player0: Address; player1: Address; stake: bigint; rakeBps: number; status: number; proposedWinner: number };
+        const readMatch = () =>
+          readWithRetry(() =>
+            readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "getMatch", args: [matchId] }),
+          ) as Promise<ChainMatch>;
+        const seatOf = (m: ChainMatch): 0 | 1 | null =>
+          address.toLowerCase() === m.player0.toLowerCase() ? 0 : address.toLowerCase() === m.player1.toLowerCase() ? 1 : null;
+
+        // Stale forno nodes serve a seconds-old view: a player who JUST joined
+        // can read back "Open, no player1" and get offered their own seat again
+        // (the re-join then reverts "Match: full"). If this device holds a
+        // session key for the match, we created or joined it HERE — we're a
+        // player. Poll until the chain agrees instead of mis-offering the seat.
+        const haveSession = !!loadSession(matchId);
+        let m = await readMatch();
+        let r = seatOf(m);
+        for (let attempt = 0; r === null && haveSession && attempt < 20; attempt++) {
+          setStatus("Syncing your match…");
+          await new Promise((res) => setTimeout(res, 3000));
+          m = await readMatch();
+          r = seatOf(m);
+        }
         stakeInfo.current = { stake: m.stake, rakeBps: Number(m.rakeBps) };
         tokenRef.current = m.token; // captured for a same-opponent cash rematch
         feeCurrency.current = stakeTokens().find((t) => t.address.toLowerCase() === m.token.toLowerCase())?.feeCurrency;
-        const r =
-          address.toLowerCase() === m.player0.toLowerCase()
-            ? 0
-            : address.toLowerCase() === m.player1.toLowerCase()
-              ? 1
-              : null;
         if (r === null) {
           if (Number(m.status) === 1) {
             // Open match, visitor isn't the creator: this is an invitee —
@@ -437,12 +448,14 @@ export function LiveMatch({
     setJoinError(null);
     try {
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
-      const allowance = (await readContract(client, {
-        address: joinOffer.token,
-        abi: erc20Abi,
-        functionName: "allowance",
-        args: [myAddress.current, cfg.escrow],
-      })) as bigint;
+      const allowance = (await readWithRetry(() =>
+        readContract(client, {
+          address: joinOffer.token,
+          abi: erc20Abi,
+          functionName: "allowance",
+          args: [myAddress.current!, cfg.escrow],
+        }),
+      )) as bigint;
       if (allowance < joinOffer.stake) {
         const ah = await approve(wallet.current, {
           account: myAddress.current,
@@ -453,7 +466,10 @@ export function LiveMatch({
         });
         await client.waitForTransactionReceipt({ hash: ah });
       }
-      const sk = createSessionKey();
+      // NEVER overwrite an existing session key: if this match was already
+      // joined from this device (a stale read mis-offered the seat), replacing
+      // the key the contract knows would make every later signature invalid.
+      const sk = loadSession(matchId) ?? createSessionKey();
       persistSession(matchId, sk);
       recordLocalMatch(matchId);
       const jh = await joinMatch(wallet.current, {
@@ -467,6 +483,23 @@ export function LiveMatch({
       track("match_joined");
       window.location.reload();
     } catch (e) {
+      // the join may have raced a stale read: if the chain says WE are a
+      // player, the earlier stake landed — open the board, not an error
+      try {
+        const m = (await readContract(publicClient(cfg.rpcUrl, cfg.chainId), {
+          address: cfg.escrow,
+          abi: matchEscrowAbi,
+          functionName: "getMatch",
+          args: [matchId],
+        })) as { player0: Address; player1: Address };
+        const me = myAddress.current.toLowerCase();
+        if (m.player0.toLowerCase() === me || m.player1.toLowerCase() === me) {
+          window.location.reload();
+          return;
+        }
+      } catch {
+        /* fall through to the humanized error */
+      }
       setJoinError(humanizeError(e));
       setJoiningNow(false);
     }
