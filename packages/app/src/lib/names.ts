@@ -30,6 +30,19 @@ export function friendlyName(address?: string | null): string {
   return `${ADJECTIVES[h % ADJECTIVES.length]} ${ANIMALS[(h >>> 8) % ANIMALS.length]}`;
 }
 
+/** Stable hue (0-359) for an address — drives the avatar colour so every
+ *  player is visually distinct without ever showing crypto (no 0x anywhere). */
+export function nameHue(address?: string | null): number {
+  if (!address) return 210;
+  return hash(address.toLowerCase()) % 360;
+}
+
+/** Two-letter initials of the friendly handle (e.g. "Swift Falcon" → "SF"). */
+export function nameInitials(address?: string | null): string {
+  const parts = friendlyName(address).split(" ");
+  return `${parts[0]?.[0] ?? "P"}${parts[1]?.[0] ?? ""}`;
+}
+
 /** Primary display label: a resolved (ODIS) name if present, else the handle. */
 export function displayName(address?: string | null, resolved?: string | null): string {
   if (resolved && resolved.trim()) return resolved.trim();

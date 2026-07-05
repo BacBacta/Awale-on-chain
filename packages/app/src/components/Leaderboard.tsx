@@ -5,8 +5,7 @@ import type { Address } from "viem";
 import { getInjectedProvider, connect } from "../lib/minipay.js";
 import { escrowConfig } from "../lib/escrow.js";
 import { loadLeaderboard, type LeaderRow } from "../lib/leaderboard.js";
-import { friendlyName } from "../lib/names.js";
-import { shortAddress } from "../lib/identity.js";
+import { friendlyName, nameHue, nameInitials } from "../lib/names.js";
 import { fmt } from "../lib/money.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
@@ -64,14 +63,34 @@ export function Leaderboard() {
             >
               {i + 1}
             </span>
+            {/* per-player avatar (deterministic colour + initials): rows of
+                bare generated handles read as placeholder data, and showing an
+                address would be crypto-speak — a visual identity does the
+                anchoring in everyone's language */}
+            <span
+              aria-hidden
+              style={{
+                width: 30,
+                height: 30,
+                borderRadius: 10,
+                flexShrink: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 12,
+                fontWeight: 800,
+                color: "rgba(255,255,255,0.92)",
+                background: `linear-gradient(135deg, hsl(${nameHue(r.address)} 45% 38%), hsl(${(nameHue(r.address) + 40) % 360} 50% 26%))`,
+              }}
+            >
+              {nameInitials(r.address)}
+            </span>
             <span className="col" style={{ flex: 1, gap: 1 }}>
               <span style={{ fontWeight: 700, fontSize: 14 }}>
                 {friendlyName(r.address)} {mine && <span className="faint">(you)</span>}
               </span>
-              {/* the wallet suffix anchors the pseudonym to a REAL account —
-                  a column of bare generated handles read as placeholder data */}
-              <span className="faint" style={{ fontVariantNumeric: "tabular-nums" }}>
-                {r.wins} {r.wins === 1 ? "win" : "wins"} · {shortAddress(r.address)}
+              <span className="faint">
+                {r.wins} {r.wins === 1 ? "win" : "wins"}
               </span>
             </span>
             <span className="score" style={{ fontWeight: 750, color: "var(--accent)" }}>
