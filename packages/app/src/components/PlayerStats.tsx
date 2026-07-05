@@ -87,11 +87,17 @@ export function PlayerStats() {
       return;
     }
     (async () => {
+      const withTimeout = <T,>(p: Promise<T>, ms: number, fallback: T): Promise<T> =>
+        Promise.race([p, new Promise<T>((res) => setTimeout(() => res(fallback), ms))]);
+
       const provider = getInjectedProvider();
       let address: Address | null = null;
       if (provider) {
         try {
-          address = (await connect(provider, cfg.chainId)).address;
+          // don't let a pending wallet prompt (common on desktop) hang the
+          // whole section forever — cap it and carry on with public reads
+          address = (await withTimeout(connect(provider, cfg.chainId), 5000, { address: null } as { address: Address | null })).address;
+          if (!address) setConnected(false);
         } catch {
           setConnected(false);
         }
@@ -105,44 +111,50 @@ export function PlayerStats() {
       }
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
 
-      // Settled outcomes among our matches. The public RPC (forno) rejects a
-      // getLogs over a wide block range, so a single [0, latest] scan silently
-      // failed — leaving winnerOf empty and Net winnings / won / lost frozen at
-      // zero (the "placeholder, not connected" bug). Scan in bounded windows
-      // from the tip backward, stopping as soon as every match is found.
-      const winnerOf = await settledOutcomes(client, cfg.escrow, ids);
+      // Read every match record AND the settlement outcomes CONCURRENTLY — the
+      // old code awaited a windowed log scan and then read getMatch one id at a
+      // time, sequentially, on the slow public RPC. On desktop especially that
+      // could take many seconds (or hang), so the whole section sat on
+      // "Loading…" and never appeared. Now it's one parallel round, bounded by
+      // a hard timeout so the stats always render.
+      const [winnerOf, records] = await withTimeout(
+        Promise.all([
+          settledOutcomes(client, cfg.escrow, ids),
+          Promise.all(
+            ids.map((id) =>
+              readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "getMatch", args: [id] })
+                .then((m) => ({ id, m: m as { status: number; stake: bigint; player0: Address; player1: Address } }))
+                .catch(() => null),
+            ),
+          ),
+        ]),
+        12_000,
+        [new Map(), []] as [Map<string, { winner: number; prize: bigint }>, ({ id: bigint; m: { status: number; stake: bigint; player0: Address; player1: Address } } | null)[]],
+      );
 
       const s: Stats = { played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n };
-      for (const id of ids) {
-        try {
-          const m = (await readContract(client, {
-            address: cfg.escrow,
-            abi: matchEscrowAbi,
-            functionName: "getMatch",
-            args: [id],
-          })) as { status: number; stake: bigint; player0: Address; player1: Address };
-          const status = Number(m.status);
-          s.staked += m.stake;
-          if (status === STATUS.Open || status === STATUS.Active || status === STATUS.Proposed) {
-            s.inProgress += 1;
-            continue;
-          }
-          if (status !== STATUS.Resolved) continue; // cancelled/voided: not a played result
-          s.played += 1;
-          const settled = winnerOf.get(id.toString());
-          if (!settled || !address) continue;
-          const role = address.toLowerCase() === m.player0.toLowerCase() ? 0 : 1;
-          if (settled.winner === 2) {
-            s.drawn += 1;
-          } else if (settled.winner === role) {
-            s.won += 1;
-            s.net += settled.prize - m.stake; // profit = prize received minus own stake
-          } else {
-            s.lost += 1;
-            s.net -= m.stake;
-          }
-        } catch {
-          /* one unreadable match (stale id, RPC blip) shouldn't hide the rest */
+      for (const r of records) {
+        if (!r) continue;
+        const { id, m } = r;
+        const status = Number(m.status);
+        s.staked += m.stake;
+        if (status === STATUS.Open || status === STATUS.Active || status === STATUS.Proposed) {
+          s.inProgress += 1;
+          continue;
+        }
+        if (status !== STATUS.Resolved) continue; // cancelled/voided: not a played result
+        s.played += 1;
+        const settled = winnerOf.get(id.toString());
+        if (!settled || !address) continue;
+        const role = address.toLowerCase() === m.player0.toLowerCase() ? 0 : 1;
+        if (settled.winner === 2) {
+          s.drawn += 1;
+        } else if (settled.winner === role) {
+          s.won += 1;
+          s.net += settled.prize - m.stake; // profit = prize received minus own stake
+        } else {
+          s.lost += 1;
+          s.net -= m.stake;
         }
       }
       setStats(s);
