@@ -7,6 +7,7 @@
 // so both clients agree on who creates without extra handshaking.
 
 import { useEffect, useRef, useState } from "react";
+import { humanizeError } from "../lib/errors.js";
 import type { Address } from "viem";
 import { Icon } from "./Icon.js";
 import { AsyncMatch } from "./AsyncMatch.js";
@@ -119,7 +120,7 @@ export function TournamentCoordinator({ id }: { id: string }) {
       await claimWalkover(id, a.round, a.index, account);
       setView({ kind: "waiting", label: "Claimed — advancing to the next round…" });
     } catch (e) {
-      setView((v) => (v.kind === "waiting" ? { ...v, label: (e as Error).message } : v));
+      setView((v) => (v.kind === "waiting" ? { ...v, label: humanizeError(e) } : v));
     }
   }
 

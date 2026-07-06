@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Awalé">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a1206"/>
+      <stop offset="1" stop-color="#0b0a08"/>
+    </linearGradient>
+    <linearGradient id="wood" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c98a3a"/>
+      <stop offset="1" stop-color="#9a5f22"/>
+    </linearGradient>
+    <radialGradient id="seed" cx="0.35" cy="0.3" r="0.8">
+      <stop offset="0" stop-color="#ffe8b0"/>
+      <stop offset="1" stop-color="#e0a94a"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- board -->
+  <rect x="86" y="150" width="340" height="212" rx="40" fill="url(#wood)" stroke="#e7b86a" stroke-opacity="0.25" stroke-width="4"/>
+  <!-- two rows of pits -->
+  <g fill="#0b0a08" fill-opacity="0.55">
+    <circle cx="150" cy="212" r="30"/><circle cx="224" cy="212" r="30"/><circle cx="298" cy="212" r="30"/><circle cx="372" cy="212" r="30"/>
+    <circle cx="150" cy="300" r="30"/><circle cx="224" cy="300" r="30"/><circle cx="298" cy="300" r="30"/><circle cx="372" cy="300" r="30"/>
+  </g>
+  <!-- seeds -->
+  <g fill="url(#seed)">
+    <circle cx="150" cy="212" r="15"/><circle cx="224" cy="212" r="15"/><circle cx="298" cy="300" r="15"/>
+    <circle cx="372" cy="300" r="15"/><circle cx="224" cy="300" r="15"/>
+  </g>
+</svg>

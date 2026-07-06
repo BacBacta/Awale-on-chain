@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { readContract, waitForTransactionReceipt } from "viem/actions";
 import { parseUnits, type Address, type Hex } from "viem";
-import { getInjectedProvider, connect, publicClient } from "../../src/lib/minipay.js";
+import { getInjectedProvider, connect, publicClient, effectiveFeeCurrency } from "../../src/lib/minipay.js";
 import { escrowConfig } from "../../src/lib/escrow.js";
 import {
   harvestVaultAbi,
@@ -21,6 +21,7 @@ import { humanizeError } from "../../src/lib/errors.js";
 import { erc20Abi } from "../../../protocol/src/abis.js";
 
 const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
+const FEE_CURRENCY = (process.env.NEXT_PUBLIC_FEE_CURRENCY || undefined) as `0x${string}` | undefined;
 const SYMBOL = "aUSD";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Wallet = any;
@@ -126,6 +127,8 @@ export default function League() {
         abi: faucetAbi,
         functionName: "mint",
         args: [account, parseUnits("100", STAKE_DECIMALS)],
+        account,
+        feeCurrency: effectiveFeeCurrency(FEE_CURRENCY),
       }),
     );
   }
@@ -149,17 +152,19 @@ export default function League() {
           abi: erc20Abi,
           functionName: "approve",
           args: [vault, amt],
+          account,
+          feeCurrency: effectiveFeeCurrency(FEE_CURRENCY),
         });
         await waitForTransactionReceipt(client, { hash: ah });
       }
-      return wallet.writeContract({ address: vault, abi: harvestVaultAbi, functionName: "deposit", args: [LEAGUE_SEASON, amt] });
+      return wallet.writeContract({ address: vault, abi: harvestVaultAbi, functionName: "deposit", args: [LEAGUE_SEASON, amt], account, feeCurrency: effectiveFeeCurrency(FEE_CURRENCY) });
     });
   }
 
   async function claimPrincipal() {
     if (!wallet || !vault) return;
     await tx("Claiming principal", () =>
-      wallet.writeContract({ address: vault, abi: harvestVaultAbi, functionName: "claimPrincipal", args: [LEAGUE_SEASON] }),
+      wallet.writeContract({ address: vault, abi: harvestVaultAbi, functionName: "claimPrincipal", args: [LEAGUE_SEASON], account, feeCurrency: effectiveFeeCurrency(FEE_CURRENCY) }),
     );
   }
 
@@ -171,6 +176,8 @@ export default function League() {
         abi: harvestVaultAbi,
         functionName: "claimPrize",
         args: [LEAGUE_SEASON, prize.amount, prize.proof],
+        account,
+        feeCurrency: effectiveFeeCurrency(FEE_CURRENCY),
       }),
     );
     setPrize(null);

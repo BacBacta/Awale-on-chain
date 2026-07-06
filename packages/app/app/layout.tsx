@@ -12,12 +12,16 @@ const fraunces = Fraunces({ subsets: ["latin"], weight: ["600", "700", "800", "9
 export const metadata: Metadata = {
   title: "Awalé",
   description: "Play Awalé and win real money — right in MiniPay.",
+  // Discover/listing + home-screen icon (MiniPay listing requires them)
+  manifest: "/manifest.webmanifest",
+  icons: { icon: "/icon.svg", apple: "/icon.svg" },
 };
 
 export const viewport: Viewport = {
-  width: 360,
+  // device-width (not a fixed 360) so it reflows on narrower phones; zoom is
+  // left ENABLED — disabling it fails WCAG 2.2 SC 1.4.4 (Resize Text)
+  width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   themeColor: "#060504",
   viewportFit: "cover",
 };

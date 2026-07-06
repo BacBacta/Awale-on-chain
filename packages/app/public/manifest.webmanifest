@@ -1,0 +1,15 @@
+{
+  "name": "Awalé",
+  "short_name": "Awalé",
+  "description": "Play Awalé and win real money — right in MiniPay.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#060504",
+  "theme_color": "#060504",
+  "categories": ["games"],
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

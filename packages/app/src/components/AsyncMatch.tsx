@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { humanizeError } from "../lib/errors.js";
 import Link from "next/link";
 import type { Hex } from "viem";
 import { legalMovesMask, type GameState } from "../../../engine/src/awale.js";
@@ -94,7 +95,7 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
           }
         }, POLL_MS);
       } catch (e) {
-        if (alive) setStatus((e as Error).message);
+        if (alive) setStatus(humanizeError(e));
       }
     })();
 
@@ -115,7 +116,7 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
       const state = await moveAsync(matchId, role, house, sig as Hex);
       setData({ ...data, state, turn: 1 - role, ply: data.ply + 1, over: state.over });
     } catch (e) {
-      setStatus((e as Error).message);
+      setStatus(humanizeError(e));
     }
   }
 
@@ -125,7 +126,7 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
       const state = await claimTimeoutAsync(matchId, role);
       setData({ ...data, state, over: state.over });
     } catch (e) {
-      setStatus((e as Error).message);
+      setStatus(humanizeError(e));
     }
   }
 
@@ -135,7 +136,7 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
       const state = await resignAsync(matchId, role);
       setData({ ...data, state, over: state.over });
     } catch (e) {
-      setStatus((e as Error).message);
+      setStatus(humanizeError(e));
     }
   }
 
@@ -171,7 +172,7 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
       recordAsyncMatch(id);
       window.location.href = `/play?async=${id}`;
     } catch (e) {
-      setStatus((e as Error).message);
+      setStatus(humanizeError(e));
     }
   }
 

@@ -81,6 +81,9 @@ export async function connect(
 // automatically, app-wide (both verified: right chainId + CORS for our origin).
 const BACKUP_RPCS: Record<number, string[]> = {
   [celoSepolia.id]: ["https://celo-sepolia.drpc.org", "https://rpc.ankr.com/celo_sepolia"],
+  // mainnet failover — without this, the whole flaky-forno resilience
+  // (readWithRetry/fallback) silently vanished on a mainnet launch
+  [celo.id]: ["https://celo.drpc.org", "https://rpc.ankr.com/celo", "https://1rpc.io/celo"],
 };
 
 export function publicClient(rpcUrl: string, chainId: number = celo.id) {

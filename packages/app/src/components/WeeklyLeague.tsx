@@ -6,6 +6,7 @@
 // to do next; it renders nothing when the server (or the feature) is off.
 
 import { useEffect, useState } from "react";
+import { humanizeError } from "../lib/errors.js";
 import Link from "next/link";
 import type { Address } from "viem";
 import { getInjectedProvider, connect } from "../lib/minipay.js";
@@ -74,7 +75,7 @@ export function WeeklyLeague() {
       setClaimed(true);
       setPrizeTotal(0n);
     } catch (e) {
-      setClaimError((e as Error).message);
+      setClaimError(humanizeError(e));
     }
     setClaiming(false);
   }
