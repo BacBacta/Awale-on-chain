@@ -293,11 +293,10 @@ export default function League() {
       ) : locked ? (
         <div className="card stack" style={{ gap: 8, textAlign: "center" }}>
           <Icon name="info" size={22} />
-          <span style={{ fontWeight: 700 }}>League opens after the security audit</span>
+          <span style={{ fontWeight: 700 }}>Coming soon</span>
           <span className="muted">
-            The no-loss league puts pooled deposits into a lending market. That
-            custody stays switched off until an independent external audit clears
-            it — the safe default. Your matches and winnings are unaffected.
+            The no-loss league — deposit your winnings, grow them over a season,
+            and always get your deposit back in full. Launching shortly.
           </span>
           {mine > 0n && (
             <span className="faint">
