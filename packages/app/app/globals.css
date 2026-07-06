@@ -30,7 +30,10 @@
   /* --- color: text (warm ivory) --- */
   --text: #f4f1ea;
   --muted: #b4ada0;
-  --faint: #837c6f;
+  /* faint labels sit on translucent .card surfaces (~#181816); #837c6f there is
+     only 4.31:1 — below WCAG AA (4.5:1) for body text. #8d8678 clears it (~4.9:1
+     on a card, ~5.5:1 on the page) while staying a clear step below --muted. */
+  --faint: #8d8678;
 
   /* --- color: semantic --- */
   --accent: #4ce584;

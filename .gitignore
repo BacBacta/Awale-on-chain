@@ -1,3 +1,8 @@
 .vercel
 node_modules
+# ignore every real env file (.env, .env.local, .env.production…) everywhere,
+# but never the committed templates — a new package's .env.example must not
+# silently vanish from git the way `.env*` alone would swallow it.
 .env*
+!.env.example
+!**/.env.example

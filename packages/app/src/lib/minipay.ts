@@ -33,10 +33,43 @@ export function effectiveFeeCurrency(feeCurrency?: Address): Address | undefined
   return isMiniPay(getInjectedProvider()) ? feeCurrency : undefined;
 }
 
-/** The injected EIP-1193 provider, if any (undefined during SSR). */
+// EIP-6963 multi-wallet discovery. `window.ethereum` is a single slot that
+// multiple installed wallets fight over; EIP-6963 lets each wallet *announce*
+// itself so a dapp can pick the right one. MiniPay still injects
+// `window.ethereum` (isMiniPay) and auto-connects, so its zero-click path is
+// untouched — this only adds robustness for desktop browsers with 1+ wallets.
+interface EIP6963ProviderDetail {
+  info: { uuid: string; name: string; rdns: string };
+  provider: InjectedProvider;
+}
+const discovered: EIP6963ProviderDetail[] = [];
+let discoveryStarted = false;
+
+function startProviderDiscovery(): void {
+  if (discoveryStarted || typeof window === "undefined") return;
+  // guard minimal/test window stubs that lack the event API
+  if (typeof window.addEventListener !== "function" || typeof window.dispatchEvent !== "function") return;
+  discoveryStarted = true;
+  window.addEventListener("eip6963:announceProvider", (e: Event) => {
+    const detail = (e as CustomEvent<EIP6963ProviderDetail>).detail;
+    if (!detail?.provider) return;
+    if (!discovered.some((d) => d.info?.uuid === detail.info?.uuid)) discovered.push(detail);
+  });
+  // ask any already-loaded wallets to (re-)announce themselves
+  window.dispatchEvent(new Event("eip6963:requestProvider"));
+}
+
+/** The injected EIP-1193 provider, if any (undefined during SSR).
+ *  MiniPay first (unchanged), then a 6963-announced MiniPay, then
+ *  `window.ethereum`, then the first announced wallet. */
 export function getInjectedProvider(): InjectedProvider | undefined {
   if (typeof window === "undefined") return undefined;
-  return (window as unknown as { ethereum?: InjectedProvider }).ethereum;
+  startProviderDiscovery();
+  const eth = (window as unknown as { ethereum?: InjectedProvider }).ethereum;
+  if (eth?.isMiniPay) return eth; // fast path: inside MiniPay, nothing else matters
+  const announcedMini = discovered.find((d) => d.provider?.isMiniPay);
+  if (announcedMini) return announcedMini.provider;
+  return eth ?? discovered[0]?.provider;
 }
 
 /** Connect to the injected wallet. Zero-click inside MiniPay (eth_accounts
