@@ -30,6 +30,7 @@ contract HarvestVaultForkTest is Test {
         vm.createSelectFork(rpc);
 
         HarvestVault vault = new HarvestVault(address(this));
+        vault.setSeasonsUnlocked(true); // audit gate — unlock for the fork lifecycle
         IERC20 token = IERC20(tokenAddr);
 
         uint256 amount = 1_000 * (10 ** _decimals(tokenAddr));

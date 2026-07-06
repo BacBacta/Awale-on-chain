@@ -54,6 +54,16 @@ contract HarvestVault is Ownable, ReentrancyGuard {
     uint16 public constant MAX_YIELD_FEE_BPS = 3000; // protocol can never take >30% of yield
     address public feeTreasury;
 
+    /// @notice Hard gate on the whole yield lifecycle. FALSE by default, so a
+    ///         freshly-deployed vault is inert: no season can open and no deposit
+    ///         can enter until governance flips it on. The custodial lending
+    ///         integration MUST NOT be unlocked before an independent external
+    ///         audit (the honeypot risk this contract carries). Claims and
+    ///         finalize are deliberately NOT gated by this, so funds already in a
+    ///         season can always be withdrawn — flipping it back off is a pause
+    ///         that can freeze new deposits without ever trapping existing funds.
+    bool public seasonsUnlocked;
+
     uint256 public nextSeasonId = 1;
     mapping(uint256 => Season) public seasons;
     mapping(uint256 => mapping(address => uint256)) public principalOf;
@@ -70,8 +80,18 @@ contract HarvestVault is Ownable, ReentrancyGuard {
     event PrizeClaimed(uint256 indexed seasonId, address indexed player, uint256 amount);
     event YieldFeeUpdated(address indexed treasury, uint16 bps);
     event YieldFeeCollected(uint256 indexed seasonId, uint256 amount);
+    event SeasonsUnlockedSet(bool unlocked);
 
     constructor(address owner_) Ownable(owner_) {}
+
+    /// @notice Unlock (or re-lock) the yield lifecycle. Off by default; only
+    ///         ever turn ON after the external audit clears the lending
+    ///         integration. Turning it OFF is a pause: it blocks new seasons and
+    ///         deposits but never claims/finalize, so funds are never trapped.
+    function setSeasonsUnlocked(bool unlocked) external onlyOwner {
+        seasonsUnlocked = unlocked;
+        emit SeasonsUnlockedSet(unlocked);
+    }
 
     /// @notice Configure the protocol's share of realised yield. Capped, and
     ///         requires a treasury when non-zero.
@@ -92,6 +112,7 @@ contract HarvestVault is Ownable, ReentrancyGuard {
         nonReentrant
         returns (uint256 seasonId)
     {
+        require(seasonsUnlocked, "HarvestVault: locked pending audit");
         require(token != address(0) && pool != address(0), "HarvestVault: zero addr");
         require(depositDeadline < seasonEnd, "HarvestVault: bad schedule");
         require(seasonEnd > block.timestamp, "HarvestVault: end in past");
@@ -113,6 +134,7 @@ contract HarvestVault is Ownable, ReentrancyGuard {
 
     /// @notice Deposit `amount` into a season; supplied straight to the market.
     function deposit(uint256 seasonId, uint256 amount) external nonReentrant {
+        require(seasonsUnlocked, "HarvestVault: deposits locked");
         Season storage s = seasons[seasonId];
         require(s.status == Status.Open, "HarvestVault: not open");
         require(block.timestamp <= s.depositDeadline, "HarvestVault: deposits closed");

@@ -39,6 +39,7 @@ export default function League() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [prize, setPrize] = useState<{ amount: bigint; proof: Hex[] } | null>(null);
+  const [locked, setLocked] = useState(false); // yield gated pending external audit
 
   // Prefill the deposit from a win's "grow winnings" link (?deposit=N).
   useEffect(() => {
@@ -59,6 +60,19 @@ export default function League() {
       args: [LEAGUE_SEASON],
     })) as Season;
     setSeason(s);
+    // audit gate: yield is locked until governance unlocks it post-audit. A
+    // legacy vault predating the gate lacks the function — treat that as unlocked.
+    try {
+      const unlocked = (await readContract(client, {
+        address: vault,
+        abi: harvestVaultAbi,
+        functionName: "seasonsUnlocked",
+        args: [],
+      })) as boolean;
+      setLocked(!unlocked);
+    } catch {
+      setLocked(false);
+    }
     if (account) {
       const [p, b] = await Promise.all([
         // claimablePrincipal, not principalOf: after a market shortfall (M-02)
@@ -275,6 +289,22 @@ export default function League() {
               ? "You placed in the standings — claim your prize and your principal."
               : "Prizes go to the top of the final standings. Your principal always returns in full."}
           </span>
+        </div>
+      ) : locked ? (
+        <div className="card stack" style={{ gap: 8, textAlign: "center" }}>
+          <Icon name="info" size={22} />
+          <span style={{ fontWeight: 700 }}>League opens after the security audit</span>
+          <span className="muted">
+            The no-loss league puts pooled deposits into a lending market. That
+            custody stays switched off until an independent external audit clears
+            it — the safe default. Your matches and winnings are unaffected.
+          </span>
+          {mine > 0n && (
+            <span className="faint">
+              You have {fmt(mine, STAKE_DECIMALS)} {SYMBOL} in a season — it stays
+              fully claimable; deposits are paused, not funds.
+            </span>
+          )}
         </div>
       ) : !depositsOpen ? (
         mine > 0n ? (

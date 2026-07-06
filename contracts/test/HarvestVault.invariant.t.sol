@@ -90,6 +90,7 @@ contract HarvestVaultInvariantTest is Test {
         usdc = new MockERC20("USD Coin", "USDC", 6);
         pool = new MockLendingPool(usdc);
         vault = new HarvestVault(address(this));
+        vault.setSeasonsUnlocked(true); // audit gate — unlock so the lifecycle can run
 
         uint64 depositDeadline = uint64(block.timestamp + 20 days);
         uint64 seasonEnd = uint64(block.timestamp + 30 days);

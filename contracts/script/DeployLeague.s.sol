@@ -24,6 +24,11 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///   forge script script/DeployLeague.s.sol --rpc-url $CELO_SEPOLIA_RPC --broadcast --verify
 contract DeployLeague is Script {
     function run() external {
+        // This script wires a MOCK lending pool — a testnet demo only. The real
+        // vault ships to mainnet locked (seasonsUnlocked = false) and is unlocked
+        // by governance only after the external audit clears the integration.
+        require(block.chainid != 42220, "DeployLeague: mock pool is testnet-only");
+
         uint256 pk = vm.envUint("PRIVATE_KEY");
         address deployer = vm.addr(pk);
         address owner = vm.envOr("OWNER", deployer);
@@ -44,8 +49,10 @@ contract DeployLeague is Script {
         // 2. mock Aave-style lending market
         MockLendingPool pool = new MockLendingPool(IERC20(token));
 
-        // 3. the vault
+        // 3. the vault — ships locked; unlock here for the self-contained
+        //    testnet demo (mainnet stays locked until the audit clears it)
         HarvestVault vault = new HarvestVault(owner);
+        vault.setSeasonsUnlocked(true);
 
         // 4. open a season
         uint64 depositDeadline = uint64(block.timestamp + depositDays * 1 days);

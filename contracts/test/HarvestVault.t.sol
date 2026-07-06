@@ -23,6 +23,9 @@ contract HarvestVaultTest is Test {
         vault = new HarvestVault(owner);
         usdc = new MockERC20("USD Coin", "USDC", 6);
         pool = new MockLendingPool(usdc);
+        // yield is locked by default (audit gate); unlock for the functional tests
+        vm.prank(owner);
+        vault.setSeasonsUnlocked(true);
 
         depositDeadline = uint64(block.timestamp + 1 days);
         seasonEnd = uint64(block.timestamp + 7 days);
@@ -171,6 +174,50 @@ contract HarvestVaultTest is Test {
         vm.prank(bob);
         vault.claimPrincipal(id);
         assertEq(usdc.balanceOf(bob), 1_000e6, "bob made whole (started 1000, deposited 100)");
+    }
+
+    // -------------------- audit gate (locked by default) -------------------- //
+
+    // A fresh vault is inert: seasons are locked, so no season can open and no
+    // deposit can enter until governance unlocks post-audit.
+    function test_gate_lockedByDefault() public {
+        HarvestVault fresh = new HarvestVault(owner);
+        assertFalse(fresh.seasonsUnlocked(), "locked by default");
+        vm.prank(owner);
+        vm.expectRevert(bytes("HarvestVault: locked pending audit"));
+        fresh.createSeason(address(usdc), address(pool), depositDeadline, seasonEnd);
+    }
+
+    function test_gate_onlyOwnerCanUnlock() public {
+        vm.prank(alice);
+        vm.expectRevert(); // Ownable: not owner
+        vault.setSeasonsUnlocked(false);
+    }
+
+    // Re-locking is a pause: it blocks new deposits but never claims/finalize,
+    // so funds already in a season are always recoverable.
+    function test_gate_pauseBlocksDepositsButNotExits() public {
+        uint256 id = _createSeason();
+        vm.prank(alice);
+        vault.deposit(id, DEP);
+
+        // governance pauses the yield system mid-season
+        vm.prank(owner);
+        vault.setSeasonsUnlocked(false);
+
+        // new deposits are frozen
+        vm.prank(bob);
+        vm.expectRevert(bytes("HarvestVault: deposits locked"));
+        vault.deposit(id, DEP);
+
+        // but finalize and principal claims still work — funds never trapped
+        vm.warp(seasonEnd + 1);
+        vm.prank(owner);
+        vault.finalize(id, bytes32(0));
+        uint256 aBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        vault.claimPrincipal(id);
+        assertEq(usdc.balanceOf(alice), aBefore + DEP, "principal recoverable while paused");
     }
 
     // ----------------------- [M-02] shortfall pro-rata ----------------------- //

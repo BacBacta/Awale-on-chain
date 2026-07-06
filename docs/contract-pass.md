@@ -28,6 +28,23 @@ to v1 (100% of yield to players).
 audit (custodial pooled principal = honeypot risk). The fee ships in the same
 audit. Fuzz test pins: fee is always a slice of yield, principal always exact.
 
+### 2a. Hard audit gate — yield is inert by default (2026-07-06)
+
+To make "gated on the external audit" a **contract invariant** rather than a
+process promise, `HarvestVault` now ships **locked**: `seasonsUnlocked` is
+`false` by default, and both `createSeason` and `deposit` require it. A
+freshly-deployed mainnet vault therefore accepts **no user funds at all** until
+governance calls `setSeasonsUnlocked(true)` — which must happen only after the
+external audit clears the lending integration. Claims and `finalize` are
+deliberately **not** gated, so the same switch doubles as a **pause** that can
+freeze new deposits without ever trapping funds already in a season. The mock
+testnet demo (`DeployLeague.s.sol`) unlocks itself and now refuses to run on
+mainnet (chainid 42220). Also this pass: **M-02 pro-rata** — on a market
+shortfall, `claimPrincipal` shares the recovered amount pro-rata instead of
+first-come-first-served (new `claimablePrincipal` view; UI reads it).
+Tests: `test_gate_lockedByDefault`, `test_gate_pauseBlocksDepositsButNotExits`,
+`test_claimPrincipal_shortfallSharedProRata`, `testFuzz_shortfallNeverOverPays`.
+
 ## 3. Weekly-league economics (server-side, already live)
 
 Rake split **55% platform / 45% pot**; pot split **95% dividend pro-rata to

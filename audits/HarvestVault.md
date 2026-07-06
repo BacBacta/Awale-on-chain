@@ -102,6 +102,15 @@ challenge window before claims open.
 The owner creates seasons, selects the lending pool, and finalizes. As with the
 other contracts, move ownership to a timelock + multisig before mainnet (§13).
 
+**Audit gate + pause added.** `seasonsUnlocked` is `false` by default; both
+`createSeason` and `deposit` require it, so a freshly-deployed vault is inert —
+it accepts **no user funds** until governance flips it on, which must not happen
+before this external audit clears the lending integration. Turning it back off
+is a **pause**: it freezes new seasons/deposits but never `claimPrincipal` /
+`finalize`, so funds already supplied are always recoverable (this also answers
+the "no pause mechanism" gap noted for the escrow, on the yield side). Covered
+by `test_gate_lockedByDefault` and `test_gate_pauseBlocksDepositsButNotExits`.
+
 ---
 
 ## Informational

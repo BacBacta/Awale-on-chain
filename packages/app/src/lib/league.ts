@@ -76,6 +76,15 @@ export const harvestVaultAbi = [
     outputs: [{ type: "uint256" }],
   },
   {
+    // audit gate: false until governance unlocks the yield system post-audit.
+    // Read defensively — a legacy vault predating the gate lacks this function.
+    type: "function",
+    name: "seasonsUnlocked",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "bool" }],
+  },
+  {
     type: "function",
     name: "deposit",
     stateMutability: "nonpayable",
