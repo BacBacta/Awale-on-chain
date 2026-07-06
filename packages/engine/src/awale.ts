@@ -240,8 +240,9 @@ function endByCycle(s: GameState): GameState {
  * good, so a pre-capture position can never recur — only a truly stuck endgame
  * cycles, and it cycles fast (few seeds ⇒ few distinct positions).
  */
-export function adjudicate(moves: number[]): GameState {
+export function adjudicate(moves: number[], startTurn: 0 | 1 = 0): GameState {
   let s = initialState();
+  s.turn = startTurn; // a match's first mover is fixed by the on-chain reveal
   const seen = new Map<string, number>();
   seen.set(positionKey(s), 1);
   for (const move of moves) {
@@ -264,6 +265,6 @@ export function adjudicate(moves: number[]): GameState {
 /** True iff appending `move` to `moves` ends the game (by any rule, including
  *  repetition). Lets a live driver decide when to stop without re-deriving the
  *  whole adjudication itself. `moves` must be the accepted history so far. */
-export function endsGame(moves: number[], move: number): boolean {
-  return adjudicate([...moves, move]).over;
+export function endsGame(moves: number[], move: number, startTurn: 0 | 1 = 0): boolean {
+  return adjudicate([...moves, move], startTurn).over;
 }

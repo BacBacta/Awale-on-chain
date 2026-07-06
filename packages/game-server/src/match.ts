@@ -10,7 +10,7 @@
 // would replay on-chain in a dispute, so what the server accepts is exactly what
 // the contract would accept.
 
-import { initialState, applyMove, legalMovesMask, DRAW, type GameState } from "../../engine/src/awale.js";
+import { initialState, applyMove, legalMovesMask, adjudicate, DRAW, type GameState } from "../../engine/src/awale.js";
 import { moveDigest, resignDigest, drawOfferDigest, type MoveContext } from "./eip712.js";
 import { recoverAddress, type Address, type Hex } from "viem";
 
@@ -140,11 +140,14 @@ export class Match {
       // bank the thinking time this move consumed before handing the turn over
       this._clock[player] = Math.max(0, this._clock[player] - this.msSinceTurnStart());
     }
-    this.state = next;
     this._moves.push(house);
     this._sigs.push(signature);
+    // adjudicate the full history: identical to `next` for every base rule, but
+    // it ALSO ends a provably-cyclic position (threefold repetition) — the
+    // anti-stall rule. A losing player can no longer drag a dead endgame out.
+    this.state = adjudicate(this._moves, this.cfg.startTurn as 0 | 1);
     this._turnStartedAt = this._now(); // the clock hands off to whoever moves next
-    return next;
+    return this.state;
   }
 
   /**
