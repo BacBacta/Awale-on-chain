@@ -73,6 +73,15 @@ const ESCROW = required("ESCROW_ADDRESS") as Address;
 const VERIFIER = required("VERIFIER_ADDRESS") as Address;
 const PORT = Number(process.env.PORT ?? "8080");
 const SIGNER = process.env.SERVER_SIGNER_KEY;
+// weekly champion's trophy: the Cosmetics contract + the board item minted to
+// the #1 finisher each week (ownerMint). Off unless COSMETICS_ADDRESS is set.
+const COSMETICS_ADDRESS = process.env.COSMETICS_ADDRESS as Address | undefined;
+const CHAMPION_ITEM_ID = BigInt(process.env.CHAMPION_ITEM_ID ?? "3");
+const COSMETICS_OWNER_MINT_ABI = [
+  { type: "function", name: "ownerMint", stateMutability: "nonpayable", inputs: [
+    { name: "to", type: "address" }, { name: "id", type: "uint256" }, { name: "amount", type: "uint256" },
+  ], outputs: [] },
+] as const;
 const FEE_CURRENCY = (process.env.FEE_CURRENCY || undefined) as Address | undefined;
 const KEEPER_INTERVAL_MS = Number(process.env.KEEPER_INTERVAL_MS ?? "30000");
 // operator gas vigil: refresh every 5 min; warn under 0.2 CELO
@@ -1523,15 +1532,41 @@ async function leagueClaim(address: Address): Promise<{ paidWei: string; tx: Hex
   }
 }
 
+/** Mint the weekly champion trophy to the #1 finisher. Best-effort: a mint
+ *  failure never blocks the payout accounting. Needs the operator to be the
+ *  Cosmetics owner (it is) and COSMETICS_ADDRESS set. */
+async function awardChampionTrophy(champion: Address, week: string): Promise<void> {
+  if (!COSMETICS_ADDRESS || !operatorAccount) return;
+  try {
+    const wallet = createWalletClient({ chain: chainFor(CHAIN_ID), transport: http(RPC_URL), account: operatorAccount });
+    const hash = await wallet.writeContract({
+      address: COSMETICS_ADDRESS,
+      abi: COSMETICS_OWNER_MINT_ABI,
+      functionName: "ownerMint",
+      args: [champion, CHAMPION_ITEM_ID, 1n],
+      ...(FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {}),
+    } as Parameters<typeof wallet.writeContract>[0]);
+    await publicClient.waitForTransactionReceipt({ hash });
+    console.log(`[league] champion trophy → ${champion} for week ${week} (${hash})`);
+  } catch (e) {
+    console.warn(`[league] champion trophy mint failed: ${(e as Error).message}`);
+  }
+}
+
 async function leagueTick(): Promise<void> {
   const result = await league.rollover(leagueCredit);
   if (!result) return;
   console.log(`[league] week ${result.week} closed — pool ${result.poolWei}, ${result.winners.length} credited`);
+  // the #1 finisher gets the Midnight board — a trophy that can't be bought
+  if (result.winners[0]) void awardChampionTrophy(result.winners[0].address, result.week);
   result.winners.forEach((w, i) => {
     void notifier
       .notify(w.address, {
         title: "You won the weekly league! 🏆",
-        body: `You finished #${i + 1} this week — open the app to collect your prize.`,
+        body:
+          i === 0
+            ? "You finished #1 — the Midnight board is yours, and your prize is ready to collect."
+            : `You finished #${i + 1} this week — open the app to collect your prize.`,
         url: "/compete",
         tag: `awale-league-${result.week}`,
       })

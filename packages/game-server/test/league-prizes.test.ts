@@ -17,6 +17,11 @@ function fakeRedis() {
     async del(k: string) {
       m.delete(k);
     },
+    async sadd() {},
+    async srem() {},
+    async smembers() {
+      return [] as string[];
+    },
   };
 }
 
