@@ -5,7 +5,8 @@ import {
   InMemoryLeagueStore,
   weekKey,
   weekEndMs,
-  PAYOUT_BPS,
+  PODIUM_BPS,
+  computePrizes,
   type LeagueWinner,
 } from "../src/weekly-league.js";
 
@@ -112,8 +113,8 @@ describe("WeeklyLeague.rollover", () => {
 
     expect(result?.week).toBe("2026-06-29");
     expect(paidArgs.map((w) => w.address)).toEqual([A, B]);
-    expect(BigInt(paidArgs[0].amountWei)).toBe((pool * BigInt(PAYOUT_BPS[0])) / 10_000n);
-    expect(BigInt(paidArgs[1].amountWei)).toBe((pool * BigInt(PAYOUT_BPS[1])) / 10_000n);
+    expect(BigInt(paidArgs[0].amountWei)).toBe((pool * BigInt(PODIUM_BPS[0])) / 10_000n);
+    expect(BigInt(paidArgs[1].amountWei)).toBe((pool * BigInt(PODIUM_BPS[1])) / 10_000n);
 
     // unpaid shares (ranks 3-5 empty) carry into the new week's pool
     const carried = pool - BigInt(paidArgs[0].amountWei) - BigInt(paidArgs[1].amountWei);
@@ -134,5 +135,48 @@ describe("WeeklyLeague.rollover", () => {
     const result = await league.rollover(payNobody, NEXT_TUE);
     expect(result?.winners).toEqual([]);
     expect(BigInt((await league.snapshot(undefined, NEXT_TUE)).poolWei)).toBe(pool);
+  });
+});
+
+describe("computePrizes — podium + degressive dividend", () => {
+  const std = (address: string, points: number) => ({ address: address as `0x${string}`, points, games: 5, wins: points / 3 });
+  const POOL = 10_000_000n; // 10 units at 6 dp — keeps shares readable
+
+  it("ranks 1-3 take 40/20/10, the rest split 30% pro-rata to points", () => {
+    const ranked = [std("0xa", 15), std("0xb", 12), std("0xc", 9), std("0xd", 9), std("0xe", 6), std("0xf", 3)];
+    const prizes = computePrizes(ranked, POOL);
+    expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([
+      4_000_000n, // #1: 40%
+      2_000_000n, // #2: 20%
+      1_000_000n, // #3: 10%
+      1_500_000n, // #4: 30% × 9/18
+      1_000_000n, // #5: 30% × 6/18
+      500_000n, // #6: 30% × 3/18
+    ]);
+    // nothing minted from thin air
+    const total = prizes.reduce((a, p) => a + BigInt(p.amountWei), 0n);
+    expect(total <= POOL).toBe(true);
+  });
+
+  it("dividend is degressive: better rank (more points) always gets more", () => {
+    const ranked = [std("0xa", 30), std("0xb", 27), std("0xc", 24), std("0xd", 21), std("0xe", 9), std("0xf", 3)];
+    const prizes = computePrizes(ranked, POOL).map((p) => BigInt(p.amountWei));
+    for (let i = 4; i < prizes.length; i++) expect(prizes[i] < prizes[i - 1]).toBe(true);
+  });
+
+  it("fewer than 4 eligibles: podium only, the dividend is left for the carry", () => {
+    const prizes = computePrizes([std("0xa", 6), std("0xb", 3)], POOL);
+    expect(prizes.length).toBe(2);
+    const total = prizes.reduce((a, p) => a + BigInt(p.amountWei), 0n);
+    expect(total).toBe(6_000_000n); // 40% + 20% — the remaining 40% carries
+  });
+
+  it("zero-point tail (eligible via draws only) earns nothing — dividend carries", () => {
+    const prizes = computePrizes([std("0xa", 9), std("0xb", 6), std("0xc", 3), std("0xd", 0)], POOL);
+    expect(prizes.length).toBe(3);
+  });
+
+  it("empty standings → no prizes, whole pool carries", () => {
+    expect(computePrizes([], POOL)).toEqual([]);
   });
 });

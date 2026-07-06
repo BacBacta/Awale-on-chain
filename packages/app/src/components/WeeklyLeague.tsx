@@ -10,7 +10,7 @@ import Link from "next/link";
 import type { Address } from "viem";
 import { getInjectedProvider, connect } from "../lib/minipay.js";
 import { escrowConfig } from "../lib/escrow.js";
-import { getWeeklyLeague, raceEndsIn, weeklyLeagueEnabled, type WeeklyLeagueSnapshot } from "../lib/weeklyLeague.js";
+import { getWeeklyLeague, getPendingPrizes, claimPrizes, raceEndsIn, weeklyLeagueEnabled, type WeeklyLeagueSnapshot, type PendingPrize } from "../lib/weeklyLeague.js";
 import { friendlyName } from "../lib/names.js";
 import { fmt } from "../lib/money.js";
 
@@ -24,6 +24,12 @@ const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.en
 export function WeeklyLeague() {
   const [data, setData] = useState<WeeklyLeagueSnapshot | null>(null);
   const [me, setMe] = useState<Address | null>(null);
+  // prize waiting to be collected (credited at Monday's rollover)
+  const [prizes, setPrizes] = useState<PendingPrize[]>([]);
+  const [prizeTotal, setPrizeTotal] = useState<bigint>(0n);
+  const [claiming, setClaiming] = useState(false);
+  const [claimed, setClaimed] = useState(false);
+  const [claimError, setClaimError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!weeklyLeagueEnabled()) return;
@@ -39,6 +45,16 @@ export function WeeklyLeague() {
         }
       }
       if (address && alive) setMe(address);
+      if (address) {
+        getPendingPrizes(address)
+          .then((p) => {
+            if (alive) {
+              setPrizes(p.prizes);
+              setPrizeTotal(p.totalWei);
+            }
+          })
+          .catch(() => {});
+      }
       const s = await getWeeklyLeague(address);
       if (alive) setData(s);
     })().catch(() => {});
@@ -49,12 +65,53 @@ export function WeeklyLeague() {
 
   if (!data) return null;
 
+  async function collect() {
+    if (!me || claiming) return;
+    setClaiming(true);
+    setClaimError(null);
+    try {
+      await claimPrizes(me);
+      setClaimed(true);
+      setPrizeTotal(0n);
+    } catch (e) {
+      setClaimError((e as Error).message);
+    }
+    setClaiming(false);
+  }
+
+  const bestRank = prizes.reduce((best, p) => (best === 0 ? p.rank : Math.min(best, p.rank)), 0);
+
   const pool = BigInt(data.poolWei);
   const entered = data.me !== null && data.me.games >= data.minGames;
   const played = data.me?.games ?? 0;
 
   return (
     <>
+      {(prizeTotal > 0n || claimed) && (
+        // the win comes FIRST — collecting a prize is the whole reason this
+        // player opened the app today
+        <div className="card stack animate-in" style={{ gap: 12, padding: 18, boxShadow: "inset 0 0 0 1.5px rgba(246,200,99,0.45)" }}>
+          <span className="chip gold" style={{ alignSelf: "flex-start" }}>🏆 Weekly league — you won!</span>
+          {claimed ? (
+            <span className="chip positive" style={{ alignSelf: "stretch", justifyContent: "center", padding: 10 }}>
+              Paid ✓ — it&apos;s in your wallet
+            </span>
+          ) : (
+            <>
+              <span className="display" style={{ color: "var(--gold)", fontSize: 32, lineHeight: 0.95, fontVariantNumeric: "tabular-nums" }}>
+                {fmt(prizeTotal, STAKE_DECIMALS)} {STAKE_SYMBOL}
+              </span>
+              <span className="muted">
+                You finished {bestRank > 0 ? `#${bestRank}` : "in the money"} last week — your prize is ready.
+              </span>
+              <button className="btn block" onClick={collect} disabled={claiming}>
+                {claiming ? "Collecting…" : "Collect now"}
+              </button>
+              {claimError && <span className="muted" style={{ color: "var(--danger)", fontSize: 12.5 }}>{claimError}</span>}
+            </>
+          )}
+        </div>
+      )}
       <div className="card stack animate-in" style={{ gap: 14, padding: 18 }}>
         <div className="row">
           <span className="chip gold">🏁 Weekly league</span>
@@ -67,17 +124,17 @@ export function WeeklyLeague() {
             <span className="display" style={{ color: "var(--gold)", fontSize: 34, lineHeight: 0.95, fontVariantNumeric: "tabular-nums" }}>
               {fmt(pool, STAKE_DECIMALS)} {STAKE_SYMBOL}
             </span>
-            <span className="faint">prize pot · top 5 split it Monday</span>
+            <span className="faint">prize pot · top 3 win big, every ranked player gets a share Monday</span>
           </div>
         ) : (
-          <span className="muted">The pot grows with every money game this week — top 5 share it Monday.</span>
+          <span className="muted">The pot grows with every money game this week — top 3 win big, every ranked player gets a share Monday.</span>
         )}
 
         {entered && data.me ? (
           <span className="muted">
             {data.me.rank !== null
               ? `You're #${data.me.rank} with ${data.me.points} pts (${data.me.wins} wins).`
-              : `${data.me.points} pts so far — keep winning to enter the top 5.`}
+              : `${data.me.points} pts so far — keep winning — more points means a bigger share.`}
           </span>
         ) : (
           <div className="stack" style={{ gap: 10 }}>

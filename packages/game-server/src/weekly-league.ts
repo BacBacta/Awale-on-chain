@@ -61,9 +61,38 @@ export const WIN_POINTS = 3;
  *  agreed draws at gas-only cost), so a draw counts for eligibility but
  *  earns nothing. */
 export const DRAW_POINTS = 0;
-/** Payout schedule for ranks 1..5, in bps of the pool. Unclaimed shares
- *  (fewer eligible players, or a failed transfer) roll into the next week. */
+/** @deprecated old top-5 schedule — kept only for historical reference. */
 export const PAYOUT_BPS = [5000, 2500, 1500, 700, 300];
+
+/** Podium: fixed shares for ranks 1-3 (the dream stays big and legible). */
+export const PODIUM_BPS = [4000, 2000, 1000];
+/** The rest of the pool is a DIVIDEND for every other eligible player,
+ *  split proportionally to points — naturally degressive down the table,
+ *  and nobody who put in the games walks away with nothing. This is what
+ *  turns the rake from a flat tax into something that visibly comes back. */
+export const DIVIDEND_BPS = 3000;
+
+/** Split `pool` across the standings: podium first, then the dividend
+ *  pro-rata to points among everyone below it. Pure. Shares that can't be
+ *  assigned (no players beyond the podium, zero points down-table, rounding
+ *  dust) simply aren't emitted — the caller carries the difference forward. */
+export function computePrizes(ranked: LeagueStanding[], pool: bigint): LeagueWinner[] {
+  const out: LeagueWinner[] = [];
+  ranked.slice(0, PODIUM_BPS.length).forEach((s, i) => {
+    const amt = (pool * BigInt(PODIUM_BPS[i])) / 10_000n;
+    if (amt > 0n) out.push({ address: s.address, amountWei: amt.toString() });
+  });
+  const rest = ranked.slice(PODIUM_BPS.length);
+  const totalPts = rest.reduce((a, s) => a + s.points, 0);
+  if (totalPts > 0) {
+    const dividend = (pool * BigInt(DIVIDEND_BPS)) / 10_000n;
+    for (const s of rest) {
+      const amt = (dividend * BigInt(s.points)) / BigInt(totalPts);
+      if (amt > 0n) out.push({ address: s.address, amountWei: amt.toString() });
+    }
+  }
+  return out;
+}
 
 const DEFAULT_MIN_GAMES = 5;
 const DEFAULT_PAIR_CAP = 3;
@@ -300,10 +329,8 @@ export class WeeklyLeague {
     const w = await this.loadOrCreate(open);
     const pool = BigInt(w.poolWei);
     const ranked = this.standings(w);
-    const due: LeagueWinner[] = ranked
-      .slice(0, PAYOUT_BPS.length)
-      .map((s, i) => ({ address: s.address, amountWei: ((pool * BigInt(PAYOUT_BPS[i])) / 10_000n).toString() }))
-      .filter((c) => BigInt(c.amountWei) > 0n);
+    // podium (40/20/10) + points-proportional dividend for everyone else
+    const due: LeagueWinner[] = computePrizes(ranked, pool);
 
     const paid = due.length > 0 && w.token ? await payout(w.token, due) : [];
     const paidTotal = paid.reduce((a, c) => a + BigInt(c.amountWei), 0n);

@@ -24,6 +24,7 @@ import { RedisLiveMatchStore } from "./store/redis.js";
 import type { LiveMatchStore } from "./store/types.js";
 import { RedisMatchStore } from "./persistence/redis-store.js";
 import { InMemoryCashPairStore, RedisCashPairStore, type CashPairStore } from "./cash-pair-store.js";
+import { InMemoryLeaguePrizeStore, RedisLeaguePrizeStore, type LeaguePrizeStore } from "./league-prizes.js";
 import IORedis from "ioredis";
 import {
   InMemorySubscriptionStore,
@@ -252,6 +253,9 @@ let kv: { get(k: string): Promise<string | null>; set(k: string, v: string): Pro
 // Half-built cash pairs survive a restart so a mid-flight stake is never
 // stranded (P1-4): Redis-backed when configured, in-memory otherwise.
 let cashPairStore: CashPairStore = new InMemoryCashPairStore();
+// pending league prizes — credited at rollover, paid when the winner taps
+// Collect. A credited prize is a DEBT: Redis-backed in production.
+let leaguePrizes: LeaguePrizeStore = new InMemoryLeaguePrizeStore();
 if (process.env.REDIS_URL) {
   const redis = new IORedis(process.env.REDIS_URL, { family: 6, maxRetriesPerRequest: 5, lazyConnect: true });
   redis.on("error", (e) => console.warn(`[redis] ${e.message}`));
@@ -267,6 +271,7 @@ if (process.env.REDIS_URL) {
   personhood = new RedisPersonhoodRegistry(redis);
   cashPairStore = new RedisCashPairStore(redis);
   liveMatchBacking = new RedisLiveMatchStore(redis);
+  leaguePrizes = new RedisLeaguePrizeStore(redis);
   kv = redis;
   console.log("stores: redis (async, social, push subscriptions, profiles, league, ledger, inbox, personhood, cash-pairs)");
 } else {
@@ -682,6 +687,30 @@ const httpServer = createServer((req, res) => {
   }
   // --- all-time money leaderboard, fed from MatchSettled (was a client-side
   //     scan of every log since block 0 on each visit) ---
+  // --- weekly league prizes: what's waiting, and the Collect tap ---
+  if (req.method === "GET" && url.pathname === "/league/prizes") {
+    const address = url.searchParams.get("address") as Address | null;
+    if (!address) return json(400, { error: "address required" });
+    leaguePrizes
+      .pending(address)
+      .then((prizes) => {
+        const totalWei = prizes.reduce((a, pz) => a + BigInt(pz.amountWei), 0n).toString();
+        json(200, { prizes, totalWei });
+      })
+      .catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  if (req.method === "POST" && url.pathname === "/league/claim") {
+    readJson(req)
+      .then((b) => {
+        const { address } = b as { address?: Address };
+        if (!address) throw new Error("address required");
+        return leagueClaim(address);
+      })
+      .then((out) => json(200, out))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/money-leaderboard") {
     const n = Math.min(200, Math.max(1, Number(url.searchParams.get("n") ?? "25")));
     ledger
@@ -1436,63 +1465,73 @@ async function backfillTick(): Promise<void> {
   if ("unref" in bt) bt.unref();
 }
 
-// League prizes are paid from the operator wallet (the rake itself accrues in
-// the Treasury; ops keeps the operator funded to cover the pool share).
-// Returns the winners actually paid — anything unpaid rolls into next week.
-async function leaguePayout(token: Address, winners: LeagueWinner[]): Promise<LeagueWinner[]> {
-  if (!(SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66)) {
-    console.warn("[league] no operator signer — pool carried to next week");
-    return [];
-  }
-  const wallet = createWalletClient({
-    chain: chainFor(CHAIN_ID),
-    transport: http(RPC_URL),
-    account: operatorAccount!,
-  });
-  const paid: LeagueWinner[] = [];
-  for (const w of winners) {
-    // Anti-sybil: once Self verification is configured, a wallet must belong
-    // to a verified human to be *paid* (playing stays ungated — no funnel
-    // friction; sniping the pot with throwaway wallets stops working).
-    if (selfVerifier && !(await personhood.isVerified(w.address))) {
-      console.log(`[league] prize for ${w.address} withheld — not verified; carried over`);
-      void notifier
-        .notify(w.address, {
-          title: "Verify to claim league prizes",
-          body: "You placed in the weekly league, but prizes need a one-time identity check. Verify in the app to be paid next time.",
-          url: "/compete",
-          tag: "awale-league-verify",
-        })
-        .catch(() => {});
-      continue;
-    }
+// League prizes are CREDITED at rollover and paid when the winner taps
+// Collect in the app (POST /league/claim) — a claim is a celebration moment
+// and brings the winner back. Crediting counts as "paid" for the pool's
+// accounting: the debt now lives in the prize store, not the pool carry.
+async function leagueCredit(token: Address, winners: LeagueWinner[]): Promise<LeagueWinner[]> {
+  const credited: LeagueWinner[] = [];
+  const week = new Date().toISOString().slice(0, 10);
+  for (let i = 0; i < winners.length; i++) {
+    const w = winners[i];
     try {
+      await leaguePrizes.credit(w.address, { week, token, amountWei: w.amountWei, rank: i + 1 });
+      credited.push(w);
+    } catch (e) {
+      console.warn(`[league] credit to ${w.address} failed (carried over): ${(e as Error).message}`);
+    }
+  }
+  return credited;
+}
+
+/** The actual transfer, triggered by the winner's Collect tap. Personhood
+ *  (when configured) gates PAYMENT, not play — sniping the pot with
+ *  throwaway wallets stops working, joining the race never has friction. */
+const claimsInFlight = new Set<string>();
+async function leagueClaim(address: Address): Promise<{ paidWei: string; tx: Hex | null }> {
+  if (!(SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66)) throw new Error("payouts are paused — try again later");
+  const key = address.toLowerCase();
+  if (claimsInFlight.has(key)) throw new Error("a claim is already in progress");
+  if (selfVerifier && !(await personhood.isVerified(address))) {
+    throw new Error("prizes need a one-time identity check — verify in the app first");
+  }
+  claimsInFlight.add(key);
+  try {
+    const prizes = await leaguePrizes.take(address);
+    if (prizes.length === 0) return { paidWei: "0", tx: null };
+    // single-token deployment: one transfer for the sum
+    const token = prizes[0].token;
+    const total = prizes.reduce((a, p) => a + BigInt(p.amountWei), 0n);
+    try {
+      const wallet = createWalletClient({ chain: chainFor(CHAIN_ID), transport: http(RPC_URL), account: operatorAccount! });
       const hash = await wallet.writeContract({
         address: token,
         abi: erc20Abi,
         functionName: "transfer",
-        args: [w.address, BigInt(w.amountWei)],
+        args: [address, total],
         ...(FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {}),
       } as Parameters<typeof wallet.writeContract>[0]);
       await publicClient.waitForTransactionReceipt({ hash });
-      paid.push(w);
-      console.log(`[league] prize ${w.amountWei} → ${w.address} (${hash})`);
+      console.log(`[league] claim ${total} → ${address} (${hash})`);
+      return { paidWei: total.toString(), tx: hash };
     } catch (e) {
-      console.warn(`[league] prize to ${w.address} failed (carried over): ${(e as Error).message}`);
+      await leaguePrizes.restore(address, prizes); // the debt survives a failed transfer
+      throw e;
     }
+  } finally {
+    claimsInFlight.delete(key);
   }
-  return paid;
 }
 
 async function leagueTick(): Promise<void> {
-  const result = await league.rollover(leaguePayout);
+  const result = await league.rollover(leagueCredit);
   if (!result) return;
-  console.log(`[league] week ${result.week} closed — pool ${result.poolWei}, ${result.winners.length} paid`);
+  console.log(`[league] week ${result.week} closed — pool ${result.poolWei}, ${result.winners.length} credited`);
   result.winners.forEach((w, i) => {
     void notifier
       .notify(w.address, {
         title: "You won the weekly league! 🏆",
-        body: `You finished #${i + 1} this week — your prize just landed in your wallet.`,
+        body: `You finished #${i + 1} this week — open the app to collect your prize.`,
         url: "/compete",
         tag: `awale-league-${result.week}`,
       })
