@@ -1127,6 +1127,47 @@ publicClient.watchContractEvent({
   },
 });
 
+// Anti-cheat backstop: auto-challenge a FALSE proposeResult. A loser who
+// refuses to co-sign settleSigned can proposeResult(self) and, if the honest
+// winner is offline the whole window, the keeper finalizes the lie → theft.
+// The server holds the signed transcript, so when a proposal disagrees with
+// the game's real ending it replays it on-chain (challenge pays the true
+// winner for a terminal transcript). One shot per match.
+const challenged = new Set<string>();
+if (settlement) {
+  publicClient.watchContractEvent({
+    address: ESCROW,
+    abi: matchEscrowAbi,
+    eventName: "ResultProposed",
+    onLogs: (logs) => {
+      for (const log of logs) {
+        const a = log.args as { matchId?: bigint; winner?: number };
+        if (a.matchId === undefined || a.winner === undefined) continue;
+        const key = a.matchId.toString();
+        if (challenged.has(key)) continue;
+        const m = hub.get(a.matchId);
+        // we can only refute what we can prove: the game must have a known
+        // ending in the hub, and the proposal must disagree with it
+        if (!m || !m.state.over || m.state.winner === Number(a.winner)) continue;
+        const transcript = hub.transcript(a.matchId);
+        if (!transcript) continue;
+        challenged.add(key);
+        console.warn(`[anticheat] match ${key}: proposed winner ${a.winner} ≠ real ${m.state.winner} — challenging with the transcript`);
+        void settlement!
+          .challenge(transcript)
+          .then((h) => console.log(`[anticheat] challenge match ${key} submitted (${h})`))
+          .catch((e) => {
+            challenged.delete(key); // let a retry (next tick / another proposal) try again
+            console.warn(`[anticheat] challenge match ${key} failed: ${(e as Error).message}`);
+          });
+      }
+    },
+    onError: () => {
+      /* forno filter drop — the honest player's own client remains the backstop */
+    },
+  });
+}
+
 // Boot: restore live matches from their persisted snapshots — a deploy
 // mid-game used to reset boards to ply 0 and lose the signed transcript.
 void (async () => {
@@ -1350,17 +1391,39 @@ watchStartFinalized(
 //   2. the all-time money leaderboard,
 //   3. the player profiles (Elo, played/won, quests) — a cash game must count
 //      for progression at least as much as a casual one does.
+/** Retry a read against the flaky public RPC (forno drops requests). Used on
+ *  the settlement path where a single failed read must not lose the credit. */
+async function withRpcRetry<T>(fn: () => Promise<T>, tries = 4): Promise<T> {
+  let last: unknown;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      last = e;
+      await new Promise((r) => setTimeout(r, 1500 * (i + 1)));
+    }
+  }
+  throw last;
+}
+
 async function onSettled(matchId: bigint, winner: number, prizeWei: bigint, at: Date): Promise<void> {
   const key = matchId.toString();
-  if (!(await ledger.claim(key))) return;
-  hub.close(matchId); // done on-chain — free the room and its snapshot
-  const m = (await publicClient.readContract({
-    address: ESCROW,
-    abi: matchEscrowAbi,
-    functionName: "getMatch",
-    args: [matchId],
-  })) as { token: Address; stake: bigint; player0: Address; player1: Address; rakeBps: number };
-  await league.recordGame([m.player0, m.player1], winner, BigInt(m.stake) * 2n, Number(m.rakeBps), m.token, at);
+  if (!(await ledger.claim(key))) return; // dedup: reserve the id
+  // reserve → commit-or-RELEASE: the getMatch read below is fallible on flaky
+  // forno; if anything before the credit lands throws, releasing the id lets
+  // the 5-min backfill re-process it instead of dropping the settlement (and
+  // its pool credit + "you won" notification) forever.
+  try {
+    const m = (await withRpcRetry(() =>
+      publicClient.readContract({
+        address: ESCROW,
+        abi: matchEscrowAbi,
+        functionName: "getMatch",
+        args: [matchId],
+      }),
+    )) as { token: Address; stake: bigint; player0: Address; player1: Address; rakeBps: number };
+    hub.close(matchId); // confirmed on-chain — free the room and its snapshot
+    await league.recordGame([m.player0, m.player1], winner, BigInt(m.stake) * 2n, Number(m.rakeBps), m.token, at);
   const human = (wei: bigint) => (Number(wei) / 1e18).toFixed(2).replace(/\.00$/, ""); // test token: 18 decimals
   if (winner === 2) {
     // draw: both stakes came back in full — say so, or the refund is silent
@@ -1392,8 +1455,14 @@ async function onSettled(matchId: bigint, winner: number, prizeWei: bigint, at: 
     await convertReferral(m.player0).catch(() => {});
     await convertReferral(m.player1).catch(() => {});
   }
-  recordGameResult([m.player0, m.player1], winner);
-  console.log(`[settled] counted match ${key} (winner=${winner})`);
+    recordGameResult([m.player0, m.player1], winner);
+    console.log(`[settled] counted match ${key} (winner=${winner})`);
+  } catch (e) {
+    // a downstream step failed after we reserved the id — release it so the
+    // 5-min backfill re-processes this settlement instead of dropping it
+    await ledger.release(key).catch(() => {});
+    console.warn(`[settled] match ${key} deferred (will retry): ${(e as Error).message}`);
+  }
 }
 
 publicClient.watchContractEvent({
@@ -1511,22 +1580,42 @@ async function leagueClaim(address: Address): Promise<{ paidWei: string; tx: Hex
     // single-token deployment: one transfer for the sum
     const token = prizes[0].token;
     const total = prizes.reduce((a, p) => a + BigInt(p.amountWei), 0n);
+    const wallet = createWalletClient({ chain: chainFor(CHAIN_ID), transport: http(RPC_URL), account: operatorAccount! });
+
+    // BROADCAST. If writeContract throws, the tx never hit the network → safe to
+    // return the debt to the pending store.
+    let hash: Hex;
     try {
-      const wallet = createWalletClient({ chain: chainFor(CHAIN_ID), transport: http(RPC_URL), account: operatorAccount! });
-      const hash = await wallet.writeContract({
+      hash = (await wallet.writeContract({
         address: token,
         abi: erc20Abi,
         functionName: "transfer",
         args: [address, total],
         ...(FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {}),
-      } as Parameters<typeof wallet.writeContract>[0]);
-      await publicClient.waitForTransactionReceipt({ hash });
-      console.log(`[league] claim ${total} → ${address} (${hash})`);
-      return { paidWei: total.toString(), tx: hash };
+      } as Parameters<typeof wallet.writeContract>[0])) as Hex;
     } catch (e) {
-      await leaguePrizes.restore(address, prizes); // the debt survives a failed transfer
+      await leaguePrizes.restore(address, prizes); // never broadcast → debt survives
       throw e;
     }
+
+    // Past this point a transaction EXISTS on-chain. A blind restore here was the
+    // double-pay bug: a receipt-read timeout on a tx that actually MINED would
+    // restore the debt → the winner collects twice → operator drain. Rule: only
+    // restore on a DEFINITIVE on-chain revert; on an unreadable receipt, leave
+    // the debt paid (log the hash for ops) — never pay twice.
+    let receipt: { status: "success" | "reverted" } | null = null;
+    try {
+      receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 90_000 });
+    } catch {
+      console.warn(`[league] claim ${total} → ${address} sent (${hash}) but receipt unconfirmed — NOT restoring (double-pay guard); reconcile via the hash`);
+      return { paidWei: total.toString(), tx: hash };
+    }
+    if (receipt.status === "reverted") {
+      await leaguePrizes.restore(address, prizes); // definitively failed on-chain → debt back
+      throw new Error("the payout didn't go through — your prize is safe, please try again");
+    }
+    console.log(`[league] claim ${total} → ${address} (${hash})`);
+    return { paidWei: total.toString(), tx: hash };
   } finally {
     claimsInFlight.delete(key);
   }

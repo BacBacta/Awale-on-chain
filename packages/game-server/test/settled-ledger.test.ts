@@ -38,3 +38,22 @@ describe("SettledLedger", () => {
     expect(await ledger.lastBlock()).toBe(123456n);
   });
 });
+
+describe("SettledLedger.release (H3 — reserve → commit-or-release)", () => {
+  it("a released id can be claimed again — a dropped settlement is retried, not lost", async () => {
+    const { InMemoryLedgerStore } = await import("../src/settled-ledger.js");
+    const store = new InMemoryLedgerStore();
+    const ledger = new SettledLedger(store);
+    expect(await ledger.claim("42")).toBe(true); // reserve
+    await ledger.release("42"); // downstream failed
+    expect(await ledger.claim("42")).toBe(true); // backfill can re-process it
+  });
+
+  it("release persists to the store (survives a fresh ledger)", async () => {
+    const { InMemoryLedgerStore } = await import("../src/settled-ledger.js");
+    const store = new InMemoryLedgerStore();
+    await new SettledLedger(store).claim("9");
+    await new SettledLedger(store).release("9");
+    expect(await new SettledLedger(store).claim("9")).toBe(true); // no longer counted
+  });
+});

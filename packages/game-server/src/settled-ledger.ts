@@ -28,6 +28,7 @@ type Board = Record<string, { wins: number; netWei: string }>;
 export interface LedgerStore {
   loadCounted(): Promise<string[]>;
   addCounted(matchId: string): Promise<void>;
+  removeCounted(matchId: string): Promise<void>;
   lastBlock(): Promise<bigint | null>;
   setLastBlock(b: bigint): Promise<void>;
   loadBoard(): Promise<Board>;
@@ -43,6 +44,9 @@ export class InMemoryLedgerStore implements LedgerStore {
   }
   async addCounted(id: string) {
     this.counted.push(id);
+  }
+  async removeCounted(id: string) {
+    this.counted = this.counted.filter((x) => x !== id);
   }
   async lastBlock() {
     return this.block;
@@ -69,6 +73,9 @@ export class RedisLedgerStore implements LedgerStore {
   }
   async addCounted(matchId: string): Promise<void> {
     await this.redis.sadd(COUNTED_KEY, matchId);
+  }
+  async removeCounted(matchId: string): Promise<void> {
+    await this.redis.srem(COUNTED_KEY, matchId);
   }
   async lastBlock(): Promise<bigint | null> {
     const raw = await this.redis.get(BLOCK_KEY);
@@ -111,6 +118,14 @@ export class SettledLedger {
     ids.add(matchId);
     await this.store.addCounted(matchId);
     return true;
+  }
+
+  /** Release a claimed id after a downstream failure, so the settlement is
+   *  re-processed next time instead of being silently dropped forever (a chain
+   *  read failing right after claim used to permanently lose the credit). */
+  async release(matchId: string): Promise<void> {
+    (await this.ids()).delete(matchId);
+    await this.store.removeCounted(matchId);
   }
 
   /** Fold one settled match into the all-time money board. Draws refund both
