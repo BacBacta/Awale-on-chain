@@ -113,8 +113,10 @@ describe("WeeklyLeague.rollover", () => {
 
     expect(result?.week).toBe("2026-06-29");
     expect(paidArgs.map((w) => w.address)).toEqual([A, B]);
-    expect(BigInt(paidArgs[0].amountWei)).toBe((pool * BigInt(PODIUM_BPS[0])) / 10_000n);
-    expect(BigInt(paidArgs[1].amountWei)).toBe((pool * BigInt(PODIUM_BPS[1])) / 10_000n);
+    // A 6pts, B 3pts → 80% dividend split 2:1, plus the podium bonuses
+    const dividend = (pool * 8000n) / 10_000n;
+    expect(BigInt(paidArgs[0].amountWei)).toBe((pool * BigInt(PODIUM_BPS[0])) / 10_000n + (dividend * 6n) / 9n);
+    expect(BigInt(paidArgs[1].amountWei)).toBe((pool * BigInt(PODIUM_BPS[1])) / 10_000n + (dividend * 3n) / 9n);
 
     // unpaid shares (ranks 3-5 empty) carry into the new week's pool
     const carried = pool - BigInt(paidArgs[0].amountWei) - BigInt(paidArgs[1].amountWei);
@@ -138,42 +140,43 @@ describe("WeeklyLeague.rollover", () => {
   });
 });
 
-describe("computePrizes — podium + degressive dividend", () => {
+describe("computePrizes — small podium bonus + 80% dividend for ALL ranked", () => {
   const std = (address: string, points: number) => ({ address: address as `0x${string}`, points, games: 5, wins: points / 3 });
   const POOL = 10_000_000n; // 10 units at 6 dp — keeps shares readable
 
-  it("ranks 1-3 take 40/20/10, the rest split 30% pro-rata to points", () => {
+  it("everyone ranked gets a points-share; ranks 1-3 add 10/6/4% bonuses", () => {
     const ranked = [std("0xa", 15), std("0xb", 12), std("0xc", 9), std("0xd", 9), std("0xe", 6), std("0xf", 3)];
     const prizes = computePrizes(ranked, POOL);
+    // dividend = 8_000_000 over 54 points
     expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([
-      4_000_000n, // #1: 40%
-      2_000_000n, // #2: 20%
-      1_000_000n, // #3: 10%
-      1_500_000n, // #4: 30% × 9/18
-      1_000_000n, // #5: 30% × 6/18
-      500_000n, // #6: 30% × 3/18
+      1_000_000n + 2_222_222n, // #1: 10% bonus + 15/54
+      600_000n + 1_777_777n, // #2: 6% + 12/54
+      400_000n + 1_333_333n, // #3: 4% + 9/54
+      1_333_333n, // #4: 9/54
+      888_888n, // #5: 6/54
+      444_444n, // #6: 3/54
     ]);
-    // nothing minted from thin air
     const total = prizes.reduce((a, p) => a + BigInt(p.amountWei), 0n);
-    expect(total <= POOL).toBe(true);
+    expect(total <= POOL).toBe(true); // never mints; dust carries
   });
 
-  it("dividend is degressive: better rank (more points) always gets more", () => {
+  it("payout strictly follows rank — no inversion anywhere in the table", () => {
     const ranked = [std("0xa", 30), std("0xb", 27), std("0xc", 24), std("0xd", 21), std("0xe", 9), std("0xf", 3)];
     const prizes = computePrizes(ranked, POOL).map((p) => BigInt(p.amountWei));
-    for (let i = 4; i < prizes.length; i++) expect(prizes[i] < prizes[i - 1]).toBe(true);
+    for (let i = 1; i < prizes.length; i++) expect(prizes[i] < prizes[i - 1]).toBe(true);
   });
 
-  it("fewer than 4 eligibles: podium only, the dividend is left for the carry", () => {
+  it("two players: both paid (bonus + shared dividend); the unused #3 bonus carries", () => {
     const prizes = computePrizes([std("0xa", 6), std("0xb", 3)], POOL);
-    expect(prizes.length).toBe(2);
-    const total = prizes.reduce((a, p) => a + BigInt(p.amountWei), 0n);
-    expect(total).toBe(6_000_000n); // 40% + 20% — the remaining 40% carries
+    expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([
+      1_000_000n + 5_333_333n, // 10% + 6/9 of the dividend
+      600_000n + 2_666_666n, // 6% + 3/9
+    ]);
   });
 
-  it("zero-point tail (eligible via draws only) earns nothing — dividend carries", () => {
-    const prizes = computePrizes([std("0xa", 9), std("0xb", 6), std("0xc", 3), std("0xd", 0)], POOL);
-    expect(prizes.length).toBe(3);
+  it("all-draw week (zero points everywhere): only the podium bonuses pay", () => {
+    const prizes = computePrizes([std("0xa", 0), std("0xb", 0), std("0xc", 0), std("0xd", 0)], POOL);
+    expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([1_000_000n, 600_000n, 400_000n]);
   });
 
   it("empty standings → no prizes, whole pool carries", () => {

@@ -124,10 +124,10 @@ export function WeeklyLeague() {
             <span className="display" style={{ color: "var(--gold)", fontSize: 34, lineHeight: 0.95, fontVariantNumeric: "tabular-nums" }}>
               {fmt(pool, STAKE_DECIMALS)} {STAKE_SYMBOL}
             </span>
-            <span className="faint">prize pot · top 3 win big, every ranked player gets a share Monday</span>
+            <span className="faint">prize pot · every ranked player gets a share Monday, podium adds a bonus</span>
           </div>
         ) : (
-          <span className="muted">The pot grows with every money game this week — top 3 win big, every ranked player gets a share Monday.</span>
+          <span className="muted">The pot grows with every money game this week — every ranked player gets a share Monday, and the podium adds a bonus.</span>
         )}
 
         {entered && data.me ? (

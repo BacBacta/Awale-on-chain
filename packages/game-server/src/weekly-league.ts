@@ -64,33 +64,30 @@ export const DRAW_POINTS = 0;
 /** @deprecated old top-5 schedule — kept only for historical reference. */
 export const PAYOUT_BPS = [5000, 2500, 1500, 700, 300];
 
-/** Podium: fixed shares for ranks 1-3 (the dream stays big and legible). */
-export const PODIUM_BPS = [4000, 2000, 1000];
-/** The rest of the pool is a DIVIDEND for every other eligible player,
- *  split proportionally to points — naturally degressive down the table,
- *  and nobody who put in the games walks away with nothing. This is what
- *  turns the rake from a flat tax into something that visibly comes back. */
-export const DIVIDEND_BPS = 3000;
+/** Podium BONUS for ranks 1-3, on top of the shared dividend. Deliberately
+ *  small: the pot belongs to everyone who raced. */
+export const PODIUM_BPS = [1000, 600, 400];
+/** The bulk of the pool is a DIVIDEND shared by EVERY eligible player,
+ *  pro-rata to points — naturally degressive down the table, and nobody who
+ *  put in the games walks away with nothing. It must include the podium:
+ *  with a small podium and a ranks-4+-only dividend, #4 could out-earn #1
+ *  (an inversion that rewards LOSING rank). Bonus + monotone dividend keeps
+ *  rank order and payout order aligned. */
+export const DIVIDEND_BPS = 8000;
 
-/** Split `pool` across the standings: podium first, then the dividend
- *  pro-rata to points among everyone below it. Pure. Shares that can't be
- *  assigned (no players beyond the podium, zero points down-table, rounding
- *  dust) simply aren't emitted — the caller carries the difference forward. */
+/** Split `pool` across the standings: an 80% dividend pro-rata to points
+ *  over ALL ranked players, plus the podium bonus for ranks 1-3. Pure.
+ *  Whatever can't be assigned (nobody ranked, zero total points, rounding
+ *  dust) isn't emitted — the caller carries the difference forward. */
 export function computePrizes(ranked: LeagueStanding[], pool: bigint): LeagueWinner[] {
   const out: LeagueWinner[] = [];
-  ranked.slice(0, PODIUM_BPS.length).forEach((s, i) => {
-    const amt = (pool * BigInt(PODIUM_BPS[i])) / 10_000n;
+  const totalPts = ranked.reduce((a, s) => a + s.points, 0);
+  const dividend = (pool * BigInt(DIVIDEND_BPS)) / 10_000n;
+  ranked.forEach((s, i) => {
+    let amt = i < PODIUM_BPS.length ? (pool * BigInt(PODIUM_BPS[i])) / 10_000n : 0n;
+    if (totalPts > 0) amt += (dividend * BigInt(s.points)) / BigInt(totalPts);
     if (amt > 0n) out.push({ address: s.address, amountWei: amt.toString() });
   });
-  const rest = ranked.slice(PODIUM_BPS.length);
-  const totalPts = rest.reduce((a, s) => a + s.points, 0);
-  if (totalPts > 0) {
-    const dividend = (pool * BigInt(DIVIDEND_BPS)) / 10_000n;
-    for (const s of rest) {
-      const amt = (dividend * BigInt(s.points)) / BigInt(totalPts);
-      if (amt > 0n) out.push({ address: s.address, amountWei: amt.toString() });
-    }
-  }
   return out;
 }
 
