@@ -1,46 +1,49 @@
 # PageSpeed / Lighthouse — MiniPay listing (perf gate)
 
 MiniPay's listing checklist asks for **PageSpeed 90+**. Measured against the
-live app (`https://awale-on-chain.vercel.app`), mobile form factor.
+live app (`https://awale-on-chain.vercel.app`), mobile, via
+[pagespeed.web.dev](https://pagespeed.web.dev/) (Google's own infra — the number
+MiniPay looks at). **Local Lighthouse in this dev container is CPU-noise-bound
+and must not be trusted for the perf number** (it swung 84↔63 on identical runs
+while the real PSI run was a stable 82).
 
-## Stable results (CPU-independent — these are the real state)
+## Real PSI baseline (6 Jul 2026, mobile)
 
 | Category | Score |
 |---|---|
-| Accessibility | **100** |
-| SEO | **100** |
-| Best practices | **96** |
-| First Contentful Paint | ~1.0 s |
-| Cumulative Layout Shift | **0** |
+| **Performance** | **82** → optimized, re-measure |
+| Accessibility | 100 |
+| Best practices | 96 |
+| SEO | 100 |
 
-Accessibility, SEO, and best-practices are locked in. FCP and CLS are excellent
-and stable across runs.
+Metrics: FCP **0.8s** ✓ · TBT **0ms** ✓ · CLS **0** ✓ · **LCP 4.5s** ✗ · Speed Index 4.3s ✗
 
-## Performance score — measure on real infra, not in the container
+Everything was green **except LCP** (4.5s). PSI's breakdown put **3.56s of that
+in the LCP element's render delay** — the element being the hero board's seed
+sprite (`/assets/seed.webp`). The homepage is a client component, so the SVG
+board only mounts after hydration; the sprite couldn't paint before that, and
+it was a 33 KB PNG fetched late.
 
-The **performance** score swung between **84 and 63** across identical back-to-back
-runs, driven entirely by Total Blocking Time bouncing 490 ms → 2600 ms. FCP
-(1.0 s) and CLS (0) stayed put. That signature — a CPU-bound metric thrashing
-while network/layout metrics hold — is classic shared-container CPU contention,
-not a real property of the site. **Local Lighthouse in this dev container cannot
-be trusted for the perf number.**
+## Fixes applied (live)
 
-To get the real score for the intake form, run one of:
-- <https://pagespeed.web.dev/> against `https://awale-on-chain.vercel.app` (Google's
-  own infra — the number MiniPay will look at), or
-- Lighthouse in Chrome DevTools on a real phone / an un-throttled machine.
+1. **WebP hero assets.** seed 33 KB → **2 KB** (−93%), wood 324 KB → **18 KB**
+   (−95%). On simulated slow-4G that ~340 KB is the bulk of the LCP resource
+   time. Quality verified visually. Refs migrated (Board default + classic/amber
+   skins).
+2. **Preload the LCP sprite** at `fetchpriority=high` in the layout head, so its
+   fetch leaves the LCP critical path (PSI's own recommendation). Verified live:
+   `<link rel="preload" as="image" href="/assets/seed.webp" fetchPriority="high">`.
+3. Earlier: socket.io-client lazy-loaded out of First Load; `next.config` perf
+   (compress, image formats, immutable cache headers).
 
-## Optimizations applied (real, verified)
+Expected effect: LCP resource time collapses (2 KB, preloaded) and the sprite is
+cached the instant the board mounts — LCP should fall well under the 4.5s that
+capped the score at 82. **Re-run pagespeed.web.dev to confirm 90+.**
 
-- **socket.io-client (~100 kB) lazy-loaded.** It was eagerly bundled on the
-  homepage via `QuickMatch`/`MatchActions`, though the socket only connects when
-  a user starts matchmaking. Moved to `await import("socket.io-client")` inside
-  the connect paths. Verified: socket.io is **no longer in the homepage's initial
-  chunks**; homepage First Load JS 224 → 211 kB, `/play` 226 → 213 kB.
-- **`next.config.mjs`:** explicit `compress`, AVIF/WebP image formats, immutable
-  cache headers for static assets, source maps off in prod.
-- Bundle is far under the 2 MB cap (First Load JS 87–213 kB across routes).
+## If still under 90
 
-If the real PageSpeed run still lands under 90, the next lever is the remaining
-"unused JavaScript" (viem is the largest homepage dep) — code-split the wallet/
-contract paths behind the first interaction the same way socket.io now is.
+Next lever is the ~65 KB "unused JavaScript" PSI flagged — viem is the largest
+homepage dep; code-split the wallet/contract paths behind the first interaction
+the same way socket.io now is. Also: the render delay is fundamentally hydration
+time on a `"use client"` homepage — converting the static hero shell to a server
+component (so the board's container paints server-side) would cut it further.
