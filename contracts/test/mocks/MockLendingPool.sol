@@ -61,4 +61,12 @@ contract MockLendingPool is ILendingPool {
         // the extra underlying must already be funded to this pool by the test
         aToken.mint(holder, extra);
     }
+
+    /// @notice Test helper: simulate a market loss (bad debt / de-peg) by burning
+    ///         `loss` of `holder`'s aTokens. A later `withdraw(max)` then returns
+    ///         less than was supplied — the M-02 shortfall scenario. The unbacked
+    ///         underlying is simply left stranded in the pool.
+    function simulateLoss(address holder, uint256 loss) external {
+        aToken.burn(holder, loss);
+    }
 }

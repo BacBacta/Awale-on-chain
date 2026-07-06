@@ -61,7 +61,10 @@ export default function League() {
     setSeason(s);
     if (account) {
       const [p, b] = await Promise.all([
-        readContract(client, { address: vault, abi: harvestVaultAbi, functionName: "principalOf", args: [LEAGUE_SEASON, account] }),
+        // claimablePrincipal, not principalOf: after a market shortfall (M-02)
+        // this is the real pro-rata payout, so the figure never overstates what
+        // a claim returns. Identical to the nominal deposit in the normal case.
+        readContract(client, { address: vault, abi: harvestVaultAbi, functionName: "claimablePrincipal", args: [LEAGUE_SEASON, account] }),
         readContract(client, { address: s.token, abi: erc20Abi, functionName: "balanceOf", args: [account] }),
       ]);
       setMine(p as bigint);

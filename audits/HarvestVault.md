@@ -22,7 +22,7 @@ carries both internal and integration risk.
 | ID | Title | Severity | Status |
 |---|---|---|---|
 | M-01 | State written after the external `withdraw` in `finalize` | Medium | **Mitigated** |
-| M-02 | No-loss depends on lending-market solvency | Medium | Acknowledged (external risk) |
+| M-02 | No-loss depends on lending-market solvency | Medium | **Hardened (pro-rata)** — external risk remains |
 | L-01 | Prize Merkle root is trusted to reflect true standings | Low | Acknowledged |
 | L-02 | Privileged owner / keeper | Low | Acknowledged |
 | I-01 | One active season per token limits throughput | Informational | By design |
@@ -67,12 +67,22 @@ revert — i.e. the no-loss guarantee fails under market insolvency.
 **Impact:** Medium — conditional, depends on an external protocol failing; no
 internal bug.
 
-**Recommendations:**
-- Use only audited, liquid Celo markets; cap per-season exposure; monitor the peg
-  (architecture §13).
-- For defence-in-depth, a future version could detect `redeemed < totalPrincipal`
-  at finalize and switch `claimPrincipal` to **pro-rata** so any shortfall is shared
-  fairly instead of racing. Tracked as a follow-up; not implemented in v1.
+**Hardening applied (pro-rata claim).** The recommended defence-in-depth is now
+implemented. `claimPrincipal` (and the new `claimablePrincipal` view) detect
+`redeemed < totalPrincipal` and pay each depositor
+`principal * redeemed / totalPrincipal`. A shortfall is therefore **shared
+fairly across all depositors** rather than the previous first-come-first-served
+race, where early claimants withdrew in full and late claimants hit an empty
+vault and reverted. Rounding is down per player, so aggregate payouts can never
+exceed the recovered amount (dust stays in the vault). Covered by
+`test_claimPrincipal_shortfallSharedProRata` and the fuzz test
+`testFuzz_shortfallNeverOverPays` (arbitrary deposit split × loss: no over-pay,
+no late-claimant lockout).
+
+**Residual (still acknowledged).** This shares the loss fairly; it does not
+*prevent* it. The no-loss guarantee still assumes the external market stays
+solvent. Continue to use only audited, liquid Celo markets, cap per-season
+exposure, and monitor the peg (architecture §13).
 
 ---
 

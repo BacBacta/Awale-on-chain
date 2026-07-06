@@ -161,7 +161,16 @@ contract HarvestVault is Ownable, ReentrancyGuard {
 
     // ------------------------------ claims ------------------------------ //
 
-    /// @notice Reclaim your full principal after finalization (no-loss).
+    /// @notice Reclaim your principal after finalization.
+    /// @dev No-loss in the normal case: `redeemed >= totalPrincipal`, so every
+    ///      depositor gets their full principal back and the excess is the
+    ///      yieldPot (paid separately as prizes). If the lending market suffered
+    ///      a SHORTFALL (`redeemed < totalPrincipal` — a de-peg / bad-debt event,
+    ///      finding M-02), the recovered amount is shared **pro-rata**: each
+    ///      player receives `principal * redeemed / totalPrincipal`. This shares
+    ///      the loss fairly across all depositors instead of the previous
+    ///      first-come-first-served race, where early claimants withdrew in full
+    ///      and late claimants found the vault empty and reverted.
     function claimPrincipal(uint256 seasonId) external nonReentrant {
         Season storage s = seasons[seasonId];
         require(s.status == Status.Finalized, "HarvestVault: not finalized");
@@ -170,8 +179,16 @@ contract HarvestVault is Ownable, ReentrancyGuard {
         require(amount > 0, "HarvestVault: nothing to claim");
         principalOf[seasonId][msg.sender] = 0;
 
-        IERC20(s.token).safeTransfer(msg.sender, amount);
-        emit PrincipalClaimed(seasonId, msg.sender, amount);
+        // pro-rata on shortfall; full principal otherwise. Rounding is down per
+        // player, so the sum of payouts never exceeds `redeemed` (leftover dust
+        // stays in the vault — it can never over-pay).
+        uint256 payout = amount;
+        if (s.redeemed < s.totalPrincipal) {
+            payout = (amount * s.redeemed) / s.totalPrincipal;
+        }
+
+        IERC20(s.token).safeTransfer(msg.sender, payout);
+        emit PrincipalClaimed(seasonId, msg.sender, payout);
     }
 
     /// @notice Claim a yield prize with a Merkle proof over the final standings.
@@ -194,6 +211,18 @@ contract HarvestVault is Ownable, ReentrancyGuard {
     }
 
     // ------------------------------ views ------------------------------- //
+
+    /// @notice What `claimPrincipal` would pay `account` right now: the full
+    ///         principal normally, or the pro-rata share after a market shortfall
+    ///         (M-02). 0 once claimed or if never deposited. Lets the UI show the
+    ///         true recoverable amount instead of the nominal deposit.
+    function claimablePrincipal(uint256 seasonId, address account) external view returns (uint256) {
+        Season storage s = seasons[seasonId];
+        uint256 amount = principalOf[seasonId][account];
+        if (amount == 0 || s.status != Status.Finalized) return amount;
+        if (s.redeemed < s.totalPrincipal) return (amount * s.redeemed) / s.totalPrincipal;
+        return amount;
+    }
 
     function getSeason(uint256 seasonId) external view returns (Season memory) {
         return seasons[seasonId];

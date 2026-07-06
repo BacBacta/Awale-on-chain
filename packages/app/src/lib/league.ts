@@ -63,6 +63,19 @@ export const harvestVaultAbi = [
     outputs: [{ type: "uint256" }],
   },
   {
+    // what claimPrincipal would actually pay now: the full deposit normally, or
+    // the pro-rata share after a market shortfall (M-02). Show THIS, not the
+    // nominal deposit, so the amount can never mislead.
+    type: "function",
+    name: "claimablePrincipal",
+    stateMutability: "view",
+    inputs: [
+      { name: "seasonId", type: "uint256" },
+      { name: "account", type: "address" },
+    ],
+    outputs: [{ type: "uint256" }],
+  },
+  {
     type: "function",
     name: "deposit",
     stateMutability: "nonpayable",

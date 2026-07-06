@@ -173,6 +173,72 @@ contract HarvestVaultTest is Test {
         assertEq(usdc.balanceOf(bob), 1_000e6, "bob made whole (started 1000, deposited 100)");
     }
 
+    // ----------------------- [M-02] shortfall pro-rata ----------------------- //
+
+    // On a market shortfall (bad debt / de-peg), the recovered amount is shared
+    // PRO-RATA across all depositors — every claimant is paid their fair share
+    // and NONE reverts. Before the fix this was first-come-first-served: early
+    // claimants took full principal, late ones found an empty vault and reverted.
+    function test_claimPrincipal_shortfallSharedProRata() public {
+        uint256 id = _createSeason();
+        _depositBoth(id); // totalPrincipal = 200 USDC (100 each)
+
+        // the market loses 50 USDC of the position (25%) before season end
+        pool.simulateLoss(address(vault), 50e6);
+        vm.warp(seasonEnd + 1);
+        vm.prank(owner);
+        vault.finalize(id, bytes32(0));
+
+        HarvestVault.Season memory s = vault.getSeason(id);
+        assertEq(s.redeemed, 150e6, "vault recovered 150 of 200");
+        assertEq(s.yieldPot, 0, "no yield on a shortfall");
+
+        // each recovers principal * redeemed / totalPrincipal = 100 * 150/200 = 75
+        assertEq(vault.claimablePrincipal(id, alice), 75e6, "alice pro-rata share");
+
+        uint256 aBefore = usdc.balanceOf(alice);
+        uint256 bBefore = usdc.balanceOf(bob);
+        vm.prank(alice);
+        vault.claimPrincipal(id);
+        vm.prank(bob); // the LATE claimant must NOT revert (the old FCFS bug)
+        vault.claimPrincipal(id);
+
+        assertEq(usdc.balanceOf(alice), aBefore + 75e6, "alice got her 75");
+        assertEq(usdc.balanceOf(bob), bBefore + 75e6, "bob (late) also got his 75");
+        // the loss (50) was shared equally: each lost 25, nobody was wiped out
+        assertEq(usdc.balanceOf(address(vault)), 0, "vault fully drained, no over-pay");
+    }
+
+    // The sum of pro-rata payouts can never exceed what the vault recovered,
+    // for any deposit split and any shortfall (rounding is down per player).
+    function testFuzz_shortfallNeverOverPays(uint256 a, uint256 b, uint256 loss) public {
+        a = bound(a, 1e6, 500e6);
+        b = bound(b, 1e6, 500e6);
+        uint256 id = _createSeason();
+        vm.prank(alice);
+        vault.deposit(id, a);
+        vm.prank(bob);
+        vault.deposit(id, b);
+        uint256 total = a + b;
+        loss = bound(loss, 1, total); // at least 1 unit lost, at most everything
+
+        pool.simulateLoss(address(vault), loss);
+        vm.warp(seasonEnd + 1);
+        vm.prank(owner);
+        vault.finalize(id, bytes32(0));
+
+        uint256 redeemed = vault.getSeason(id).redeemed;
+        uint256 payA = vault.claimablePrincipal(id, alice);
+        uint256 payB = vault.claimablePrincipal(id, bob);
+        assertLe(payA + payB, redeemed, "pro-rata payouts never exceed the recovered amount");
+
+        // both claims succeed regardless of order — no late-claimant lockout
+        vm.prank(bob);
+        vault.claimPrincipal(id);
+        vm.prank(alice);
+        vault.claimPrincipal(id);
+    }
+
     function test_claimPrize_twoWinnersMerkle() public {
         uint256 id = _createSeason();
         _depositBoth(id);
