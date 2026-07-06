@@ -46,7 +46,7 @@ export default async function Stats() {
       <div className="col" style={{ gap: 2, marginTop: 8 }}>
         <span className="h2">All-time winners</span>
         <span className="faint" style={{ fontSize: 12 }}>
-          Net winnings across every settled money game — since day one, never resets.
+          Prizes won minus stakes lost, across every settled money game — all players, never resets.
         </span>
       </div>
       <Leaderboard />
@@ -68,7 +68,7 @@ export default async function Stats() {
 
         <span className="muted">Volume &amp; fees per currency</span>
         {s.perToken.length === 0 ? (
-          <div className="card muted">No settled matches yet.</div>
+          <div className="card muted">No settled matches on the current contract yet.</div>
         ) : (
           s.perToken.map((t) => {
             const d = decimalsForSymbol(t.symbol);

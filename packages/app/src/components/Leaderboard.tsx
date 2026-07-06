@@ -92,8 +92,12 @@ export function Leaderboard() {
                 {r.wins} {r.wins === 1 ? "win" : "wins"}
               </span>
             </span>
-            <span className="score" style={{ fontWeight: 750, color: "var(--accent)" }}>
-              {fmt(r.net, STAKE_DECIMALS)} {STAKE_SYMBOL}
+            {/* TRUE net (prizes − stakes), signed — the same metric and colour
+                code as the personal "Net winnings" card, so the two can never
+                contradict each other again */}
+            <span className="score" style={{ fontWeight: 750, color: r.net >= 0n ? "var(--accent)" : "var(--danger)" }}>
+              {r.net >= 0n ? "+" : "−"}
+              {fmt(r.net < 0n ? -r.net : r.net, STAKE_DECIMALS)} {STAKE_SYMBOL}
             </span>
           </div>
         );

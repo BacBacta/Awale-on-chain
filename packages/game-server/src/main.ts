@@ -1479,7 +1479,14 @@ async function onSettled(matchId: bigint, winner: number, prizeWei: bigint, at: 
     }
   }
   if (winner === 0 || winner === 1) {
-    await ledger.recordWin(winner === 0 ? m.player0 : m.player1, prizeWei);
+    // double-entry: winner up prize-stake, loser down their stake — the board
+    // stays the same metric as the app's personal "Net winnings"
+    await ledger.recordSettle(
+      winner === 0 ? m.player0 : m.player1,
+      winner === 0 ? m.player1 : m.player0,
+      prizeWei,
+      BigInt(m.stake),
+    );
     // THE notification: money arrived. The single best re-engagement hook a
     // money game has — it was silent until now.
     void notifier

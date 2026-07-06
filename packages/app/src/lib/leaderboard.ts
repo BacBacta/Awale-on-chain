@@ -19,7 +19,11 @@ const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
 export interface LeaderRow {
   address: Address;
   wins: number;
-  net: bigint; // total prize won
+  /** TRUE net winnings: prizes received minus stakes lost — the same metric
+   *  as the personal "Net winnings" card, so the board and a player's own
+   *  record always tell one story. Can be negative when wins didn't cover
+   *  the losses. */
+  net: bigint;
 }
 
 export async function loadLeaderboard(cfg: EscrowConfig, limit = 25): Promise<LeaderRow[]> {
@@ -47,27 +51,33 @@ async function loadLeaderboardFromChain(cfg: EscrowConfig, limit: number): Promi
   const outcomes = await scanSettled(client, cfg.escrow);
 
   const tally = new Map<string, { wins: number; net: bigint }>();
+  const bump = (addr: string, dWins: number, dNet: bigint) => {
+    const cur = tally.get(addr) ?? { wins: 0, net: 0n };
+    tally.set(addr, { wins: cur.wins + dWins, net: cur.net + dNet });
+  };
   for (const [idStr, o] of outcomes) {
-    if (o.winner === 2) continue; // skip draws
+    if (o.winner === 2) continue; // draw: both stakes refunded, nothing moves
     try {
       const m = (await readContract(client, {
         address: cfg.escrow,
         abi: matchEscrowAbi,
         functionName: "getMatch",
         args: [BigInt(idStr)],
-      })) as { player0: Address; player1: Address };
+      })) as { player0: Address; player1: Address; stake: bigint };
+      // double-entry, same as the server ledger: winner up prize−stake
+      // (their own stake came back inside the prize), loser down their stake
       const winner = (o.winner === 0 ? m.player0 : m.player1).toLowerCase();
-      const cur = tally.get(winner) ?? { wins: 0, net: 0n };
-      cur.wins += 1;
-      cur.net += o.prize;
-      tally.set(winner, cur);
+      const loser = (o.winner === 0 ? m.player1 : m.player0).toLowerCase();
+      bump(winner, 1, o.prize - m.stake);
+      bump(loser, 0, -m.stake);
     } catch {
       /* skip */
     }
   }
 
   return [...tally.entries()]
+    .filter(([, v]) => v.wins > 0) // a winners' board, not a loss registry
     .map(([address, v]) => ({ address: address as Address, wins: v.wins, net: v.net }))
-    .sort((a, b) => b.wins - a.wins || (b.net > a.net ? 1 : -1))
+    .sort((a, b) => (b.net > a.net ? 1 : b.net < a.net ? -1 : b.wins - a.wins))
     .slice(0, limit);
 }

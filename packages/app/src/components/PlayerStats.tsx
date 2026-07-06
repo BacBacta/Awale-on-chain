@@ -201,6 +201,16 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
         </div>
       )}
 
+      {/* scope label: these tiles count MONEY games settled from this device —
+          without saying so, "15 played" sat next to the rank card's "18 games"
+          (every match, all devices) and read as the app contradicting itself */}
+      <div className="row" style={{ alignItems: "baseline" }}>
+        <span className="section-label">Your money record</span>
+        <span className="faint" style={{ fontSize: 11, letterSpacing: "0.4px", textTransform: "uppercase" }}>
+          money games · this device
+        </span>
+      </div>
+
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
         {cells.map((c) => (
           <div className="card" key={c.label} style={{ padding: 14 }}>
@@ -213,7 +223,12 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
       </div>
 
       <div className="card row">
-        <span className="muted">Net winnings</span>
+        <span className="col" style={{ gap: 1 }}>
+          <span className="muted">Net winnings</span>
+          <span className="faint" style={{ fontSize: 11 }}>
+            prizes won − stakes lost
+          </span>
+        </span>
         <span className="title score" style={{ color: netPositive ? "var(--accent)" : "var(--danger)" }}>
           {netPositive ? "+" : "−"}
           {fmt(stats.net < 0n ? -stats.net : stats.net, STAKE_DECIMALS)} {STAKE_SYMBOL}

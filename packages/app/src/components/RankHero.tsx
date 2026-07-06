@@ -76,8 +76,10 @@ export function RankHero({
           <span className="chip gold" style={{ alignSelf: "flex-start" }}>
             {cur.icon} {cur.name}
           </span>
+          {/* "every match" is the scope: free AND money games rate here, so
+              this count is deliberately bigger than the money-only record */}
           <span className="faint">
-            {wins} wins · {games} games
+            {wins} wins · {games} games · every match
             {perfectDays > 0 ? ` · ✨ ${perfectDays}` : ""}
           </span>
         </div>

@@ -19,7 +19,12 @@ import type { RedisLike } from "./persistence/redis-store.js";
 export interface MoneyRow {
   address: Address;
   wins: number;
-  /** total prize won, in token wei (bigint as string). */
+  /** TRUE net winnings in token wei (bigint as string): prizes received minus
+   *  stakes lost — the exact definition the app's personal "Net winnings"
+   *  uses, so the board and a player's own record can never tell two
+   *  different stories. (It used to be the raw prize sum, which overstated a
+   *  player by every stake they ever posted — 13.34 "won" on the board while
+   *  their own record said +0.09.) Can be negative. */
   netWei: string;
 }
 
@@ -64,7 +69,11 @@ export class InMemoryLedgerStore implements LedgerStore {
 
 const COUNTED_KEY = "awale:settled:counted";
 const BLOCK_KEY = "awale:settled:lastblock";
-const BOARD_KEY = "awale:settled:board";
+// v2: the board metric changed meaning (raw prize sum → true net). Old rows
+// can't be converted (the stakes weren't recorded), so the board restarts
+// clean under a new key rather than mixing two definitions in one list.
+// Counted ids / lastBlock keep their keys — dedup history stays valid.
+const BOARD_KEY = "awale:settled:board:v2";
 
 export class RedisLedgerStore implements LedgerStore {
   constructor(private readonly redis: RedisLike) {}
@@ -128,20 +137,28 @@ export class SettledLedger {
     await this.store.removeCounted(matchId);
   }
 
-  /** Fold one settled match into the all-time money board. Draws refund both
-   *  stakes — no winner, nothing to tally. */
-  async recordWin(winner: Address, prizeWei: bigint): Promise<void> {
+  /** Fold one settled match into the all-time money board, double-entry:
+   *  the winner is up `prize − stake` (their own stake came back inside the
+   *  prize), the loser is down their stake. Draws refund both stakes — no
+   *  winner, nothing moves. This keeps the board's number the SAME metric as
+   *  the app's personal "Net winnings" card. */
+  async recordSettle(winner: Address, loser: Address, prizeWei: bigint, stakeWei: bigint): Promise<void> {
     const board = await this.store.loadBoard();
-    const key = winner.toLowerCase();
-    const cur = board[key] ?? { wins: 0, netWei: "0" };
-    board[key] = { wins: cur.wins + 1, netWei: (BigInt(cur.netWei) + prizeWei).toString() };
+    const w = winner.toLowerCase();
+    const l = loser.toLowerCase();
+    const curW = board[w] ?? { wins: 0, netWei: "0" };
+    board[w] = { wins: curW.wins + 1, netWei: (BigInt(curW.netWei) + prizeWei - stakeWei).toString() };
+    const curL = board[l] ?? { wins: 0, netWei: "0" };
+    board[l] = { wins: curL.wins, netWei: (BigInt(curL.netWei) - stakeWei).toString() };
     await this.store.saveBoard(board);
   }
 
-  /** Biggest net winners first (ties: more wins first). */
+  /** Biggest net winners first (ties: more wins first). Only players with at
+   *  least one win appear — it is a board of winners, not a loss registry. */
   async top(n: number): Promise<MoneyRow[]> {
     const board = await this.store.loadBoard();
     return Object.entries(board)
+      .filter(([, r]) => r.wins > 0)
       .map(([address, r]) => ({ address: address as Address, wins: r.wins, netWei: r.netWei }))
       .sort((a, b) => {
         const d = BigInt(b.netWei) - BigInt(a.netWei);
