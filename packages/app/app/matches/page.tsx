@@ -7,7 +7,7 @@ import Link from "next/link";
 import { readContract } from "viem/actions";
 import type { Address } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../../src/lib/minipay.js";
-import { escrowConfig, cancelMatch, voidExpired, finalizeResult } from "../../src/lib/escrow.js";
+import { escrowConfig, legacyEscrows, cancelMatch, voidExpired, finalizeResult } from "../../src/lib/escrow.js";
 import { readWithRetry, confirmTx } from "../../src/lib/tx.js";
 import { cachedOutcomes, scanSettled, type Outcome } from "../../src/lib/outcomes.js";
 import { listLocalMatches, statusView } from "../../src/lib/matches.js";
@@ -25,6 +25,9 @@ const FEE_CURRENCY = (process.env.NEXT_PUBLIC_FEE_CURRENCY || undefined) as Addr
 
 interface Row {
   id: bigint;
+  /** the contract this match lives on — current escrow, or a legacy one for
+   *  history that predates a redeploy. Every action targets THIS address. */
+  escrow: Address;
   status: number;
   stake: bigint;
   rakeBps: number;
@@ -151,47 +154,55 @@ export default function Matches() {
     const client = publicClient(cfg.rpcUrl, cfg.chainId);
     // best-effort wallet connect so reads use the right chain (no prompt if denied)
     const provider = getInjectedProvider();
-    if (provider) connect(provider, cfg.chainId).catch(() => {});
+    let me: string | null = null;
+    if (provider) connect(provider, cfg.chainId).then(({ address }) => (me = address.toLowerCase())).catch(() => {});
+    // a player's matches span contract migrations — read the current escrow AND
+    // any legacy ones, resolving each local id to the contract where it exists.
+    const escrows = [cfg.escrow, ...legacyEscrows()];
 
-    // allSettled, not all: one saved match id failing to read (e.g. a stale
-    // local id left over from a previous contract deployment) shouldn't blank
+    // allSettled, not all: one saved match id failing to read shouldn't blank
     // out every other match the player actually has.
     Promise.allSettled(
-      ids.map(async (id) => {
-        const m = (await readWithRetry(() =>
-          readContract(client, {
-            address: cfg.escrow,
-            abi: matchEscrowAbi,
-            functionName: "getMatch",
-            args: [id],
-          }),
-        )) as {
-          status: number;
-          stake: bigint;
-          rakeBps: number;
-          player0: Address;
-          player1: Address;
-          activeDeadline: bigint;
-          challengeDeadline: bigint;
-          proposedWinner: number;
-        };
-        return {
-          id,
-          status: Number(m.status),
-          stake: m.stake,
-          rakeBps: Number(m.rakeBps),
-          player0: m.player0,
-          player1: m.player1,
-          activeDeadline: Number(m.activeDeadline),
-          challengeDeadline: Number(m.challengeDeadline),
-          proposedWinner: Number(m.proposedWinner),
-        };
+      ids.map(async (id): Promise<Row | null> => {
+        for (const esc of escrows) {
+          try {
+            const m = (await readWithRetry(() =>
+              readContract(client, { address: esc, abi: matchEscrowAbi, functionName: "getMatch", args: [id] }),
+            )) as {
+              status: number;
+              stake: bigint;
+              rakeBps: number;
+              player0: Address;
+              player1: Address;
+              activeDeadline: bigint;
+              challengeDeadline: bigint;
+              proposedWinner: number;
+            };
+            if (Number(m.status) === 0) continue; // None on this contract — try the next
+            if (me && m.player0.toLowerCase() !== me && m.player1.toLowerCase() !== me) continue;
+            return {
+              id,
+              escrow: esc,
+              status: Number(m.status),
+              stake: m.stake,
+              rakeBps: Number(m.rakeBps),
+              player0: m.player0,
+              player1: m.player1,
+              activeDeadline: Number(m.activeDeadline),
+              challengeDeadline: Number(m.challengeDeadline),
+              proposedWinner: Number(m.proposedWinner),
+            };
+          } catch {
+            /* try the next escrow */
+          }
+        }
+        return null;
       }),
     ).then((results) => {
       const ok = results
-        .filter((r): r is PromiseFulfilledResult<Row> => r.status === "fulfilled")
+        .filter((r): r is PromiseFulfilledResult<Row | null> => r.status === "fulfilled")
         .map((r) => r.value)
-        .filter((r) => r.status !== 0); // status 0 = None: never existed on this contract (stale local id)
+        .filter((r): r is Row => r !== null); // dropped: stale local id on no known contract
       setRows(ok);
       const failed = results.length - ok.length;
       if (failed > 0 && ok.length === 0) {
@@ -204,12 +215,13 @@ export default function Matches() {
     });
   }, []);
 
-  // resolve win/lose for finished matches from MatchSettled (cached forever)
+  // resolve win/lose for finished matches from MatchSettled (cached forever).
+  // Events are contract-scoped, so scan each match against ITS own escrow.
   useEffect(() => {
     const cfg = escrowConfig();
     if (!cfg || !rows) return;
-    const resolvedIds = rows.filter((r) => r.status === 4).map((r) => r.id);
-    if (resolvedIds.length === 0) return;
+    const resolved = rows.filter((r) => r.status === 4);
+    if (resolved.length === 0) return;
     const merge = (m: Map<string, Outcome>) => {
       if (m.size === 0) return;
       setOutcomes((prev) => {
@@ -218,11 +230,13 @@ export default function Matches() {
         return next;
       });
     };
-    merge(cachedOutcomes(resolvedIds));
-    const missing = resolvedIds.filter((id) => !cachedOutcomes([id]).has(id.toString()));
-    if (missing.length > 0) {
-      scanSettled(publicClient(cfg.rpcUrl, cfg.chainId), cfg.escrow, missing).then(merge).catch(() => {});
+    merge(cachedOutcomes(resolved.map((r) => r.id)));
+    const client = publicClient(cfg.rpcUrl, cfg.chainId);
+    const byEscrow = new Map<Address, bigint[]>();
+    for (const r of resolved) {
+      if (!cachedOutcomes([r.id]).has(r.id.toString())) byEscrow.set(r.escrow, [...(byEscrow.get(r.escrow) ?? []), r.id]);
     }
+    for (const [esc, missing] of byEscrow) scanSettled(client, esc, missing).then(merge).catch(() => {});
   }, [rows]);
 
   const [creating, setCreating] = useState(false);
@@ -243,12 +257,12 @@ export default function Matches() {
 
   // Cancel an open money match nobody joined — the full stake comes back.
   const [cancelling, setCancelling] = useState<bigint | null>(null);
-  async function cancelOpen(id: bigint) {
+  async function cancelOpen(id: bigint, escrow: Address) {
     const cfg = escrowConfig();
     if (!cfg || !wallet || !account || cancelling !== null) return;
     setCancelling(id);
     try {
-      await cancelMatch(wallet, { account, escrow: cfg.escrow, matchId: id, feeCurrency: FEE_CURRENCY });
+      await cancelMatch(wallet, { account, escrow, matchId: id, feeCurrency: FEE_CURRENCY });
       setRows((r) => (r ? r.filter((x) => x.id !== id) : r));
       setOpenMatches((o) => o.filter((x) => x.id !== id)); // it may be a chain-discovered row
     } catch (e) {
@@ -264,12 +278,12 @@ export default function Matches() {
   //  - my own win, proposed and past its challenge window, that the keeper
   //    hasn't paid out yet → collect it now
   const [recovering, setRecovering] = useState<bigint | null>(null);
-  async function reclaimStake(id: bigint) {
+  async function reclaimStake(id: bigint, escrow: Address) {
     const cfg = escrowConfig();
     if (!cfg || !wallet || !account || recovering !== null) return;
     setRecovering(id);
     try {
-      const h = await voidExpired(wallet, { account, escrow: cfg.escrow, matchId: id, feeCurrency: FEE_CURRENCY });
+      const h = await voidExpired(wallet, { account, escrow, matchId: id, feeCurrency: FEE_CURRENCY });
       await confirmTx(publicClient(cfg.rpcUrl, cfg.chainId), h, "Refund");
       setRows((r) => (r ? r.filter((x) => x.id !== id) : r));
     } catch (e) {
@@ -277,12 +291,12 @@ export default function Matches() {
     }
     setRecovering(null);
   }
-  async function collectWin(id: bigint) {
+  async function collectWin(id: bigint, escrow: Address) {
     const cfg = escrowConfig();
     if (!cfg || !wallet || !account || recovering !== null) return;
     setRecovering(id);
     try {
-      const h = await finalizeResult(wallet, { account, escrow: cfg.escrow, matchId: id, feeCurrency: FEE_CURRENCY });
+      const h = await finalizeResult(wallet, { account, escrow, matchId: id, feeCurrency: FEE_CURRENCY });
       await confirmTx(publicClient(cfg.rpcUrl, cfg.chainId), h, "Payout");
       setRows((r) => (r ? r.filter((x) => x.id !== id) : r));
     } catch (e) {
@@ -299,6 +313,7 @@ export default function Matches() {
         .filter((o) => o.mine && !(rows ?? []).some((r) => r.id === o.id))
         .map((o) => ({
           id: o.id,
+          escrow: escrowConfig()!.escrow, // lobby is always the current escrow
           status: 1,
           stake: o.stake,
           rakeBps: o.rakeBps,
@@ -456,7 +471,7 @@ export default function Matches() {
                     <span className="muted" style={{ fontSize: 12.5 }}>
                       You won this game — the payout is ready to collect.
                     </span>
-                    <button className="btn block" onClick={() => collectWin(r.id)} disabled={recovering !== null}>
+                    <button className="btn block" onClick={() => collectWin(r.id, r.escrow)} disabled={recovering !== null}>
                       {recovering === r.id ? "Collecting…" : `Collect ${fmt(prize, STAKE_DECIMALS)} ${STAKE_SYMBOL}`}
                     </button>
                   </>
@@ -466,7 +481,7 @@ export default function Matches() {
                     <span className="muted" style={{ fontSize: 12.5 }}>
                       This game never finished. Get your full stake back — no fee.
                     </span>
-                    <button className="btn block" onClick={() => reclaimStake(r.id)} disabled={recovering !== null}>
+                    <button className="btn block" onClick={() => reclaimStake(r.id, r.escrow)} disabled={recovering !== null}>
                       {recovering === r.id ? "Refunding…" : "Get my stake back"}
                     </button>
                   </>
@@ -480,7 +495,7 @@ export default function Matches() {
                       <button
                         className="btn ghost"
                         style={{ flex: 1, justifyContent: "center" }}
-                        onClick={() => cancelOpen(r.id)}
+                        onClick={() => cancelOpen(r.id, r.escrow)}
                         disabled={cancelling !== null}
                       >
                         {cancelling === r.id ? "Cancelling…" : "Cancel & refund"}
