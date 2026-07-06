@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
 import Link from "next/link";
-import { io, type Socket } from "socket.io-client";
+import { type Socket } from "socket.io-client";
 import { readContract } from "viem/actions";
 import type { Address, Hex } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
@@ -264,6 +264,7 @@ export function LiveMatch({
       session.current = sk;
       ctx.current = { chainId: BigInt(cfg.chainId), verifier: cfg.verifier };
 
+      const { io } = await import("socket.io-client");
       sock = io(SERVER_URL, { transports: ["websocket"] });
       socket.current = sock;
       sock.on("connect", () => {

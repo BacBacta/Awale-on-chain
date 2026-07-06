@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { readContract } from "viem/actions";
 import { parseEventLogs, type Address } from "viem";
-import { io, type Socket } from "socket.io-client";
+import { type Socket } from "socket.io-client";
 import { publicClient, effectiveFeeCurrency } from "../lib/minipay.js";
 import { createMatch, joinMatch, approve, cancelMatch, parseStake, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
 import { createSessionKey, persistSession } from "../lib/session.js";
@@ -312,7 +312,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
    *    here and auto-cancels for an instant refund, no button hunting;
    *  - every send retries through stale-node reverts, every receipt wait
    *    tolerates lagging nodes (the old "fails 4 times out of 5"). */
-  function findOpponent() {
+  async function findOpponent() {
     if (!token || busy || !adultOk || finding !== "idle") return;
     setError(null);
     const amount = validateStake();
@@ -327,6 +327,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     allowanceReady.catch(() => {});
     let createdId: bigint | null = null;
 
+    // lazy-load socket.io-client (~100 kB) only when a cash search begins —
+    // keeps it out of the homepage First Load JS bundle
+    const { io } = await import("socket.io-client");
     const sock = io(process.env.NEXT_PUBLIC_SERVER_URL ?? "", { transports: ["websocket"] });
     cashSock.current = sock;
     const bail = (msg: string | null) => {

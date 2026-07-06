@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { io, type Socket } from "socket.io-client";
+import { type Socket } from "socket.io-client";
 import type { Address } from "viem";
 import { createSessionKey, persistSession } from "../lib/session.js";
 import { getProfile } from "../lib/profile.js";
@@ -50,11 +50,14 @@ export function QuickMatch({ account, autoStart }: { account?: Address; autoStar
     setTimeout(() => (window.location.href = "/play"), 1400);
   }
 
-  function find() {
+  async function find() {
     if (!SERVER_URL || phase !== "idle") return;
     track("quick_match_start");
     setPhase("searching");
     const session = createSessionKey();
+    // socket.io-client is ~100 kB — load it only when matchmaking actually
+    // starts, so it never sits in the homepage's First Load JS bundle
+    const { io } = await import("socket.io-client");
     const sock = io(SERVER_URL, { transports: ["websocket"] });
     sockRef.current = sock;
 
