@@ -6,10 +6,44 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  compress: true,
+  productionBrowserSourceMaps: false,
   // protocol/engine are imported as TypeScript source from sibling packages
   experimental: {
     externalDir: true,
   },
+  images: {
+    formats: ["image/avif", "image/webp"],
+    deviceSizes: [360, 640, 828, 1200, 1920],
+    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
+    minimumCacheTTL: 60 * 60 * 24 * 365, // 1 year for static assets
+  },
+  headers: async () => [
+    {
+      source: "/:path*",
+      headers: [
+        {
+          key: "Cache-Control",
+          value: "public, max-age=31536000, immutable",
+        },
+      ],
+      has: [
+        {
+          type: "query",
+          key: "_next",
+        },
+      ],
+    },
+    {
+      source: "/static/:path*",
+      headers: [
+        {
+          key: "Cache-Control",
+          value: "public, max-age=31536000, immutable",
+        },
+      ],
+    },
+  ],
   webpack: (config) => {
     // allow ".js" import specifiers to resolve to ".ts"/".tsx" sources
     config.resolve.extensionAlias = {

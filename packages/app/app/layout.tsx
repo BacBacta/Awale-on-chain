@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Sora, Fraunces } from "next/font/google";
 import "./globals.css";
 import { BottomNav } from "../src/components/BottomNav.js";
+import { Footer } from "../src/components/Footer.js";
 import { RouteTransition } from "../src/components/RouteTransition.js";
 
 // Modern, characterful pairing: Sora for UI + numerals, Fraunces for the brand
@@ -32,6 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="frame">
           <RouteTransition>{children}</RouteTransition>
+          <Footer />
           <BottomNav />
         </div>
       </body>
