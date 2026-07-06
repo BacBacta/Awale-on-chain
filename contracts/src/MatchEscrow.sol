@@ -310,9 +310,12 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     /// @notice Reclaim stakes from a match that was joined but never settled.
     ///         Callable by either player once the match TTL has elapsed; refunds
     ///         both so funds can never be locked forever by a silent opponent.
-    /// @dev    Also accepts Proposed status: if the challenge window overlaps the
-    ///         TTL expiry, the match may be Proposed-but-expired. Allowing voidExpired
-    ///         here ensures neither player is permanently locked out of a refund.
+    /// @dev    Deliberately NOT for Proposed matches (audit M1): a proposed
+    ///         result always has a settlement path forward — {challenge} while
+    ///         the window is open, {finalize} (permissionless, no deadline)
+    ///         after it closes — so a Proposed match can never be stuck. Voiding
+    ///         it would let a losing player erase a legitimate claim after the
+    ///         TTL and walk away with a refund instead of their loss.
     /// @dev Permissionless: an expired match is stuck money, and the players
     ///      may be exactly the ones who can no longer act (lost device, lost
     ///      keys). Anyone — in practice the server's keeper — may trigger the
@@ -320,10 +323,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     ///      Open matches (nobody ever joined) refund the creator the same way.
     function voidExpired(uint256 matchId) external nonReentrant {
         Match storage m = matches[matchId];
-        require(
-            m.status == Status.Open || m.status == Status.Active || m.status == Status.Proposed,
-            "MatchEscrow: not voidable"
-        );
+        require(m.status == Status.Open || m.status == Status.Active, "MatchEscrow: not voidable");
         require(m.activeDeadline != 0 && block.timestamp > m.activeDeadline, "MatchEscrow: not expired");
 
         if (m.status == Status.Open) {

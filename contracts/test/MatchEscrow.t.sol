@@ -453,26 +453,32 @@ contract MatchEscrowTest is Test {
         escrow.setChallengeWindow(minWindow - 1);
     }
 
-    // [fix3] voidExpired also works when the match is Proposed but the TTL has elapsed
-    function test_voidExpired_worksOnProposedExpiredMatch() public {
+    // [M1] voidExpired must NOT touch a Proposed match: a losing player could
+    // otherwise erase a legitimate claim after the TTL and escape with a refund.
+    // A Proposed match is never stuck — finalize is permissionless and has no
+    // deadline once the challenge window closes.
+    function test_voidExpired_revertsOnProposedMatch_finalizeIsTheRemedy() public {
         uint256 id = _createAndJoin();
 
-        // propose before TTL expires
+        // alice legitimately claims her win before the TTL expires
         vm.prank(alice);
         escrow.proposeResult(id, 0, bytes32(uint256(1)));
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Proposed));
 
-        // TTL elapses (activeDeadline passes) while match is still Proposed
+        // TTL elapses while the match is still Proposed — bob (the loser) tries
+        // to void the claim away instead of accepting the loss
         vm.warp(block.timestamp + TTL + 1);
-
-        uint256 aBefore = usdc.balanceOf(alice);
-        uint256 bBefore = usdc.balanceOf(bob);
         vm.prank(bob);
+        vm.expectRevert(bytes("MatchEscrow: not voidable"));
         escrow.voidExpired(id);
 
-        assertEq(usdc.balanceOf(alice), aBefore + STAKE, "alice refunded");
-        assertEq(usdc.balanceOf(bob), bBefore + STAKE, "bob refunded");
-        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Voided));
+        // the claim settles the intended way: finalize pays the proposed winner,
+        // permissionless, long after both the window and the TTL
+        uint256 aBefore = usdc.balanceOf(alice);
+        escrow.finalize(id);
+        uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(alice), aBefore + prize, "proposed winner paid");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Resolved));
     }
 
     // [H-02] empty transcript must be rejected — not treated as "game still live"

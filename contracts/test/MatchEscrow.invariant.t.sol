@@ -16,11 +16,10 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 ///      correctness claim is expressed as an invariant (checked between calls),
 ///      never as a handler-internal assert.
 ///
-///      The `challenge` path is intentionally omitted here: building a signed,
-///      terminating transcript for a random match's random startTurn is what the
-///      dedicated ReplayVerifier/MatchEscrow unit tests cover, and its money
-///      effects run through the SAME `_payout`/`_void` internals these actions
-///      already exercise.
+///      The `challenge` path lives in its own suite
+///      (MatchEscrowChallenge.invariant.t.sol): building a signed transcript per
+///      fuzz call is expensive, so it runs with a reduced inline config there
+///      rather than slowing this lifecycle walk down.
 contract EscrowHandler is Test {
     MatchEscrow public escrow;
     MockERC20 public usdc;
@@ -131,10 +130,10 @@ contract EscrowHandler is Test {
     }
 
     function voidExpired(uint256 seed, uint256 dt) external {
-        // any live status is voidable once past its deadline
+        // Open/Active only — a Proposed match is deliberately NOT voidable
+        // (audit M1: finalize is the remedy, or a loser could erase a claim)
         uint256 id = _pick(seed, MatchEscrow.Status.Active);
         if (id == type(uint256).max) id = _pick(seed, MatchEscrow.Status.Open);
-        if (id == type(uint256).max) id = _pick(seed, MatchEscrow.Status.Proposed);
         if (id == type(uint256).max) return;
         uint64 dl = escrow.getMatch(id).activeDeadline;
         if (dl == 0) return;

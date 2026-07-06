@@ -271,12 +271,12 @@ export default function Matches() {
     setCancelling(null);
   }
 
-  // Recovery for stuck money — the two situations where funds sit locked and
-  // ONLY the player can free them (the contract gates voidExpired to players;
-  // the server keeper cannot do it in their place):
-  //  - a match that expired without finishing → reclaim both stakes in full
-  //  - my own win, proposed and past its challenge window, that the keeper
-  //    hasn't paid out yet → collect it now
+  // Recovery for stuck money. Both paths are permissionless on-chain and the
+  // server keeper normally runs them — these buttons are the self-serve backup
+  // for when it hasn't (or is down):
+  //  - an ACTIVE match that expired without finishing → voidExpired refunds
+  //    both stakes in full (never offered on Proposed: that's finalize's job)
+  //  - a proposed result past its challenge window → finalize collects it
   const [recovering, setRecovering] = useState<bigint | null>(null);
   async function reclaimStake(id: bigint, escrow: Address) {
     const cfg = escrowConfig();
@@ -436,10 +436,18 @@ export default function Matches() {
             const mySeat =
               me === undefined ? null : r.player0.toLowerCase() === me ? 0 : r.player1.toLowerCase() === me ? 1 : null;
             const now = Math.floor(Date.now() / 1000);
-            // stuck money, and only THIS wallet can free it (contract rule)
-            const expired =
-              mySeat !== null && (r.status === 2 || r.status === 3) && r.activeDeadline > 0 && now > r.activeDeadline;
-            const collectable = mySeat !== null && r.status === 3 && now > r.challengeDeadline && r.proposedWinner === mySeat;
+            // Stuck money reclaim (voidExpired) is for ACTIVE matches only: a
+            // Proposed match settles via finalize — offering "get my stake back"
+            // there was the M1 exploit (a loser erasing a legitimate claim).
+            const expired = mySeat !== null && r.status === 2 && r.activeDeadline > 0 && now > r.activeDeadline;
+            // Proposed + window closed: finalize pays the claim. Offered when I'm
+            // the proposed winner, or on a proposed draw (finalize refunds both).
+            const collectable =
+              mySeat !== null &&
+              r.status === 3 &&
+              now > r.challengeDeadline &&
+              (r.proposedWinner === mySeat || r.proposedWinner === 2);
+            const collectDraw = collectable && r.proposedWinner === 2;
             // finished-match outcome for THIS wallet (win/lose/draw + net)
             const oc = r.status === 4 ? outcomes[r.id.toString()] : undefined;
             const result =
@@ -469,10 +477,16 @@ export default function Matches() {
                 {collectable && (
                   <>
                     <span className="muted" style={{ fontSize: 12.5 }}>
-                      You won this game — the payout is ready to collect.
+                      {collectDraw
+                        ? "This game ended in a draw — collect your stake back."
+                        : "You won this game — the payout is ready to collect."}
                     </span>
                     <button className="btn block" onClick={() => collectWin(r.id, r.escrow)} disabled={recovering !== null}>
-                      {recovering === r.id ? "Collecting…" : `Collect ${fmt(prize, STAKE_DECIMALS)} ${STAKE_SYMBOL}`}
+                      {recovering === r.id
+                        ? "Collecting…"
+                        : collectDraw
+                          ? `Collect my ${fmt(r.stake, STAKE_DECIMALS)} ${STAKE_SYMBOL} back`
+                          : `Collect ${fmt(prize, STAKE_DECIMALS)} ${STAKE_SYMBOL}`}
                     </button>
                   </>
                 )}
