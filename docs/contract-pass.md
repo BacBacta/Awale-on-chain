@@ -55,15 +55,33 @@ bps, window 600s, TTLs 86400s, aUSD allowed). Deployed by
   (from the TS engine, `fixtures/repetition.json`) to the identical swept
   outcome on-chain; an extra ply reverts. Foundry 135 green.
 
+## 1c. MatchEscrow v4 — audit M1 (deployed 2026-07-06)
+
+Single change vs v3: `voidExpired` no longer accepts a **Proposed** match. A
+losing player could wait out the TTL and void a legitimately proposed result
+away (full refund instead of their loss). A Proposed match is never stuck —
+`finalize` is permissionless with no deadline once the challenge window
+closes — so removing Proposed closes the escape without creating any lockup.
+The /matches UI stopped offering reclaim on Proposed rows (that button WAS
+the exploit); the keeper already finalized Proposed matches correctly.
+Deployed by `script/DeployEscrowV4.s.sol`, reusing the v2 ReplayVerifier.
+
+Dispute path is now invariant-fuzzed too (`MatchEscrowChallenge.invariant.t.sol`):
+terminal challenges only ever pay the canonical winner, premature claims only
+ever void — under random false claims and a changing rake.
+
 ## Deployment record (Celo Sepolia)
 
-- MatchEscrow v3 `0x53c7594ca2943ee43fB24a6F11C6b438b7F06EFA` — current escrow
-  (`NEXT_PUBLIC_ESCROW_ADDRESS` / `ESCROW_ADDRESS`), verifier
-  `0xF6B27BBDe627eD9f241C3017aCa33bb472064395`.
-- MatchEscrow v2 `0x616E36848B660a58dB3cb3181D935A802847cc24` — now legacy
-  (in `NEXT_PUBLIC_LEGACY_ESCROW_ADDRESSES`, keeps history/stats continuity),
-  old verifier `0xBE1B068842cA735DE9F8EA0daAbd371fFEA6Ef78`. Deployed by
-  `script/DeployEscrowV2.s.sol`, aUSD allowed, rake 1100 bps, window 600s.
+- **MatchEscrow v4** `0x34473d4b1dD93314b13605277681b4202C55c4E8` — current
+  escrow (`NEXT_PUBLIC_ESCROW_ADDRESS` / `ESCROW_ADDRESS`), deploy block
+  30077576, verifier `0xF6B27BBDe627eD9f241C3017aCa33bb472064395` (reused).
+- MatchEscrow v3 `0x53c7594ca2943ee43fB24a6F11C6b438b7F06EFA` — legacy
+  (repetition pass; had the M1 quirk).
+- MatchEscrow v2 `0x616E36848B660a58dB3cb3181D935A802847cc24` — legacy,
+  old verifier `0xBE1B068842cA735DE9F8EA0daAbd371fFEA6Ef78`.
+- MatchEscrow v1 `0x813eF5EAAF5E90D791F6A8FEdeE2F1990CCB4F54` — legacy.
+- All legacy escrows sit in `NEXT_PUBLIC_LEGACY_ESCROW_ADDRESSES` so
+  history/stats span the migrations.
 - v1 escrow `0x813eF5EAAF5E90D791F6A8FEdeE2F1990CCB4F54` still holds history
   (leaderboard/stats reset with the new address — expected on testnet).
   Any stake still stuck on v1 (e.g. matches #45/#46 pre-TTL at switch time)
