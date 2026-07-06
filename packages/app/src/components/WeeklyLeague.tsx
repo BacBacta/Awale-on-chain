@@ -99,16 +99,24 @@ export function WeeklyLeague() {
 
         {/* THIS WEEK'S race standings (points) — the money event's own board,
             given real weight (top 5, gold points) so it reads as the headline
-            it is, never as a footnote to the skill Ladder below. Self-labelled
-            with the same metric·period caption pattern as the Ladder. */}
-        {data.standings.length > 0 && (
-          <div className="stack" style={{ gap: 6 }}>
-            <div className="row" style={{ alignItems: "baseline" }}>
-              <span className="section-label">Race standings</span>
-              <span className="faint" style={{ fontSize: 10.5, letterSpacing: "0.4px", textTransform: "uppercase" }}>
-                points · this week
-              </span>
+            it is, never as a footnote to the skill Ladder below. Always PRESENT
+            (empty state included) so the race never looks like it has no board
+            while the Ladder below is full. Self-labelled with the same
+            metric·period caption pattern as the Ladder. */}
+        <div className="stack" style={{ gap: 6 }}>
+          <div className="row" style={{ alignItems: "baseline" }}>
+            <span className="section-label">Race standings</span>
+            <span className="faint" style={{ fontSize: 10.5, letterSpacing: "0.4px", textTransform: "uppercase" }}>
+              points · this week
+            </span>
+          </div>
+          {data.standings.length === 0 ? (
+            <div className="card flat stack" style={{ padding: "16px 12px", gap: 4, alignItems: "center", textAlign: "center" }}>
+              <span style={{ fontSize: 22 }}>🏁</span>
+              <span style={{ fontWeight: 700, fontSize: 14 }}>No one&apos;s scored yet this week</span>
+              <span className="faint" style={{ fontSize: 12.5 }}>Win a money game to take the #1 spot — it resets Monday.</span>
             </div>
+          ) : (
             <div className="card flat" style={{ padding: 6, gap: 0 }}>
               {(() => {
                 const top = data.standings.slice(0, 5);
@@ -154,8 +162,8 @@ export function WeeklyLeague() {
                 );
               })()}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         <span className="faint" style={{ fontSize: 11.5 }}>
           Win = 3 pts · resets every Monday{SELF_CONFIGURED ? " · prizes require a one-time identity check" : ""}
