@@ -414,12 +414,22 @@ async function convertReferral(player: Address): Promise<void> {
 // ordered standings to TournamentEscrow — but only if a funded operator signer and
 // the contract address are configured; otherwise it logs (dev/scaffold).
 const TOURNAMENT = (process.env.TOURNAMENT_ADDRESS || undefined) as Address | undefined;
+// Operator-only endpoints (they drive on-chain tournament finalize / prize
+// accounting) require this secret. FAIL-CLOSED: with no secret set they are
+// disabled — tournaments are retired, and an unauthenticated /tournaments/
+// result could otherwise steer a real payout to an attacker-chosen winner.
+const OPERATOR_SECRET = process.env.OPERATOR_SECRET;
+function operatorAuthorized(req: import("node:http").IncomingMessage): boolean {
+  if (!OPERATOR_SECRET) return false;
+  const h = req.headers["x-operator-secret"];
+  return typeof h === "string" && h === OPERATOR_SECRET;
+}
 const tournamentFinalize =
   SIGNER && SIGNER.startsWith("0x") && SIGNER.length === 66 && TOURNAMENT
     ? async (id: string, winners: Address[]) => {
         const wallet = createWalletClient({
           chain: chainFor(CHAIN_ID),
-          transport: http(RPC_URL),
+          transport: rpcTransport, // fallback like SettlementClient — not a single flaky node
           account: operatorAccount!,
         });
         const hash = await wallet.writeContract({
@@ -442,10 +452,20 @@ const tournamentFinalize =
 const tournaments = new TournamentService(tournamentFinalize);
 console.log(TOURNAMENT ? `tournaments: legacy settle-only @ ${TOURNAMENT}` : "tournaments: off (replaced by weekly league)");
 
+const MAX_BODY_BYTES = 64 * 1024; // no endpoint needs more; bounds a memory-DoS
 function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
     let body = "";
-    req.on("data", (c) => (body += c));
+    let size = 0;
+    req.on("data", (c: Buffer | string) => {
+      size += typeof c === "string" ? Buffer.byteLength(c) : c.length;
+      if (size > MAX_BODY_BYTES) {
+        reject(new Error("request too large"));
+        req.destroy();
+        return;
+      }
+      body += c;
+    });
     req.on("end", () => {
       try {
         resolve(body ? JSON.parse(body) : {});
@@ -453,6 +473,7 @@ function readJson(req: import("node:http").IncomingMessage): Promise<unknown> {
         reject(e);
       }
     });
+    req.on("error", reject);
   });
 }
 
@@ -813,6 +834,7 @@ const httpServer = createServer((req, res) => {
   // --- tournaments: Sit-and-Go lobby + bracket ---
   if (req.method === "POST" && url.pathname === "/tournaments/register") {
     // operator registers a tournament it just created on-chain
+    if (!operatorAuthorized(req)) return json(403, { error: "not authorized" });
     readJson(req)
       .then((b) => {
         const meta = b as TournamentMeta;
@@ -887,7 +909,8 @@ const httpServer = createServer((req, res) => {
     return;
   }
   if (req.method === "POST" && url.pathname === "/tournaments/result") {
-    // a bracket game's winner (reported by the match coordinator)
+    // a bracket game's winner — drives on-chain finalize, so operator-gated
+    if (!operatorAuthorized(req)) return json(403, { error: "not authorized" });
     readJson(req)
       .then((b) => {
         const { id, round, index, winner } = b as { id: string; round: number; index: number; winner: Address };
@@ -1580,7 +1603,7 @@ async function leagueClaim(address: Address): Promise<{ paidWei: string; tx: Hex
     // single-token deployment: one transfer for the sum
     const token = prizes[0].token;
     const total = prizes.reduce((a, p) => a + BigInt(p.amountWei), 0n);
-    const wallet = createWalletClient({ chain: chainFor(CHAIN_ID), transport: http(RPC_URL), account: operatorAccount! });
+    const wallet = createWalletClient({ chain: chainFor(CHAIN_ID), transport: rpcTransport, account: operatorAccount! });
 
     // BROADCAST. If writeContract throws, the tx never hit the network → safe to
     // return the debt to the pending store.
@@ -1627,7 +1650,7 @@ async function leagueClaim(address: Address): Promise<{ paidWei: string; tx: Hex
 async function awardChampionTrophy(champion: Address, week: string): Promise<void> {
   if (!COSMETICS_ADDRESS || !operatorAccount) return;
   try {
-    const wallet = createWalletClient({ chain: chainFor(CHAIN_ID), transport: http(RPC_URL), account: operatorAccount });
+    const wallet = createWalletClient({ chain: chainFor(CHAIN_ID), transport: rpcTransport, account: operatorAccount });
     const hash = await wallet.writeContract({
       address: COSMETICS_ADDRESS,
       abi: COSMETICS_OWNER_MINT_ABI,
