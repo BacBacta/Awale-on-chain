@@ -30,6 +30,13 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${sora.variable} ${fraunces.variable}`}>
+      <head>
+        {/* LCP is the hero board's seed sprite; the board only mounts after
+            hydration, so preload the sprite at high priority to remove its
+            fetch from the LCP critical path (PageSpeed: fetchpriority=high). */}
+        <link rel="preload" as="image" href="/assets/seed.webp" fetchPriority="high" />
+        <link rel="preload" as="image" href="/assets/wood.webp" />
+      </head>
       <body>
         <div className="frame">
           <RouteTransition>{children}</RouteTransition>

@@ -18,7 +18,7 @@ export interface BoardProps {
   silent?: boolean;
 }
 
-const DEFAULT_SKIN = { wood: "/assets/wood.png", seed: "/assets/seed.png" };
+const DEFAULT_SKIN = { wood: "/assets/wood.webp", seed: "/assets/seed.webp" };
 
 const W = 360;
 const H = 300;
