@@ -11,12 +11,12 @@
 
 import { useEffect, useState } from "react";
 import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
-import { humanizeError } from "../lib/errors.js";
 import Link from "next/link";
 import type { Address } from "viem";
 import { getInjectedProvider, connect } from "../lib/minipay.js";
 import { escrowConfig } from "../lib/escrow.js";
-import { getWeeklyLeague, getPendingPrizes, claimPrizes, raceEndsIn, weeklyLeagueEnabled, type WeeklyLeagueSnapshot, type PendingPrize } from "../lib/weeklyLeague.js";
+import { getWeeklyLeague, raceEndsIn, weeklyLeagueEnabled, type WeeklyLeagueSnapshot } from "../lib/weeklyLeague.js";
+import { PrizeCollect } from "./PrizeCollect.js";
 import { friendlyName } from "../lib/names.js";
 import { fmt } from "../lib/money.js";
 
@@ -28,12 +28,6 @@ const SELF_CONFIGURED = Boolean(process.env.NEXT_PUBLIC_SELF_SCOPE && process.en
 export function WeeklyLeague() {
   const [data, setData] = useState<WeeklyLeagueSnapshot | null>(null);
   const [me, setMe] = useState<Address | null>(null);
-  // prize waiting to be collected (credited at Monday's rollover)
-  const [prizes, setPrizes] = useState<PendingPrize[]>([]);
-  const [prizeTotal, setPrizeTotal] = useState<bigint>(0n);
-  const [claiming, setClaiming] = useState(false);
-  const [claimed, setClaimed] = useState(false);
-  const [claimError, setClaimError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!weeklyLeagueEnabled()) return;
@@ -49,16 +43,6 @@ export function WeeklyLeague() {
         }
       }
       if (address && alive) setMe(address);
-      if (address) {
-        getPendingPrizes(address)
-          .then((p) => {
-            if (alive) {
-              setPrizes(p.prizes);
-              setPrizeTotal(p.totalWei);
-            }
-          })
-          .catch(() => {});
-      }
       const s = await getWeeklyLeague(address);
       if (alive) setData(s);
     })().catch(() => {});
@@ -69,53 +53,15 @@ export function WeeklyLeague() {
 
   if (!data) return null;
 
-  async function collect() {
-    if (!me || claiming) return;
-    setClaiming(true);
-    setClaimError(null);
-    try {
-      await claimPrizes(me);
-      setClaimed(true);
-      setPrizeTotal(0n);
-    } catch (e) {
-      setClaimError(humanizeError(e));
-    }
-    setClaiming(false);
-  }
-
-  const bestRank = prizes.reduce((best, p) => (best === 0 ? p.rank : Math.min(best, p.rank)), 0);
-
   const pool = BigInt(data.poolWei);
   const entered = data.me !== null && data.me.games >= data.minGames;
   const played = data.me?.games ?? 0;
 
   return (
     <>
-      {(prizeTotal > 0n || claimed) && (
-        // the win comes FIRST — collecting a prize is the whole reason this
-        // player opened the app today
-        <div className="card stack animate-in" style={{ gap: 12, padding: 18, boxShadow: "inset 0 0 0 1.5px rgba(246,200,99,0.45)" }}>
-          <span className="chip gold" style={{ alignSelf: "flex-start" }}>🏆 Weekly race — you won!</span>
-          {claimed ? (
-            <span className="chip positive" style={{ alignSelf: "stretch", justifyContent: "center", padding: 10 }}>
-              Paid ✓ — it&apos;s in your wallet
-            </span>
-          ) : (
-            <>
-              <span className="display" style={{ color: "var(--gold)", fontSize: 32, lineHeight: 0.95, fontVariantNumeric: "tabular-nums" }}>
-                {fmt(prizeTotal, STAKE_DECIMALS)} {STAKE_SYMBOL}
-              </span>
-              <span className="muted">
-                You finished {bestRank > 0 ? `#${bestRank}` : "in the money"} last week — your prize is ready.
-              </span>
-              <button className="btn block" onClick={collect} disabled={claiming}>
-                {claiming ? "Collecting…" : "Collect now"}
-              </button>
-              {claimError && <span className="muted" style={{ color: "var(--danger)", fontSize: 12.5 }}>{claimError}</span>}
-            </>
-          )}
-        </div>
-      )}
+      {/* the win comes first — same collect surface as the home lobby, so a
+          winner meets it in both places (renders nothing when none is pending) */}
+      <PrizeCollect address={me} />
       <div className="card stack animate-in" style={{ gap: 14, padding: 18 }}>
         <div className="row">
           <span className="chip gold">🏁 Weekly race</span>
@@ -151,33 +97,63 @@ export function WeeklyLeague() {
           </div>
         )}
 
-        {/* THIS WEEK'S race standings (points) — self-labelled so it can never
-            be mistaken for the Ladder below, which ranks skill rating all-time.
-            Same caption pattern as the Ladder: metric · period. */}
+        {/* THIS WEEK'S race standings (points) — the money event's own board,
+            given real weight (top 5, gold points) so it reads as the headline
+            it is, never as a footnote to the skill Ladder below. Self-labelled
+            with the same metric·period caption pattern as the Ladder. */}
         {data.standings.length > 0 && (
-          <div className="card flat stack" style={{ gap: 2, padding: 6 }}>
-            <span className="section-label" style={{ padding: "2px 6px 4px" }}>
-              Standings · points this week
-            </span>
-            {data.standings.slice(0, 3).map((r, i) => {
-              const mine = me && r.address.toLowerCase() === me.toLowerCase();
-              return (
-                <div
-                  className="row"
-                  key={r.address}
-                  style={{ gap: 10, padding: "8px 10px", borderRadius: "var(--r-sm)", background: mine ? "var(--accent-soft)" : "transparent" }}
-                >
-                  <span style={{ color: MEDAL[i] ?? "var(--faint)", fontWeight: 800, fontVariantNumeric: "tabular-nums", width: 16 }}>
-                    {i + 1}
-                  </span>
-                  <span style={{ flex: 1, fontWeight: 650, fontSize: 13.5, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                    {friendlyName(r.address)}
-                    {mine && <span style={{ color: "var(--accent)" }}> · you</span>}
-                  </span>
-                  <span className="faint" style={{ fontVariantNumeric: "tabular-nums" }}>{r.points} pts</span>
-                </div>
-              );
-            })}
+          <div className="stack" style={{ gap: 6 }}>
+            <div className="row" style={{ alignItems: "baseline" }}>
+              <span className="section-label">Race standings</span>
+              <span className="faint" style={{ fontSize: 10.5, letterSpacing: "0.4px", textTransform: "uppercase" }}>
+                points · this week
+              </span>
+            </div>
+            <div className="card flat" style={{ padding: 6, gap: 0 }}>
+              {(() => {
+                const top = data.standings.slice(0, 5);
+                const myIdx = me ? data.standings.findIndex((r) => r.address.toLowerCase() === me.toLowerCase()) : -1;
+                const StandingRow = ({ r, i }: { r: (typeof data.standings)[number]; i: number }) => {
+                  const mine = me != null && r.address.toLowerCase() === me.toLowerCase();
+                  return (
+                    <div
+                      className="row"
+                      style={{
+                        gap: 12,
+                        padding: "11px 12px",
+                        borderRadius: "var(--r-md)",
+                        background: mine ? "var(--accent-soft)" : "transparent",
+                        boxShadow: mine ? "inset 0 0 0 1px rgba(76,229,132,0.35)" : undefined,
+                      }}
+                    >
+                      <span style={{ width: 22, textAlign: "center", fontWeight: 800, fontSize: i < 3 ? 15 : 13.5, color: MEDAL[i] ?? "var(--faint)", fontVariantNumeric: "tabular-nums" }}>
+                        {i + 1}
+                      </span>
+                      <span style={{ flex: 1, fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+                        {friendlyName(r.address)}
+                        {mine && <span style={{ color: "var(--accent)", fontWeight: 650 }}> · you</span>}
+                      </span>
+                      <span className="score" style={{ fontSize: 17, fontWeight: 750, color: "var(--gold)", fontVariantNumeric: "tabular-nums" }}>
+                        {r.points} <span style={{ fontSize: 11, fontWeight: 600, color: "var(--faint)" }}>pts</span>
+                      </span>
+                    </div>
+                  );
+                };
+                return (
+                  <>
+                    {top.map((r, i) => (
+                      <StandingRow key={r.address} r={r} i={i} />
+                    ))}
+                    {myIdx >= 5 && (
+                      <>
+                        <div style={{ textAlign: "center", color: "var(--faint)", fontSize: 12, padding: "2px 0" }}>···</div>
+                        <StandingRow r={data.standings[myIdx]} i={myIdx} />
+                      </>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
           </div>
         )}
 

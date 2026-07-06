@@ -12,6 +12,7 @@ import { MatchActions } from "../src/components/MatchActions.js";
 import { PersonhoodVerify } from "../src/components/PersonhoodVerify.js";
 import { QuickMatch } from "../src/components/QuickMatch.js";
 import { InboxCard } from "../src/components/InboxCard.js";
+import { PrizeCollect } from "../src/components/PrizeCollect.js";
 import { Icon, type IconName } from "../src/components/Icon.js";
 import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
@@ -156,6 +157,11 @@ export default function Lobby() {
           )}
         </span>
       </div>
+
+      {/* a winning is worthless if you can't find where to take it: a pending
+          Weekly-race prize greets the winner right here, first thing, before
+          anything else on the lobby */}
+      <PrizeCollect address={address} />
 
       {/* what happened while you were away — push's guaranteed fallback */}
       <InboxCard address={address} />
