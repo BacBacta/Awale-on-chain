@@ -114,7 +114,7 @@ describe("WeeklyLeague.rollover", () => {
     expect(result?.week).toBe("2026-06-29");
     expect(paidArgs.map((w) => w.address)).toEqual([A, B]);
     // A 6pts, B 3pts → 80% dividend split 2:1, plus the podium bonuses
-    const dividend = (pool * 9000n) / 10_000n;
+    const dividend = (pool * 9500n) / 10_000n;
     expect(BigInt(paidArgs[0].amountWei)).toBe((pool * BigInt(PODIUM_BPS[0])) / 10_000n + (dividend * 6n) / 9n);
     expect(BigInt(paidArgs[1].amountWei)).toBe((pool * BigInt(PODIUM_BPS[1])) / 10_000n + (dividend * 3n) / 9n);
 
@@ -144,17 +144,17 @@ describe("computePrizes — small podium bonus + 80% dividend for ALL ranked", (
   const std = (address: string, points: number) => ({ address: address as `0x${string}`, points, games: 5, wins: points / 3 });
   const POOL = 10_000_000n; // 10 units at 6 dp — keeps shares readable
 
-  it("everyone ranked gets a points-share; ranks 1-3 add 5/3/2% bonuses", () => {
+  it("everyone ranked gets a points-share; ranks 1-3 add 2.5/1.5/1% bonuses", () => {
     const ranked = [std("0xa", 15), std("0xb", 12), std("0xc", 9), std("0xd", 9), std("0xe", 6), std("0xf", 3)];
     const prizes = computePrizes(ranked, POOL);
-    // dividend = 9_000_000 over 54 points
+    // dividend = 9_500_000 over 54 points
     expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([
-      500_000n + 2_500_000n, // #1: 5% bonus + 15/54
-      300_000n + 2_000_000n, // #2: 3% + 12/54
-      200_000n + 1_500_000n, // #3: 2% + 9/54
-      1_500_000n, // #4: 9/54
-      1_000_000n, // #5: 6/54
-      500_000n, // #6: 3/54
+      250_000n + 2_638_888n, // #1: 2.5% bonus + 15/54
+      150_000n + 2_111_111n, // #2: 1.5% + 12/54
+      100_000n + 1_583_333n, // #3: 1% + 9/54
+      1_583_333n, // #4: 9/54
+      1_055_555n, // #5: 6/54
+      527_777n, // #6: 3/54
     ]);
     const total = prizes.reduce((a, p) => a + BigInt(p.amountWei), 0n);
     expect(total <= POOL).toBe(true); // never mints; dust carries
@@ -169,14 +169,14 @@ describe("computePrizes — small podium bonus + 80% dividend for ALL ranked", (
   it("two players: both paid (bonus + shared dividend); the unused #3 bonus carries", () => {
     const prizes = computePrizes([std("0xa", 6), std("0xb", 3)], POOL);
     expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([
-      500_000n + 6_000_000n, // 5% + 6/9 of the dividend
-      300_000n + 3_000_000n, // 3% + 3/9
+      250_000n + 6_333_333n, // 2.5% + 6/9 of the dividend
+      150_000n + 3_166_666n, // 1.5% + 3/9
     ]);
   });
 
   it("all-draw week (zero points everywhere): only the podium bonuses pay", () => {
     const prizes = computePrizes([std("0xa", 0), std("0xb", 0), std("0xc", 0), std("0xd", 0)], POOL);
-    expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([500_000n, 300_000n, 200_000n]);
+    expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([250_000n, 150_000n, 100_000n]);
   });
 
   it("empty standings → no prizes, whole pool carries", () => {

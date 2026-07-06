@@ -65,17 +65,17 @@ export const DRAW_POINTS = 0;
 export const PAYOUT_BPS = [5000, 2500, 1500, 700, 300];
 
 /** Podium BONUS for ranks 1-3, on top of the shared dividend. Deliberately
- *  small (10% of the pot in total): the pot belongs to everyone who raced. */
-export const PODIUM_BPS = [500, 300, 200];
+ *  small (5% of the pot in total): the pot belongs to everyone who raced. */
+export const PODIUM_BPS = [250, 150, 100];
 /** The bulk of the pool is a DIVIDEND shared by EVERY eligible player,
  *  pro-rata to points — naturally degressive down the table, and nobody who
  *  put in the games walks away with nothing. It must include the podium:
  *  with a small podium and a ranks-4+-only dividend, #4 could out-earn #1
  *  (an inversion that rewards LOSING rank). Bonus + monotone dividend keeps
  *  rank order and payout order aligned. */
-export const DIVIDEND_BPS = 9000;
+export const DIVIDEND_BPS = 9500;
 
-/** Split `pool` across the standings: a 90% dividend pro-rata to points
+/** Split `pool` across the standings: a 95% dividend pro-rata to points
  *  over ALL ranked players, plus the podium bonus for ranks 1-3. Pure.
  *  Whatever can't be assigned (nobody ranked, zero total points, rounding
  *  dust) isn't emitted — the caller carries the difference forward. */
