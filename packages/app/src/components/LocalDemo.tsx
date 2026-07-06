@@ -1,8 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { initialState, applyMove, legalMovesMask, DRAW, type GameState } from "../../../engine/src/awale.js";
+import {
+  initialState,
+  applyMove,
+  adjudicate,
+  legalMovesMask,
+  repetitionCount,
+  endKind,
+  REPETITION_LIMIT,
+  DRAW,
+  type GameState,
+} from "../../../engine/src/awale.js";
 import { chooseMove, wouldAcceptDraw, type Difficulty } from "../../../engine/src/ai.js";
 import { Board, moveDurationMs } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
@@ -44,6 +54,10 @@ export function LocalDemo() {
   const [showOverlay, setShowOverlay] = useState(false);
   const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
   const [drawDeclined, setDrawDeclined] = useState(false);
+  // accepted move history (this demo always starts with player 0), so the same
+  // repetition adjudication the server & chain run can end a stuck cycle here too
+  const movesRef = useRef<number[]>([]);
+  const [repWarn, setRepWarn] = useState(false);
 
   useEffect(() => setSkin(getEquipped()), []);
 
@@ -85,12 +99,16 @@ export function LocalDemo() {
     setBusy(true);
     try {
       await signMove(sessions[0], DEMO_MATCH_ID, BigInt(ply), house, DEMO_CTX);
-      let next = applyMove(state, house);
+      // adjudicate the full history so a threefold repetition ends the game here
+      // exactly as it would on the server / on-chain (not just applyMove)
+      movesRef.current.push(house);
+      let next = adjudicate(movesRef.current);
       let p = ply + 1;
       // let the board finish animating the player's sow before anything else
       const playerDur = moveDurationMs(seedsOf(state, house));
       setState(next);
       setPly(p);
+      setRepWarn(!next.over && repetitionCount(movesRef.current) >= REPETITION_LIMIT - 1);
       await sleep(playerDur + 650); // sow + a beat to read the result
 
       // Bot plays its turn(s): visible "thinking", then a slow, readable sow.
@@ -101,10 +119,12 @@ export function LocalDemo() {
         const botDur = moveDurationMs(seedsOf(next, 6 + botHouse));
         setThinking(false);
         await signMove(sessions[1], DEMO_MATCH_ID, BigInt(p), botHouse, DEMO_CTX);
-        next = applyMove(next, botHouse);
+        movesRef.current.push(botHouse);
+        next = adjudicate(movesRef.current);
         p += 1;
         setState(next);
         setPly(p);
+        setRepWarn(!next.over && repetitionCount(movesRef.current) >= REPETITION_LIMIT - 1);
         await sleep(botDur + 700); // sow + a beat to read before handing back
       }
     } finally {
@@ -117,6 +137,8 @@ export function LocalDemo() {
     setShowOverlay(false);
     setState(initialState());
     setPly(0);
+    movesRef.current = [];
+    setRepWarn(false);
   }
 
   // A stuck game (an endless cyclic position, or just not fun anymore)
@@ -168,6 +190,15 @@ export function LocalDemo() {
         </div>
       )}
 
+      {repWarn && !state.over && (
+        <div
+          className="chip animate-in"
+          style={{ alignSelf: "center", background: "rgba(240,180,40,0.16)", color: "var(--gold)", borderColor: "var(--gold)" }}
+        >
+          <Icon name="info" size={14} /> Repeating position — one more repeat scores the game as it stands
+        </div>
+      )}
+
       {ply === 0 && !busy && (
         <div className="segmented" style={{ margin: "0 6px" }}>
           {DIFFICULTIES.map((d) => (
@@ -193,6 +224,11 @@ export function LocalDemo() {
       {showOverlay && result !== null && (
         <GameOverlay
           result={result}
+          note={
+            endKind(state) === "swept"
+              ? "No captures were left to make — each side kept the seeds on its own row."
+              : undefined
+          }
           stats={{ mine: state.store0, opp: state.store1, moves: ply }}
           onPlayAgain={reset}
           onShare={() => shareResult({ result, scoreMine: state.store0, scoreOpp: state.store1 })}

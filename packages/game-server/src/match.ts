@@ -10,7 +10,7 @@
 // would replay on-chain in a dispute, so what the server accepts is exactly what
 // the contract would accept.
 
-import { initialState, applyMove, legalMovesMask, adjudicate, DRAW, type GameState } from "../../engine/src/awale.js";
+import { initialState, applyMove, legalMovesMask, adjudicate, repetitionCount, DRAW, type GameState } from "../../engine/src/awale.js";
 import { moveDigest, resignDigest, drawOfferDigest, type MoveContext } from "./eip712.js";
 import { recoverAddress, type Address, type Hex } from "viem";
 
@@ -85,6 +85,13 @@ export class Match {
 
   get turn(): number {
     return this.state.turn;
+  }
+
+  /** How many times the current position has recurred since the last capture.
+   *  At REPETITION_LIMIT the game ends as a cycle; clients warn one step early.
+   *  0 once the game is over. */
+  get repeat(): number {
+    return this.state.over ? 0 : repetitionCount(this._moves, this.cfg.startTurn as 0 | 1);
   }
 
   /** How long the current mover has had the turn — the basis for a move-clock timeout. */

@@ -268,3 +268,44 @@ export function adjudicate(moves: number[], startTurn: 0 | 1 = 0): GameState {
 export function endsGame(moves: number[], move: number, startTurn: 0 | 1 = 0): boolean {
   return adjudicate([...moves, move], startTurn).over;
 }
+
+/** How many times the CURRENT position (the one reached after `moves`) has
+ *  occurred SINCE THE LAST CAPTURE. 1 = first time seen. When it would reach
+ *  REPETITION_LIMIT the game ends as a cycle — so a return of REPETITION_LIMIT-1
+ *  means "one more repeat and the game is scored where it stands". Drives the
+ *  live "repeating position" warning; 0 if the game is already over. */
+export function repetitionCount(moves: number[], startTurn: 0 | 1 = 0): number {
+  let s = initialState();
+  s.turn = startTurn;
+  if (s.over) return 0;
+  const seen = new Map<string, number>();
+  seen.set(positionKey(s), 1);
+  let current = 1;
+  for (const move of moves) {
+    const before = s.store0 + s.store1;
+    s = applyMove(s, move);
+    if (s.over) return 0;
+    if (s.store0 + s.store1 > before) {
+      seen.clear();
+      seen.set(positionKey(s), 1);
+      current = 1;
+      continue;
+    }
+    const key = positionKey(s);
+    current = (seen.get(key) ?? 0) + 1;
+    seen.set(key, current);
+    if (current >= REPETITION_LIMIT) return 0; // this ply ends the game as a cycle
+  }
+  return current;
+}
+
+/** Why an `over` game ended, for a human-readable result line. `capture` is a
+ *  normal finish with seeds still on the board (a majority ≥25, or a resign
+ *  handled by the caller); `swept` means the board was emptied and split by
+ *  side — the anti-stall outcome shared by starvation, repetition and the
+ *  40-ply backstop. Null while the game is still going. */
+export function endKind(s: GameState): "capture" | "swept" | null {
+  if (!s.over) return null;
+  const boardEmpty = s.pits.every((p) => p === 0);
+  return boardEmpty ? "swept" : "capture";
+}

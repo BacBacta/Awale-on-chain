@@ -15,7 +15,7 @@ import { stakeTokens } from "../lib/stakeTokens.js";
 import { recordLocalMatch } from "../lib/matches.js";
 import { track } from "../lib/analytics.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
-import { legalMovesMask, type GameState } from "../../../engine/src/awale.js";
+import { legalMovesMask, endKind, REPETITION_LIMIT, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
@@ -68,6 +68,7 @@ export function LiveMatch({
   const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
   const [oppAddr, setOppAddr] = useState<Address | null>(opponentAddress ?? null);
   const [drawOffered, setDrawOffered] = useState(false); // opponent offered a draw, awaiting our reply
+  const [repWarn, setRepWarn] = useState(false); // position is one repeat from ending the game as a cycle
   const [conceding, setConceding] = useState(false);
   const [, setTick] = useState(0); // re-render pulse for the per-move countdown
   // On-chain status 1 = Open: created but nobody has joined yet. Without this
@@ -275,12 +276,14 @@ export function LiveMatch({
       });
       sock.on("disconnect", () => setConnLost(true));
       sock.io.on("reconnect", () => setConnLost(false));
-      sock.on("state", (msg: { state: GameState; ply: number; clocks?: [number, number] | null; turnDeadline?: number | null }) => {
+      sock.on("state", (msg: { state: GameState; ply: number; clocks?: [number, number] | null; turnDeadline?: number | null; repeat?: number }) => {
         setState(msg.state);
         setPly(msg.ply);
         setTimedOut(false); // the game moved on — the eligibility notice is stale
         setTurnDeadline(msg.state.over ? null : (msg.turnDeadline ?? null));
         if (!msg.state.over) setTurnStartedAt(Date.now()); // legacy fallback only
+        // one short of REPETITION_LIMIT ⇒ warn: a repeat now ends & scores the game
+        setRepWarn(!msg.state.over && (msg.repeat ?? 1) >= REPETITION_LIMIT - 1);
       });
       sock.on("gameover", async (msg: { winner: number }) => {
         setStatus(msg.winner === myRole ? "You win 🎉" : msg.winner === 2 ? "Draw" : "You lose");
@@ -756,6 +759,15 @@ export function LiveMatch({
         </div>
       )}
 
+      {repWarn && state && !state.over && (
+        <div
+          className="chip animate-in"
+          style={{ alignSelf: "center", background: "rgba(240,180,40,0.16)", color: "var(--gold)", boxShadow: "inset 0 0 0 1px var(--gold)" }}
+        >
+          Repeating position — one more repeat scores the game as it stands
+        </div>
+      )}
+
       {timedOut && state && !state.over && !chainEnded && (
         <div className="card stack animate-in" style={{ gap: 6, textAlign: "center" }}>
           <span className="muted">⏱ Your time ran out — {displayName(oppAddr)} can take the pot.</span>
@@ -916,6 +928,11 @@ export function LiveMatch({
       {outcome !== null && (state?.over || chainEnded === "won" || chainEnded === "lost") && (
         <GameOverlay
           result={outcome}
+          note={
+            state && endKind(state) === "swept"
+              ? "No captures were left to make — each side kept the seeds on its own row."
+              : undefined
+          }
           stats={{ mine: myScore ?? 0, opp: oppScore ?? 0, moves: ply }}
           payout={
             outcome === 0 && stakeInfo.current

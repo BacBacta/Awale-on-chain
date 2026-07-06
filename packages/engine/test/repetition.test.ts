@@ -6,6 +6,9 @@ import {
   adjudicate,
   positionKey,
   endsGame,
+  repetitionCount,
+  endKind,
+  REPETITION_LIMIT,
   DRAW,
   SEEDS,
   type GameState,
@@ -109,7 +112,9 @@ describe("adjudicate — repetition ends a stuck cycle early", () => {
         s = applyMove(s, mv);
         const adj = adjudicate(moves);
         if (adj.over) {
-          if (adj.pits.every((p) => p === 0) && adj.noCaptureCount < 40) found = { adj, movesLen: moves.length };
+          // precise: adjudicate ended it but the plain per-move engine did NOT ⇒
+          // it was the REPETITION rule, not a base rule (majority/starve/backstop)
+          if (!s.over) found = { adj, movesLen: moves.length };
           break;
         }
       }
@@ -126,5 +131,79 @@ describe("adjudicate — repetition ends a stuck cycle early", () => {
   it("endsGame(moves, move) matches adjudicate's over flag", () => {
     const moves = [0, 1, 2];
     expect(endsGame(moves, 3)).toBe(adjudicate([...moves, 3]).over);
+  });
+});
+
+describe("UI helpers — repetitionCount & endKind", () => {
+  function lcg(seed: number): () => number {
+    let x = seed >>> 0;
+    return () => ((x = (Math.imul(x, 1664525) + 1013904223) >>> 0) / 2 ** 32);
+  }
+
+  it("repetitionCount starts at 1 and never reports the terminal count (game ends first)", () => {
+    expect(repetitionCount([])).toBe(1); // opening position, seen once
+    // across a real game it stays within [1, REPETITION_LIMIT-1]: hitting the
+    // limit ends the game, and an ended game reports 0
+    for (let seed = 1; seed <= 60; seed++) {
+      const rnd = lcg(seed);
+      const moves: number[] = [];
+      let s = initialState();
+      for (let i = 0; i < 400; i++) {
+        const mask = legalMovesMask(s);
+        const pool: number[] = [];
+        for (let h = 0; h < 6; h++) if (mask & (1 << h)) pool.push(h);
+        if (!pool.length) break;
+        moves.push(pool[Math.floor(rnd() * pool.length)]);
+        s = applyMove(s, moves[moves.length - 1]);
+        const rc = repetitionCount(moves);
+        if (adjudicate(moves).over) {
+          expect(rc).toBe(0); // over ⇒ 0
+          break;
+        }
+        expect(rc).toBeGreaterThanOrEqual(1);
+        expect(rc).toBeLessThan(REPETITION_LIMIT); // never reaches the limit while live
+      }
+    }
+  });
+
+  it("in a repetition-ended game, the live count reaches the warning threshold (LIMIT-1) before ending", () => {
+    // the UI warns when repetitionCount hits REPETITION_LIMIT-1; in any game the
+    // cycle rule ends, that threshold must actually be reached at some live ply
+    let hit = false;
+    for (let seed = 1; seed <= 800 && !hit; seed++) {
+      const rnd = lcg(seed);
+      const moves: number[] = [];
+      let s = initialState();
+      let maxLiveCount = 1;
+      for (let i = 0; i < 400; i++) {
+        const mask = legalMovesMask(s);
+        const pool: number[] = [];
+        for (let h = 0; h < 6; h++) if (mask & (1 << h)) pool.push(h);
+        if (!pool.length) break;
+        moves.push(pool[Math.floor(rnd() * pool.length)]);
+        s = applyMove(s, moves[moves.length - 1]);
+        const adj = adjudicate(moves);
+        if (adj.over) {
+          // repetition ending ⇔ adjudicate ended it but the per-move engine didn't
+          if (!s.over) {
+            expect(maxLiveCount).toBe(REPETITION_LIMIT - 1); // warning fired before the end
+            hit = true;
+          }
+          break;
+        }
+        maxLiveCount = Math.max(maxLiveCount, repetitionCount(moves));
+      }
+    }
+    expect(hit).toBe(true);
+  });
+
+  it("endKind: null while live, 'capture' on a majority, 'swept' on a board-clearing end", () => {
+    expect(endKind(initialState())).toBeNull();
+    // a swept ending zeroes the board
+    const swept: GameState = { ...initialState(), pits: Array(12).fill(0), store0: 26, store1: 22, over: true, winner: 0 };
+    expect(endKind(swept)).toBe("swept");
+    // a majority win keeps seeds on the board
+    const major: GameState = { ...initialState(), pits: [0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0], store0: 25, store1: 19, over: true, winner: 0 };
+    expect(endKind(major)).toBe("capture");
   });
 });

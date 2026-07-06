@@ -767,7 +767,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
           } else {
             const mm = hub.get(matchId);
             rearmTurnClock(matchId, msg.matchId); // re-arm FIRST so the broadcast deadline is the fresh turn's
-            io.to(msg.matchId).emit("state", { matchId: msg.matchId, state, ply: mm?.ply ?? 0, clocks: mm ? clocksOf(mm) : null, turnDeadline: turnDeadlineOf(matchId, mm) });
+            io.to(msg.matchId).emit("state", { matchId: msg.matchId, state, ply: mm?.ply ?? 0, clocks: mm ? clocksOf(mm) : null, turnDeadline: turnDeadlineOf(matchId, mm), repeat: mm?.repeat ?? 1 });
           }
         } catch (err) {
           socket.emit("error", { message: (err as Error).message });

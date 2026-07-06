@@ -29,6 +29,7 @@ export function GameOverlay({
   rematchState = "idle",
   onPlayAgain,
   onShare,
+  note,
 }: {
   result: 0 | 1 | 2; // 0 = you win, 1 = you lose, 2 = draw (viewer perspective)
   /** Optional human-readable winnings string, e.g. "1.95 USDC". */
@@ -46,6 +47,9 @@ export function GameOverlay({
   rematchState?: "idle" | "offered" | "incoming" | "declined";
   onPlayAgain: () => void;
   onShare?: () => void;
+  /** Extra line explaining an unusual ending, e.g. a repetition/stall that was
+   *  scored by splitting the board — shown under the subtitle. */
+  note?: string;
 }) {
   const win = result === 0;
   const draw = result === 2;
@@ -129,6 +133,11 @@ export function GameOverlay({
       <div className="muted" style={{ textAlign: "center" }}>
         {sub}
       </div>
+      {note && (
+        <div className="faint" style={{ textAlign: "center", marginTop: -8, fontSize: 12.5, maxWidth: 300 }}>
+          {note}
+        </div>
+      )}
 
       {stats && (
         <div
