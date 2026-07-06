@@ -10,7 +10,7 @@ import { PlayerPanel } from "./PlayerPanel.js";
 import { Icon } from "./Icon.js";
 import { SoundToggle } from "./SoundToggle.js";
 import { GameOverlay } from "./GameOverlay.js";
-import { createSessionKey, loadSession, persistSession, signMove, type SessionKey } from "../lib/session.js";
+import { createSessionKey, loadSession, persistSession, signMove, signResign, type SessionKey } from "../lib/session.js";
 import { escrowConfig } from "../lib/escrow.js";
 import { getEquipped, type EquippedSkin } from "../lib/skins.js";
 import { displayName } from "../lib/names.js";
@@ -131,9 +131,15 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
   }
 
   async function leaveGame() {
-    if (!data || role === null || data.over || data.open) return;
+    if (!data || !session.current || !cfg || role === null || data.over || data.open) return;
     try {
-      const state = await resignAsync(matchId, role);
+      // sign the resign with our session key (bound to the current ply), exactly
+      // as a move is signed — the server rejects an unsigned or forged forfeit
+      const sig = await signResign(session.current, BigInt(matchId), BigInt(data.ply), {
+        chainId: BigInt(cfg.chainId),
+        verifier: cfg.verifier,
+      });
+      const state = await resignAsync(matchId, role, sig as Hex);
       setData({ ...data, state, over: state.over });
     } catch (e) {
       setStatus(humanizeError(e));

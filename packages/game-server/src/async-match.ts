@@ -186,8 +186,11 @@ export class AsyncMatchService {
    * waiting out the inactivity clock. Notifies the opponent so a friend who
    * left doesn't leave the other staring at a table forever. Casual only —
    * staked async resigns settle on-chain.
+   *
+   * The resigner must sign it with their session key (same auth as a move), or
+   * anyone who learned the matchId could forfeit games on a player's behalf.
    */
-  async resign(matchId: string, player: 0 | 1): Promise<GameState> {
+  async resign(matchId: string, player: 0 | 1, signature: Hex): Promise<GameState> {
     const rec = await this.store.get(matchId);
     if (!rec) throw new Error("no such match");
     if (rec.mode !== "casual") throw new Error("staked async matches settle on-chain, not here");
@@ -195,7 +198,8 @@ export class AsyncMatchService {
     const m = Match.rehydrate(rec.snapshot);
     if (m.over) throw new Error("match over");
 
-    const state = m.forfeit(player); // the resigner forfeits → the opponent wins
+    // engine verifies the resign signature against player's registered session key
+    const state = await m.resign(player, signature); // the resigner forfeits → the opponent wins
     await this.store.save({
       snapshot: m.snapshot(),
       players: rec.players,

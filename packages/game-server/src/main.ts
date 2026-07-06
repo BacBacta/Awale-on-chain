@@ -609,9 +609,9 @@ const httpServer = createServer((req, res) => {
   if (req.method === "POST" && url.pathname === "/async/resign") {
     readJson(req)
       .then((b) => {
-        const { matchId, player } = b as { matchId: string; player: 0 | 1 };
-        if (!matchId || player == null) throw new Error("matchId + player required");
-        return asyncMatches.resign(matchId, player);
+        const { matchId, player, signature } = b as { matchId: string; player: 0 | 1; signature: `0x${string}` };
+        if (!matchId || player == null || !signature) throw new Error("matchId + player + signature required");
+        return asyncMatches.resign(matchId, player, signature);
       })
       .then((state) => json(200, { state }))
       .catch((e) => json(400, { error: (e as Error).message }));

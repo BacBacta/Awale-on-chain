@@ -69,9 +69,11 @@ export async function claimTimeoutAsync(matchId: string, claimant: 0 | 1): Promi
   return state;
 }
 
-/** Leave / resign a correspondence game — the opponent wins now and is notified. */
-export async function resignAsync(matchId: string, player: 0 | 1): Promise<GameState> {
-  const { state } = await post<{ state: GameState }>("/async/resign", { matchId, player });
+/** Leave / resign a correspondence game — the opponent wins now and is notified.
+ *  Signed with the player's session key (like a move), so no one else can forfeit
+ *  the game on their behalf. */
+export async function resignAsync(matchId: string, player: 0 | 1, signature: Hex): Promise<GameState> {
+  const { state } = await post<{ state: GameState }>("/async/resign", { matchId, player, signature });
   return state;
 }
 

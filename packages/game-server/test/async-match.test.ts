@@ -4,12 +4,17 @@ import type { Address } from "viem";
 import { AsyncMatchService } from "../src/async-match.js";
 import { InMemoryMatchStore } from "../src/persistence/store.js";
 import type { Notifier } from "../src/notifications/notifier.js";
-import { moveDigest } from "../src/eip712.js";
+import { moveDigest, resignDigest } from "../src/eip712.js";
 
 const VERIFIER: Address = "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3";
 const CHAIN_ID = 31337n;
 const s0 = privateKeyToAccount("0x0000000000000000000000000000000000000000000000000000000000a11ce0");
 const s1 = privateKeyToAccount("0x0000000000000000000000000000000000000000000000000000000000b0b000");
+
+/** Session-key signature over a resign at `ply` (mirrors the client). */
+function rsig(acct: typeof s0, matchId: bigint, ply: bigint) {
+  return acct.sign({ hash: resignDigest(matchId, ply, { chainId: CHAIN_ID, verifier: VERIFIER }) });
+}
 const A: Address = "0x000000000000000000000000000000000000000A";
 const B: Address = "0x000000000000000000000000000000000000000b";
 
@@ -133,7 +138,7 @@ describe("AsyncMatchService", () => {
     describe("resign / leave", () => {
       it("the opponent wins immediately and is notified", async () => {
         const { svc, notifies, id } = await newService();
-        const state = await svc.resign(id, 0); // A leaves → B wins now
+        const state = await svc.resign(id, 0, await rsig(s0, 42n, 0n)); // A leaves → B wins now
         expect(state.over).toBe(true);
         expect(state.winner).toBe(1);
         // B (the opponent) got a "you win" notification
@@ -144,9 +149,18 @@ describe("AsyncMatchService", () => {
 
       it("can be resigned even when it's not your turn", async () => {
         const { svc, id } = await newService(); // A on move
-        const state = await svc.resign(id, 1); // B leaves off-turn → A wins
+        const state = await svc.resign(id, 1, await rsig(s1, 42n, 0n)); // B leaves off-turn → A wins
         expect(state.over).toBe(true);
         expect(state.winner).toBe(0);
+      });
+
+      it("rejects a resign not signed by the resigning player's session key", async () => {
+        const { svc, id } = await newService();
+        // an attacker tries to forfeit A's game, but only holds B's key (or none):
+        // signing player 0's resign with s1 must fail — no one can forfeit for you
+        const forged = await rsig(s1, 42n, 0n);
+        await expect(svc.resign(id, 0, forged)).rejects.toThrow(/signature/);
+        expect((await svc.getState(id))?.over).toBe(false); // game untouched
       });
 
       it("feeds the profile/Elo hook", async () => {
@@ -164,7 +178,7 @@ describe("AsyncMatchService", () => {
           startTurn: 0,
           mode: "casual",
         });
-        await svc.resign(id, 0);
+        await svc.resign(id, 0, await rsig(s0, 44n, 0n));
         expect(results).toEqual([{ players: [A, B], winner: 1 }]);
       });
 
@@ -180,7 +194,7 @@ describe("AsyncMatchService", () => {
           startTurn: 0,
           mode: "casual",
         });
-        await expect(svc.resign(id, 0)).rejects.toThrow("no opponent");
+        await expect(svc.resign(id, 0, await rsig(s0, 45n, 0n))).rejects.toThrow("no opponent");
       });
 
       it("rejects a staked (cash) async resign — settles on-chain", async () => {
@@ -195,7 +209,7 @@ describe("AsyncMatchService", () => {
           startTurn: 0,
           mode: "cash",
         });
-        await expect(svc.resign(id, 0)).rejects.toThrow("settle on-chain");
+        await expect(svc.resign(id, 0, await rsig(s0, 46n, 0n))).rejects.toThrow("settle on-chain");
       });
     });
 
