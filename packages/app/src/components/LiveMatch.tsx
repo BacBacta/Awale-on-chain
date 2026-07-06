@@ -941,7 +941,7 @@ export function LiveMatch({
               : undefined
           }
           saveHref={
-            // a money win just scored league points — hand the winner the race
+            // a money win just scored Weekly race points — hand the winner the race
             // they're now in, not a Season page whose deposits may be closed
             outcome === 0 && stakeInfo.current ? "/compete" : undefined
           }

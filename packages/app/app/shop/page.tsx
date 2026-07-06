@@ -309,7 +309,7 @@ export default function Shop() {
           ) : state === "locked" ? (
             // aspiration, not a dead end: name the rank that unlocks it
             <span className="faint" style={{ flex: 1, alignSelf: "center", textAlign: "center", fontSize: 11.5, lineHeight: 1.15 }}>
-              {s.champion ? "Win the weekly league" : `Reach ${gateTier?.icon ?? ""} ${s.tier}`}
+              {s.champion ? "Win the Weekly race" : `Reach ${gateTier?.icon ?? ""} ${s.tier}`}
             </span>
           ) : state === "sold-out" ? (
             <button className="btn secondary" style={{ flex: 1 }} disabled>

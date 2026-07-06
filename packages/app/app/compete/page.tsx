@@ -119,34 +119,36 @@ export default function Compete() {
       {/* the ladder — renders only once someone is on it */}
       <SkillLeaderboard label="Ladder" />
 
-      {/* bigger arenas — real events only; stats are not an event */}
-      {harvestAddress() && (
-        <>
-          <span className="section-label">More ways to compete</span>
-          <div className="stack" style={{ gap: 8 }}>
-            <Row
-              href="/league"
-              icon="trophy"
-              title="Season"
-              badge={leagueComingSoon() ? "Soon" : undefined}
-              sub={
-                leagueComingSoon()
-                  ? "No-loss savings — launching shortly"
-                  : "No-loss savings — your deposit always comes back in full"
-              }
-            />
-          </div>
-        </>
-      )}
+      {/* the other arenas — each row names its game and its metric, so the
+          three boards (rating / weekly pts / all-time money) never blur */}
+      <span className="section-label">More ways to compete</span>
+      <div className="stack" style={{ gap: 8 }}>
+        <Row
+          href="/stats"
+          icon="medal"
+          title="All-time winners"
+          sub="The biggest net winners since launch — every settled money game counts"
+        />
+        {harvestAddress() && (
+          <Row
+            href="/league"
+            icon="trophy"
+            title="Season"
+            badge={leagueComingSoon() ? "Soon" : undefined}
+            sub={
+              leagueComingSoon()
+                ? "No-loss savings — launching shortly"
+                : "No-loss savings — your deposit always comes back in full"
+            }
+          />
+        )}
+      </div>
 
       <div className="spacer" />
 
       <div className="row" style={{ justifyContent: "center", gap: 14, paddingBottom: 4 }}>
-        <Link href="/guide" className="faint" style={{ fontSize: 12.5 }}>
-          How it all works
-        </Link>
-        <Link href="/stats" className="faint" style={{ fontSize: 12.5 }}>
-          Money leaderboard & global stats
+        <Link href="/guide#winning" className="faint" style={{ fontSize: 12.5 }}>
+          How ranks, the race & the season work
         </Link>
       </div>
     </main>

@@ -72,7 +72,16 @@ export function SkillLeaderboard({ label, top = 5 }: { label?: string; top?: num
 
   return (
     <div className="stack" style={{ gap: 6 }}>
-      {label && <span className="section-label">{label}</span>}
+      {label && (
+        // the unit caption is what tells this list apart from the Weekly race
+        // (pts) and the all-time winners (money) — every board names its metric
+        <div className="row" style={{ alignItems: "baseline" }}>
+          <span className="section-label">{label}</span>
+          <span className="faint" style={{ fontSize: 11, letterSpacing: "0.4px", textTransform: "uppercase" }}>
+            skill rating · all-time
+          </span>
+        </div>
+      )}
       <div className="card flat" style={{ padding: 6, gap: 0 }}>
         {head.map((r, i) => (
           <Line key={r.address} r={r} i={i} />

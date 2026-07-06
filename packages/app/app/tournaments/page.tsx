@@ -1,6 +1,6 @@
 "use client";
 
-// Tournaments were replaced by the weekly league (every cash game counts, top
+// Tournaments were replaced by the Weekly race (every cash game counts, top
 // 5 split the pot each Monday — see Compete). This route survives only so old
 // deep links land somewhere sensible; in-flight brackets still coordinate via
 // /play?tournament=<id>.
@@ -17,10 +17,10 @@ export default function TournamentsMoved() {
   return (
     <main className="pad stack" style={{ flex: 1, gap: 12, alignItems: "center", justifyContent: "center" }}>
       <span className="muted" style={{ textAlign: "center" }}>
-        Tournaments have grown into the weekly league — every money game now counts.
+        Tournaments have grown into the Weekly race — every money game now counts.
       </span>
       <Link className="btn" href="/compete">
-        Go to the Weekly league
+        Go to the Weekly race
       </Link>
     </main>
   );

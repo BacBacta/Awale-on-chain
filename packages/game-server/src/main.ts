@@ -402,7 +402,7 @@ async function convertReferral(player: Address): Promise<void> {
   void notifier
     .notify(referrer as Address, {
       title: "Your friend is playing! 🎉",
-      body: `They just finished their first money game — you earned +${REFERRAL_POINTS} league points.`,
+      body: `They just finished their first money game — you earned +${REFERRAL_POINTS} Weekly race points.`,
       url: "/compete",
       tag: `awale-ref-${player.toLowerCase()}`,
     })
@@ -1485,7 +1485,7 @@ async function onSettled(matchId: bigint, winner: number, prizeWei: bigint, at: 
     void notifier
       .notify(winner === 0 ? m.player0 : m.player1, {
         title: `💰 You won ${human(prizeWei)} — paid out`,
-        body: `Your winnings from match #${key} are in your wallet. You also scored league points.`,
+        body: `Your winnings from match #${key} are in your wallet. You also scored Weekly race points.`,
         url: "/compete",
         tag: `awale-paid-${key}`,
       })
@@ -1691,7 +1691,7 @@ async function leagueTick(): Promise<void> {
   result.winners.forEach((w, i) => {
     void notifier
       .notify(w.address, {
-        title: "You won the weekly league! 🏆",
+        title: "You won the Weekly race! 🏆",
         body:
           i === 0
             ? "You finished #1 — the Midnight board is yours, and your prize is ready to collect."

@@ -195,7 +195,7 @@ export default function Profile() {
         )}
         {address && (
           <button className="btn secondary block" onClick={shareReferral}>
-            <Icon name="share" size={16} /> Invite friends — earn league points
+            <Icon name="share" size={16} /> Invite friends — earn race points
           </button>
         )}
       </div>

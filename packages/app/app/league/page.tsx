@@ -333,11 +333,11 @@ export default function League() {
           <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
             <span className="h2">This season started without you</span>
             <span className="muted">
-              Deposits reopen when the next season starts. Meanwhile, the weekly league pays out every Monday — no
+              Deposits reopen when the next season starts. Meanwhile, the Weekly race pays out every Monday — no
               deposit needed, every money game counts.
             </span>
             <Link className="btn block" href="/compete" style={{ marginTop: 4 }}>
-              <Icon name="trophy" size={17} /> Go to the Weekly league
+              <Icon name="trophy" size={17} /> Go to the Weekly race
             </Link>
           </div>
         )

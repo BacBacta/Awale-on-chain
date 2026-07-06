@@ -43,9 +43,12 @@ export default async function Stats() {
 
       <PlayerStats />
 
-      <span className="h2" style={{ marginTop: 8 }}>
-        Money leaderboard
-      </span>
+      <div className="col" style={{ gap: 2, marginTop: 8 }}>
+        <span className="h2">All-time winners</span>
+        <span className="faint" style={{ fontSize: 12 }}>
+          Net winnings across every settled money game — since day one, never resets.
+        </span>
+      </div>
       <Leaderboard />
 
       {/* operator dashboard (DAU/MAU, retention, volume, fees) — visible only

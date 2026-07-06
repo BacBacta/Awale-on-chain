@@ -36,7 +36,7 @@ export function GameOverlay({
   payout?: string;
   /** End-of-game stats for the result card. */
   stats?: { mine: number; opp: number; moves?: number };
-  /** When set (cash win), offer to grow a share of the winnings in the League. */
+  /** When set (cash win), leads the winner to the Weekly race they just scored in. */
   saveHref?: string;
   /** Fallback one-tap rematch link (practice / no live opponent socket). */
   rematchHref?: string;
@@ -190,7 +190,7 @@ export function GameOverlay({
         )}
         {saveHref && (
           <a className="btn block" href={saveHref} style={{ background: "linear-gradient(180deg, #f7d27a, var(--gold))" }}>
-            <Icon name="trophy" size={17} /> You scored league points — see the Weekly league
+            <Icon name="trophy" size={17} /> You scored race points — see the Weekly race
           </a>
         )}
         <button className={`btn ${saveHref || rematchHref ? "secondary" : ""} block`} onClick={onPlayAgain}>

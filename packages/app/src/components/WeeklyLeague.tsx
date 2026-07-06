@@ -1,9 +1,13 @@
 "use client";
 
-// The weekly race card on Compete — the recurring money event. No sign-up, no
-// bracket: cash games played this week count automatically, top 5 split the
-// pot on Monday. One card tells a player the pot, where they stand, and what
-// to do next; it renders nothing when the server (or the feature) is off.
+// The Weekly race card on Compete — the recurring money event. No sign-up, no
+// bracket: cash games played this week count automatically and the pot splits
+// by points on Monday. One card tells a player the pot, where they stand, and
+// what to do next; it renders nothing when the server (or the feature) is off.
+//
+// Naming: player-facing this is the "Weekly race" (unit: pts, resets Monday) —
+// never "league", which players confused with the Season (the no-loss savings
+// feature at /league). Code/API identifiers keep the historical league name.
 
 import { useEffect, useState } from "react";
 import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
@@ -91,7 +95,7 @@ export function WeeklyLeague() {
         // the win comes FIRST — collecting a prize is the whole reason this
         // player opened the app today
         <div className="card stack animate-in" style={{ gap: 12, padding: 18, boxShadow: "inset 0 0 0 1.5px rgba(246,200,99,0.45)" }}>
-          <span className="chip gold" style={{ alignSelf: "flex-start" }}>🏆 Weekly league — you won!</span>
+          <span className="chip gold" style={{ alignSelf: "flex-start" }}>🏆 Weekly race — you won!</span>
           {claimed ? (
             <span className="chip positive" style={{ alignSelf: "stretch", justifyContent: "center", padding: 10 }}>
               Paid ✓ — it&apos;s in your wallet
@@ -114,7 +118,7 @@ export function WeeklyLeague() {
       )}
       <div className="card stack animate-in" style={{ gap: 14, padding: 18 }}>
         <div className="row">
-          <span className="chip gold">🏁 Weekly league</span>
+          <span className="chip gold">🏁 Weekly race</span>
           <span className="faint">Ends in {raceEndsIn(data.endsAt)}</span>
         </div>
 
@@ -124,10 +128,10 @@ export function WeeklyLeague() {
             <span className="display" style={{ color: "var(--gold)", fontSize: 34, lineHeight: 0.95, fontVariantNumeric: "tabular-nums" }}>
               {fmt(pool, STAKE_DECIMALS)} {STAKE_SYMBOL}
             </span>
-            <span className="faint">prize pot · every ranked player gets a share Monday, podium adds a bonus</span>
+            <span className="faint">this week&apos;s pot · Monday it splits by points — everyone in the race gets a share, podium adds a bonus</span>
           </div>
         ) : (
-          <span className="muted">The pot grows with every money game this week — every ranked player gets a share Monday, and the podium adds a bonus.</span>
+          <span className="muted">The pot grows with every money game this week. Monday it splits by points — everyone in the race gets a share, and the podium adds a bonus.</span>
         )}
 
         {entered && data.me ? (
@@ -147,7 +151,8 @@ export function WeeklyLeague() {
           </div>
         )}
 
-        {/* top 3 standings — a tease, not the whole board (the ladder is below) */}
+        {/* top 3 of THIS WEEK'S race (points) — deliberately compact. Not to be
+            confused with the Ladder below, which ranks skill rating all-time. */}
         {data.standings.length > 0 && (
           <div className="card flat stack" style={{ gap: 2, padding: 6 }}>
             {data.standings.slice(0, 3).map((r, i) => {
@@ -173,7 +178,7 @@ export function WeeklyLeague() {
         )}
 
         <span className="faint" style={{ fontSize: 11.5 }}>
-          Win = 3 pts{SELF_CONFIGURED ? " · prizes require a one-time identity check" : ""}
+          Win = 3 pts · resets every Monday{SELF_CONFIGURED ? " · prizes require a one-time identity check" : ""}
         </span>
       </div>
     </>

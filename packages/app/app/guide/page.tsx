@@ -121,11 +121,19 @@ export default function Guide() {
           <span style={{ fontSize: 13 }}>{TIERS}</span>
         </span>
         <span className="muted" style={{ lineHeight: 1.5 }}>
-          <b style={{ color: "var(--text)" }}>The weekly league.</b> Money games score automatically: play 5 in a week
-          and you&apos;re in. Every Monday the pot is shared by EVERY ranked player in
-          proportion to their points — more points, bigger share — and the top 3 add a small podium bonus. Winners collect their prize with one tap in Compete. 45% of every house
-          fee feeds that pot — so the fee partly comes back to the players. Wins are 3 points, draws score nothing, and only your first 3 games
-          against the same opponent count.
+          <b style={{ color: "var(--text)" }}>The Weekly race.</b> The recurring money event — it resets every Monday.
+          Money games score points automatically: a win is 3 points, draws score nothing, and only your first 3 games
+          against the same opponent count. Play 5 money games in a week and you&apos;re in. On Monday the pot splits in
+          proportion to points — more points, bigger share — and the top 3 add a small podium bonus. Winners collect
+          with one tap in Compete. 45% of every house fee feeds that pot, so the fee partly comes back to the players.
+        </span>
+        <span className="muted" style={{ lineHeight: 1.5 }}>
+          <b style={{ color: "var(--text)" }}>All-time winners.</b> The money hall of fame: net winnings across every
+          settled money game since day one. It never resets — find it under Stats.
+        </span>
+        <span className="faint" style={{ fontSize: 12.5, lineHeight: 1.5 }}>
+          In short — three boards, three different games: the <b>Ladder</b> ranks skill (rating, all-time), the{" "}
+          <b>Weekly race</b> pays points (pot splits Monday), and <b>All-time winners</b> counts money (never resets).
         </span>
       </div>
 
@@ -135,9 +143,9 @@ export default function Guide() {
       </span>
       <div className="card stack" style={{ gap: 8 }}>
         <span className="muted" style={{ lineHeight: 1.5 }}>
-          A no-loss savings league. When deposits open, put money in for the season — it always comes back in full at
-          the end. While it&apos;s deposited it earns yield, and that yield is shared by the depositors who win the
-          most money games. You can only win.
+          No-loss savings, separate from the boards above. When deposits open, put money in for the season — it always
+          comes back in full at the end. While it&apos;s deposited it earns yield, and that yield is shared by the
+          depositors who win the most money games. You can only win.
         </span>
       </div>
 
