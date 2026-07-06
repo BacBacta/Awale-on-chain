@@ -8,6 +8,7 @@ import type { Address } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../../src/lib/minipay.js";
 import { escrowConfig, cancelMatch, voidExpired, finalizeResult } from "../../src/lib/escrow.js";
 import { readWithRetry, confirmTx } from "../../src/lib/tx.js";
+import { cachedOutcomes, scanSettled, type Outcome } from "../../src/lib/outcomes.js";
 import { listLocalMatches, statusView } from "../../src/lib/matches.js";
 import { computePayout, fmt } from "../../src/lib/money.js";
 import { humanizeError } from "../../src/lib/errors.js";
@@ -49,6 +50,9 @@ interface AsyncRow {
 
 export default function Matches() {
   const [rows, setRows] = useState<Row[] | null>(null);
+  // settled outcomes (winner + prize) per resolved match — so a finished row
+  // says "You won / You lost / Draw", not a bare "Finished"
+  const [outcomes, setOutcomes] = useState<Record<string, Outcome>>({});
   const [error, setError] = useState<string | null>(null);
   const [asyncRows, setAsyncRows] = useState<AsyncRow[]>([]);
   const [openMatches, setOpenMatches] = useState<OpenMatch[]>([]);
@@ -200,6 +204,27 @@ export default function Matches() {
       }
     });
   }, []);
+
+  // resolve win/lose for finished matches from MatchSettled (cached forever)
+  useEffect(() => {
+    const cfg = escrowConfig();
+    if (!cfg || !rows) return;
+    const resolvedIds = rows.filter((r) => r.status === 4).map((r) => r.id);
+    if (resolvedIds.length === 0) return;
+    const merge = (m: Map<string, Outcome>) => {
+      if (m.size === 0) return;
+      setOutcomes((prev) => {
+        const next = { ...prev };
+        for (const [k, v] of m) next[k] = v;
+        return next;
+      });
+    };
+    merge(cachedOutcomes(resolvedIds));
+    const missing = resolvedIds.filter((id) => !cachedOutcomes([id]).has(id.toString()));
+    if (missing.length > 0) {
+      scanSettled(publicClient(cfg.rpcUrl, cfg.chainId), cfg.escrow, missing).then(merge).catch(() => {});
+    }
+  }, [rows]);
 
   const [creating, setCreating] = useState(false);
   async function newFriendGame() {
@@ -401,6 +426,18 @@ export default function Matches() {
             const expired =
               mySeat !== null && (r.status === 2 || r.status === 3) && r.activeDeadline > 0 && now > r.activeDeadline;
             const collectable = mySeat !== null && r.status === 3 && now > r.challengeDeadline && r.proposedWinner === mySeat;
+            // finished-match outcome for THIS wallet (win/lose/draw + net)
+            const oc = r.status === 4 ? outcomes[r.id.toString()] : undefined;
+            const result =
+              oc && mySeat !== null ? (oc.winner === 2 ? "draw" : oc.winner === mySeat ? "won" : "lost") : null;
+            const resultChip =
+              result === "won"
+                ? { label: `You won +${fmt(oc!.prize - r.stake, STAKE_DECIMALS)} ${STAKE_SYMBOL}`, tone: "positive" }
+                : result === "lost"
+                  ? { label: `You lost ${fmt(r.stake, STAKE_DECIMALS)} ${STAKE_SYMBOL}`, tone: "danger" }
+                  : result === "draw"
+                    ? { label: "Draw — stake back", tone: "" }
+                    : null;
             return (
               <div className="card stack animate-in" key={r.id.toString()} style={{ gap: 8 }}>
                 <div className="row">
@@ -410,9 +447,9 @@ export default function Matches() {
                       You each stake {fmt(r.stake, STAKE_DECIMALS)} · winner takes {fmt(prize, STAKE_DECIMALS)} {STAKE_SYMBOL}
                     </span>
                   </span>
-                  <span className={`chip ${sv.tone}`}>
+                  <span className={`chip ${resultChip ? resultChip.tone : sv.tone}`}>
                     {sv.live && <span className="dot pulse" />}
-                    {sv.label}
+                    {resultChip ? resultChip.label : sv.label}
                   </span>
                 </div>
                 {collectable && (
