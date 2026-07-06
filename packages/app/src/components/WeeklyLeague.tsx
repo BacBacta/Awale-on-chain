@@ -151,10 +151,14 @@ export function WeeklyLeague() {
           </div>
         )}
 
-        {/* top 3 of THIS WEEK'S race (points) — deliberately compact. Not to be
-            confused with the Ladder below, which ranks skill rating all-time. */}
+        {/* THIS WEEK'S race standings (points) — self-labelled so it can never
+            be mistaken for the Ladder below, which ranks skill rating all-time.
+            Same caption pattern as the Ladder: metric · period. */}
         {data.standings.length > 0 && (
           <div className="card flat stack" style={{ gap: 2, padding: 6 }}>
+            <span className="section-label" style={{ padding: "2px 6px 4px" }}>
+              Standings · points this week
+            </span>
             {data.standings.slice(0, 3).map((r, i) => {
               const mine = me && r.address.toLowerCase() === me.toLowerCase();
               return (
