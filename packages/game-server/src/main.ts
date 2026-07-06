@@ -1230,7 +1230,7 @@ async function keeperTick(): Promise<void> {
         abi: matchEscrowAbi,
         functionName: "getMatch",
         args: [BigInt(idStr)],
-      })) as { status: number; startTurn: number; challengeDeadline: bigint; activeDeadline: bigint; revealBlock: bigint; player0: Address; player1: Address };
+      })) as { status: number; startTurn: number; proposedWinner: number; challengeDeadline: bigint; activeDeadline: bigint; revealBlock: bigint; player0: Address; player1: Address };
       const status = Number(m.status);
       if (status === EscrowStatus.Resolved || status === EscrowStatus.Voided || status === EscrowStatus.Cancelled) {
         tracked.delete(idStr); // terminal — stop watching
@@ -1242,6 +1242,7 @@ async function keeperTick(): Promise<void> {
         matchId: BigInt(idStr),
         status,
         startTurn: Number(m.startTurn),
+        proposedWinner: Number(m.proposedWinner),
         challengeDeadline: Number(m.challengeDeadline),
         activeDeadline: Number(m.activeDeadline),
         revealBlock: Number(m.revealBlock),
@@ -1250,9 +1251,25 @@ async function keeperTick(): Promise<void> {
       /* transient RPC error — retry next tick */
     }
   }
-  const actions = keeperActions(matches, now, blockNumber).filter(
-    (a) => !(a.action === "voidExpired" && voidBlocked.has(a.matchId.toString())),
-  );
+  const proposedWinnerOf = new Map(matches.map((m) => [m.matchId.toString(), m.proposedWinner]));
+  const actions = keeperActions(matches, now, blockNumber).filter((a) => {
+    if (a.action === "voidExpired" && voidBlocked.has(a.matchId.toString())) return false;
+    // Anti-theft guard: NEVER let the keeper finalize a proposal the hub knows
+    // is false. The primary defence is the on-chain challenge the anticheat
+    // watcher fires (permissionless-terminal, MatchEscrow v5); this is the
+    // belt-and-suspenders so that even if that tx never landed, the keeper does
+    // not become the actor that pays a losing player's lie. The honest winner /
+    // any keeper can still challenge on-chain; a real result reconciles it.
+    if (a.action === "finalize") {
+      const hubMatch = hub.get(a.matchId);
+      const claimed = proposedWinnerOf.get(a.matchId.toString());
+      if (hubMatch?.state.over && claimed !== undefined && hubMatch.state.winner !== claimed) {
+        console.warn(`[keeper] REFUSING to finalize match ${a.matchId}: proposed winner ${claimed} ≠ real ${hubMatch.state.winner} — challenge should settle it`);
+        return false;
+      }
+    }
+    return true;
+  });
   if (actions.length === 0) return;
   try {
     // per-action failures are reported, not thrown — one un-voidable match

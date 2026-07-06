@@ -503,17 +503,49 @@ contract MatchEscrowTest is Test {
         escrow.challenge(id, empty);
     }
 
-    // [L-04] non-player cannot call challenge
-    function test_challenge_revertNonPlayer() public {
+    // [L-04] a non-player CANNOT void via the non-terminal (griefing) path.
+    // Forcing a refund with a validly-signed partial transcript is the L-04
+    // grief — only participants may take the void branch.
+    function test_challenge_nonPlayerCannotVoid() public {
         uint256 id = _createAndJoin();
         uint8 startTurn = escrow.getMatch(id).startTurn;
-        (ReplayVerifier.Transcript memory t,) = _buildFullTranscript(id, startTurn);
+
+        ReplayVerifier.Transcript memory t = _buildPartialTranscript(id, startTurn, 6);
+        bytes32 commitment = verifier.transcriptHash(id, startTurn, t.moves);
         vm.prank(alice);
-        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        escrow.proposeResult(id, 0, commitment);
 
         vm.expectRevert(bytes("MatchEscrow: not a player"));
         vm.prank(address(0xdead));
         escrow.challenge(id, t);
+    }
+
+    // [backstop] a non-player (the server's keeper) CAN challenge with a
+    // TERMINAL transcript — it can only enforce the true winner, so it is
+    // permissionless. This is the anti-theft net when the honest winner is
+    // offline for the whole challenge window; a player-only gate silently
+    // disabled it and let a losing opponent's proposeResult+finalize steal
+    // the pot.
+    function test_challenge_nonPlayerCanEnforceTerminalResult() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        (ReplayVerifier.Transcript memory t, uint8 trueWinner) = _buildFullTranscript(id, startTurn);
+
+        // the loser proposes themselves as winner and would finalize the lie
+        uint8 liarClaim = trueWinner == 0 ? 1 : 0;
+        vm.prank(bob);
+        escrow.proposeResult(id, liarClaim, bytes32(uint256(1)));
+
+        address trueWinnerAddr = trueWinner == 0 ? alice : bob;
+        uint256 before = usdc.balanceOf(trueWinnerAddr);
+
+        // a third party (keeper) that is NOT alice/bob submits the real ending
+        vm.prank(address(0xC0DE)); // keeper, not a match player
+        escrow.challenge(id, t);
+
+        uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(trueWinnerAddr), before + prize, "keeper enforced the true winner");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Resolved));
     }
 
     // [M-04] proposeResult must revert on an expired match

@@ -29,6 +29,7 @@ export interface KeeperMatch {
   activeDeadline: number; // unix seconds
   startTurn?: number; // 0/1 once fixed, START_UNSET while pending
   revealBlock?: number; // block whose hash fixes startTurn
+  proposedWinner?: number; // 0/1/DRAW, valid while Proposed — for the anti-theft finalize guard
 }
 
 export type KeeperAction = { matchId: bigint; action: "finalize" | "voidExpired" | "finalizeStart" };

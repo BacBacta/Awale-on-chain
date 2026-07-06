@@ -271,7 +271,6 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     ///          the proposer's commitment (prevents escape via partial transcript).
     function challenge(uint256 matchId, ReplayVerifier.Transcript calldata t) external nonReentrant {
         Match storage m = matches[matchId];
-        require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
         require(m.status == Status.Proposed, "MatchEscrow: not proposed");
         require(block.timestamp <= m.challengeDeadline, "MatchEscrow: window closed");
 
@@ -283,13 +282,28 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         AwaleRules.GameState memory state = verifier.verify(t);
 
         if (state.over) {
-            // terminal: canonical winner is paid regardless of the proposer's claim
+            // terminal: the verifier's winner is canonical and is paid regardless
+            // of the proposer's claim. PERMISSIONLESS — a terminal transcript,
+            // carrying both session signatures, can only *enforce the true
+            // result*, so anyone may submit it. This is essential: when the
+            // honest winner is offline for the whole window, the server's keeper
+            // (never a match player) is the only actor that can refute a losing
+            // opponent's false proposeResult+finalize theft. A player-only gate
+            // here silently disabled that backstop — and audit L-04 was only ever
+            // about the void path below, where an outsider forcing a *refund* is
+            // the actual griefing vector.
             emit ResultChallenged(matchId, state.winner);
             _payout(matchId, m, state.winner);
         } else {
-            // non-terminal: only void if the transcript matches the proposer's commitment.
-            // Requiring the hash prevents a losing challenger from submitting a short
-            // prefix of the real game to manufacture a false "game-still-live" proof.
+            // non-terminal but valid → proves the game was still live, so the
+            // proposal was premature → void (refund both). Two gates:
+            //   1. participants only — an outsider replaying a validly-signed
+            //      partial transcript to force a refund is the L-04 grief; a
+            //      third party can never trigger a void.
+            //   2. the transcript must hash to the proposer's commitment — stops
+            //      a losing challenger submitting a short prefix of the real game
+            //      to manufacture a false "game-still-live" proof (H-02).
+            require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
             require(
                 verifier.transcriptHash(t.matchId, t.startTurn, t.moves) == m.transcriptCommitment,
                 "MatchEscrow: transcript mismatch"

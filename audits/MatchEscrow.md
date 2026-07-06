@@ -23,6 +23,7 @@ is the only contract here that custodies funds, so it carries the real risk.
 |---|---|---|---|
 | H-01 | Pot theft via premature `proposeResult` on a live game | High | **Resolved** |
 | H-02 | Zero/partial-transcript challenge voids any proposed match | High | **Resolved** |
+| H-03 | Player-only `challenge` gate (v4) disabled the keeper anti-theft backstop | High | **Resolved (v5)** |
 | M-01 | Arbitrary / fee-on-transfer staking token breaks accounting | Medium | **Resolved** |
 | M-02 | Owner rake change retroactively affects in-flight matches | Medium | **Resolved** |
 | M-03 | Stakes can be locked forever by a silent opponent | Medium | **Resolved** |
@@ -198,12 +199,53 @@ who obtained signed move messages through normal play can trigger the partial-tr
 path against any of their own matches. Restricting callers to match participants reduces
 the attack surface to colluding or self-interested actors.
 
-**Resolution:**
+**Resolution (v4):**
 ```diff
   function challenge(uint256 matchId, ReplayVerifier.Transcript calldata t) external nonReentrant {
       Match storage m = matches[matchId];
 +     require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
 ```
+
+**Superseded by H-03 (v5).** The v4 gate above was too broad: it blocked the
+*terminal* branch too, silently disabling the keeper's anti-theft backstop. See
+H-03 — v5 keeps the participant-only gate **only on the void branch** (where the
+grief actually lives) and makes the terminal branch permissionless.
+
+---
+
+### [H-03] Player-only `challenge` gate (v4) disabled the keeper's anti-theft backstop — **Resolved (v5)**
+
+**Description.** The optimistic path (`proposeResult` → window → `finalize`) is
+safe only because a false proposal can be refuted by `challenge` before the
+window closes. The intended safety net when the honest winner is **offline for
+the whole window** (common on mobile — a player closes the app right after
+winning) is the **server keeper**: it holds the doubly-signed transcript and
+auto-challenges any proposal that disagrees with the real ending ([main.ts]
+`ResultProposed` watcher).
+
+The v4 fix for L-04 added `require(msg.sender == player0 || player1)` at the top
+of `challenge`. **The keeper is not a match player**, so every backstop challenge
+reverted `"not a player"` — the net was dead code. Worse, `keeperActions`
+finalizes any expired proposal unconditionally, so the keeper itself pays out the
+lie. Net: a losing player calls `proposeResult(self)`, stays quiet for the
+window, and `finalize` hands them the whole pot.
+
+Never triggered on testnet only because the operator happened to be a player in
+every manual test. With independent players on mainnet it is a direct theft path.
+
+**Impact:** High — theft of the opponent's stake whenever the honest winner is
+offline for the challenge window.
+
+**Resolution (v5).** Split the gate by branch: the terminal branch is
+permissionless (a doubly-signed terminal transcript can only *enforce the true
+result*, so anyone — the keeper — may submit it); the non-terminal **void** branch
+keeps the participant-only gate (that is the real L-04 grief — an outsider forcing
+a refund). Defence-in-depth server-side: the keeper now **refuses to `finalize`**
+a proposal whose on-chain `proposedWinner` contradicts a terminal result known to
+the hub. Covered by `test_challenge_nonPlayerCanEnforceTerminalResult` (backstop
+works from a stranger) and `test_challenge_nonPlayerCannotVoid` (grief still
+blocked); the challenge invariant suite drives the terminal path from a non-player
+keeper address.
 
 ---
 

@@ -196,7 +196,10 @@ contract ChallengeHandler is Test {
         uint256 eb = usdc.balanceOf(address(escrow));
         uint256 tb = usdc.balanceOf(treasury);
 
-        vm.prank(m.player0);
+        // a NON-player keeper submits the terminal transcript — the anti-theft
+        // backstop path. It must pay the canonical winner exactly as a player
+        // would, proving the permissionless-terminal branch never harms anyone.
+        vm.prank(address(0xC0FFEE));
         escrow.challenge(id, t);
 
         ghostOut += eb - usdc.balanceOf(address(escrow));
