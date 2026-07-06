@@ -1,6 +1,7 @@
 "use client";
 
 import { Icon } from "../../src/components/Icon.js";
+import { STAKE_DECIMALS, STAKE_SYMBOL } from "../../src/lib/stake.js";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { readContract } from "viem/actions";
@@ -20,8 +21,6 @@ import { displayName, friendlyName } from "../../src/lib/names.js";
 import { listOpenMatches, joinOpenMatch, type OpenMatch } from "../../src/lib/lobby.js";
 import type { WriteClient } from "../../src/lib/escrow.js";
 
-const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
-const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
 const FEE_CURRENCY = (process.env.NEXT_PUBLIC_FEE_CURRENCY || undefined) as Address | undefined;
 
 interface Row {

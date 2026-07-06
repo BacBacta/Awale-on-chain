@@ -9,6 +9,7 @@
 //     error detail goes to the console, not the screen.
 
 import { Icon } from "../../src/components/Icon.js";
+import { STAKE_DECIMALS } from "../../src/lib/stake.js";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { readContract } from "viem/actions";
@@ -33,7 +34,7 @@ import { erc20Abi } from "../../../protocol/src/abis.js";
 
 const tierIndex = (name?: string) => (name ? TIERS.findIndex((t) => t.name === name) : -1);
 
-const DECIMALS = 18;
+const DECIMALS = STAKE_DECIMALS;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Wallet = any;
 

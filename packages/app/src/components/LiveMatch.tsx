@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
 import Link from "next/link";
 import { io, type Socket } from "socket.io-client";
 import { readContract } from "viem/actions";
@@ -27,8 +28,6 @@ import { Icon } from "./Icon.js";
 import { SoundToggle } from "./SoundToggle.js";
 import { CrossMatchOffer } from "./CrossMatchOffer.js";
 
-const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
-const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
 import { readContract } from "viem/actions";
 import { type Address } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
@@ -11,8 +12,6 @@ import { getProfile, rankFor } from "../lib/profile.js";
 import { cachedOutcomes, scanSettled, type Outcome } from "../lib/outcomes.js";
 import { matchEscrowAbi } from "../../../protocol/src/abis.js";
 
-const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6");
-const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
 
 // Outcome lookup lives in lib/outcomes.ts now: cached forever per match
 // (settled results are immutable) and scanned ONLY for Resolved ids — the old

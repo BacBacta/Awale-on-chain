@@ -6,6 +6,7 @@
 // to do next; it renders nothing when the server (or the feature) is off.
 
 import { useEffect, useState } from "react";
+import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
 import { humanizeError } from "../lib/errors.js";
 import Link from "next/link";
 import type { Address } from "viem";
@@ -15,8 +16,6 @@ import { getWeeklyLeague, getPendingPrizes, claimPrizes, raceEndsIn, weeklyLeagu
 import { friendlyName } from "../lib/names.js";
 import { fmt } from "../lib/money.js";
 
-const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
-const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
 const MEDAL = ["#f6c863", "#cdd3da", "#cd8e5a"];
 // once Self verification is live, prizes only pay out to verified humans —
 // the card says so the week it turns on, not the Monday someone isn't paid

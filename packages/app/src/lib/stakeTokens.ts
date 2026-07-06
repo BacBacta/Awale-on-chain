@@ -44,7 +44,7 @@ export function stakeTokens(): StakeToken[] {
     {
       symbol: process.env.NEXT_PUBLIC_STAKE_SYMBOL || "USDC",
       address,
-      decimals: Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "6"),
+      decimals: Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18"),
       feeCurrency: (process.env.NEXT_PUBLIC_FEE_CURRENCY as Address) || undefined,
       faucet: process.env.NEXT_PUBLIC_STAKE_FAUCET === "1",
     },

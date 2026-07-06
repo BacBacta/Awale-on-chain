@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
 import type { Address } from "viem";
 import { getInjectedProvider, connect } from "../lib/minipay.js";
 import { escrowConfig } from "../lib/escrow.js";
@@ -8,8 +9,6 @@ import { loadLeaderboard, type LeaderRow } from "../lib/leaderboard.js";
 import { friendlyName, nameHue, nameInitials } from "../lib/names.js";
 import { fmt } from "../lib/money.js";
 
-const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
-const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
 const MEDAL = ["#f6c863", "#cdd3da", "#cd8e5a"]; // gold / silver / bronze
 
 export function Leaderboard() {

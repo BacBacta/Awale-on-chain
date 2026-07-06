@@ -1,6 +1,7 @@
 "use client";
 
 import { Icon } from "../../src/components/Icon.js";
+import { STAKE_DECIMALS, STAKE_SYMBOL } from "../../src/lib/stake.js";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { readContract, waitForTransactionReceipt } from "viem/actions";
@@ -20,9 +21,8 @@ import { fmt } from "../../src/lib/money.js";
 import { humanizeError } from "../../src/lib/errors.js";
 import { erc20Abi } from "../../../protocol/src/abis.js";
 
-const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
 const FEE_CURRENCY = (process.env.NEXT_PUBLIC_FEE_CURRENCY || undefined) as `0x${string}` | undefined;
-const SYMBOL = "aUSD";
+const SYMBOL = STAKE_SYMBOL;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Wallet = any;
 

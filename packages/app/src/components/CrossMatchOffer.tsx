@@ -12,6 +12,7 @@
 // its own — so both sides always converge on the same match, never cross.
 
 import { useEffect, useState } from "react";
+import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
 import type { Address } from "viem";
 import { cancelMatch, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
 import { listOpenMatches, joinOpenMatch, type OpenMatch } from "../lib/lobby.js";
@@ -19,8 +20,6 @@ import { friendlyName } from "../lib/names.js";
 import { fmt } from "../lib/money.js";
 import { humanizeError } from "../lib/errors.js";
 
-const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
-const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "USDC";
 const POLL_MS = 8000;
 
 export function CrossMatchOffer({
