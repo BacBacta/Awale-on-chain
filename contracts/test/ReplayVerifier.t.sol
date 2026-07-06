@@ -168,6 +168,79 @@ contract ReplayVerifierTest is Test {
         verifier.verify(t);
     }
 
+    // -------------------- anti-stall: repetition rule -------------------- //
+
+    /// @dev Cross-language parity for the threefold-repetition rule (which lives
+    ///      in verify()/adjudicate(), above the shared applyMove). The fixture is
+    ///      a REAL game the TS engine ended by repetition (see gen-repetition.mjs);
+    ///      the on-chain verifier must end the identical move sequence at the same
+    ///      point, with the identical swept outcome.
+    function test_verify_repetitionEndsCycle_matchesEngine() public {
+        string memory raw = vm.readFile("test/fixtures/repetition.json");
+        uint256[] memory houses = vm.parseJsonUintArray(raw, ".moves");
+        uint8 startTurn = uint8(vm.parseJsonUint(raw, ".startTurn"));
+        uint8 wantWinner = uint8(vm.parseJsonUint(raw, ".winner"));
+        uint8 wantStore0 = uint8(vm.parseJsonUint(raw, ".store0"));
+        uint8 wantStore1 = uint8(vm.parseJsonUint(raw, ".store1"));
+
+        delete _moves;
+        delete _sigs;
+        for (uint256 ply = 0; ply < houses.length; ply++) {
+            uint8 house = uint8(houses[ply]);
+            // turn strictly alternates from startTurn — applyMove always flips it
+            uint256 pk = (startTurn + ply) % 2 == 0 ? pk0 : pk1;
+            _moves.push(house);
+            _sigs.push(_sign(pk, verifier.moveDigest(42, ply, house)));
+        }
+
+        ReplayVerifier.Transcript memory t;
+        t.matchId = 42;
+        t.session0 = session0;
+        t.session1 = session1;
+        t.startTurn = startTurn;
+        t.moves = _moves;
+        t.sigs = _sigs;
+
+        AwaleRules.GameState memory got = verifier.verify(t);
+        assertTrue(got.over, "repetition must end the game");
+        assertEq(got.winner, wantWinner, "winner matches TS engine");
+        assertEq(got.store0, wantStore0, "store0 matches TS engine");
+        assertEq(got.store1, wantStore1, "store1 matches TS engine");
+        assertEq(uint256(got.store0) + uint256(got.store1), 48, "cycle sweeps the whole board");
+        for (uint8 i = 0; i < 12; i++) {
+            assertEq(got.pits[i], 0, "board emptied on cycle end");
+        }
+    }
+
+    /// @dev The repetition transcript is exactly minimal: one extra legal-looking
+    ///      move past the cycle end reverts, exactly like a move past a base end.
+    function test_revert_moveAfterRepetitionEnd() public {
+        string memory raw = vm.readFile("test/fixtures/repetition.json");
+        uint256[] memory houses = vm.parseJsonUintArray(raw, ".moves");
+        uint8 startTurn = uint8(vm.parseJsonUint(raw, ".startTurn"));
+        uint256 n = houses.length;
+
+        delete _moves;
+        delete _sigs;
+        for (uint256 ply = 0; ply <= n; ply++) {
+            uint8 house = ply < n ? uint8(houses[ply]) : 0; // one extra move at the end
+            uint256 pk = (startTurn + ply) % 2 == 0 ? pk0 : pk1;
+            _moves.push(house);
+            _sigs.push(_sign(pk, verifier.moveDigest(43, ply, house)));
+        }
+
+        ReplayVerifier.Transcript memory t;
+        t.matchId = 43;
+        t.session0 = session0;
+        t.session1 = session1;
+        t.startTurn = startTurn;
+        t.moves = _moves;
+        t.sigs = _sigs;
+
+        vm.expectRevert(bytes("AwaleRules: game over"));
+        verifier.verify(t);
+    }
+
     function test_moveDigest_isUniquePerInput() public view {
         bytes32 a = verifier.moveDigest(1, 0, 0);
         assertTrue(a != verifier.moveDigest(2, 0, 0), "matchId changes digest");
