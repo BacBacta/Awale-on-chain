@@ -314,12 +314,12 @@ contract MatchEscrowTest is Test {
 
     function test_setRake_boundedByMax() public {
         vm.prank(owner);
-        escrow.setRake(1000);
-        assertEq(escrow.rakeBps(), 1000);
+        escrow.setRake(2000);
+        assertEq(escrow.rakeBps(), 2000);
 
         vm.prank(owner);
         vm.expectRevert(bytes("MatchEscrow: rake too high"));
-        escrow.setRake(1001);
+        escrow.setRake(2001);
     }
 
     function test_setRake_onlyOwner() public {
@@ -330,7 +330,7 @@ contract MatchEscrowTest is Test {
 
     function test_constructor_revertRakeTooHigh() public {
         vm.expectRevert(bytes("MatchEscrow: rake too high"));
-        new MatchEscrow(address(verifier), treasury, 1001, WINDOW, TTL, owner);
+        new MatchEscrow(address(verifier), treasury, 2001, WINDOW, TTL, owner);
     }
 
     // ----------------------- audit-driven hardening --------------------- //
@@ -565,5 +565,57 @@ contract MatchEscrowTest is Test {
         t = ReplayVerifier.Transcript({
             matchId: matchId, session0: session0, session1: session1, startTurn: startTurn, moves: _moves, sigs: _sigs
         });
+    }
+
+    // ------------------- pre-mainnet pass: stuck-money exits ------------------- //
+
+    // voidExpired is PERMISSIONLESS: an expired match is stuck money and the
+    // players may be exactly the ones who can no longer act. A keeper (any
+    // stranger) can trigger the refund; funds only ever go to the players.
+    function test_voidExpired_permissionless_keeperCanFreeStuckStakes() public {
+        uint256 id = _createAndJoin();
+        uint256 aBefore = usdc.balanceOf(alice);
+        uint256 bBefore = usdc.balanceOf(bob);
+
+        vm.warp(block.timestamp + TTL + 1);
+        vm.prank(address(0xdead)); // not a player
+        escrow.voidExpired(id);
+
+        assertEq(usdc.balanceOf(alice), aBefore + STAKE, "alice refunded");
+        assertEq(usdc.balanceOf(bob), bBefore + STAKE, "bob refunded");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Voided));
+    }
+
+    // an Open table nobody joins expires too — anyone can refund the creator
+    function test_voidExpired_expiredOpenRefundsCreator() public {
+        vm.prank(alice);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        uint256 aBefore = usdc.balanceOf(alice);
+
+        vm.expectRevert(bytes("MatchEscrow: not expired"));
+        escrow.voidExpired(id);
+
+        vm.warp(block.timestamp + escrow.openTtl() + 1);
+        vm.prank(address(0xdead));
+        escrow.voidExpired(id);
+
+        assertEq(usdc.balanceOf(alice), aBefore + STAKE, "creator refunded in full");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Cancelled));
+    }
+
+    function test_createMatch_armsOpenDeadline() public {
+        vm.prank(alice);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        assertEq(escrow.getMatch(id).activeDeadline, uint64(block.timestamp) + escrow.openTtl());
+    }
+
+    function test_setOpenTtl_onlyOwner() public {
+        vm.prank(owner);
+        escrow.setOpenTtl(3600);
+        assertEq(escrow.openTtl(), 3600);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        escrow.setOpenTtl(60);
     }
 }

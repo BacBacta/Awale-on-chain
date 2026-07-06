@@ -313,4 +313,78 @@ contract HarvestVaultTest is Test {
             assertLe(vault.getSeason(id).prizeDistributed, pot, "distributed within pot");
         }
     }
+
+    // ---------------- pre-mainnet pass: protocol yield fee ---------------- //
+
+    address internal feeTreasury = address(0xFEE);
+
+    function test_yieldFee_takenFromYieldOnly_principalUntouched() public {
+        vm.prank(owner);
+        vault.setYieldFee(feeTreasury, 2000); // 20% of yield
+
+        uint256 id = _createSeason();
+        _depositBoth(id);
+        _accrue(30e6); // 30 yield on 200 principal
+
+        vm.warp(seasonEnd + 1);
+        vm.prank(owner);
+        vault.finalize(id, bytes32(0));
+
+        assertEq(usdc.balanceOf(feeTreasury), 6e6, "20% of the yield");
+        assertEq(vault.getSeason(id).yieldPot, 24e6, "players share the rest");
+
+        // the no-loss promise is untouched: full principal back
+        uint256 aBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        vault.claimPrincipal(id);
+        assertEq(usdc.balanceOf(alice), aBefore + DEP, "principal intact");
+    }
+
+    function test_yieldFee_zeroByDefault_behaviourUnchanged() public {
+        uint256 id = _createSeason();
+        _depositBoth(id);
+        _accrue(30e6);
+        vm.warp(seasonEnd + 1);
+        vm.prank(owner);
+        vault.finalize(id, bytes32(0));
+        assertEq(vault.getSeason(id).yieldPot, 30e6, "100% of yield to players");
+        assertEq(usdc.balanceOf(feeTreasury), 0);
+    }
+
+    function test_setYieldFee_capAndAuth() public {
+        vm.prank(owner);
+        vm.expectRevert(bytes("HarvestVault: fee too high"));
+        vault.setYieldFee(feeTreasury, 3001);
+
+        vm.prank(owner);
+        vm.expectRevert(bytes("HarvestVault: treasury zero"));
+        vault.setYieldFee(address(0), 100);
+
+        vm.prank(alice);
+        vm.expectRevert();
+        vault.setYieldFee(feeTreasury, 100);
+    }
+
+    function testFuzz_yieldFee_neverTouchesPrincipal(uint256 yield, uint16 bps) public {
+        yield = bound(yield, 0, 1_000_000e6);
+        bps = uint16(bound(bps, 0, 3000));
+        vm.prank(owner);
+        vault.setYieldFee(feeTreasury, bps);
+
+        uint256 id = _createSeason();
+        _depositBoth(id);
+        if (yield > 0) _accrue(yield);
+        vm.warp(seasonEnd + 1);
+        vm.prank(owner);
+        vault.finalize(id, bytes32(0));
+
+        uint256 fee = (yield * bps) / 10_000;
+        assertEq(usdc.balanceOf(feeTreasury), fee, "fee is a slice of yield");
+        assertEq(vault.getSeason(id).yieldPot, yield - fee, "pot = yield - fee");
+
+        uint256 aBefore = usdc.balanceOf(alice);
+        vm.prank(alice);
+        vault.claimPrincipal(id);
+        assertEq(usdc.balanceOf(alice), aBefore + DEP, "principal ALWAYS intact");
+    }
 }

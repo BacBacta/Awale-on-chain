@@ -46,6 +46,14 @@ contract HarvestVault is Ownable, ReentrancyGuard {
         bytes32 prizeMerkleRoot; // root over leaves keccak256(abi.encode(account, amount))
     }
 
+    /// @notice Protocol share of the YIELD (never the principal), in bps.
+    ///         0 by default — the no-loss promise is untouched either way:
+    ///         every depositor's principal always returns in full, the fee
+    ///         only trims the prize pool the winners share.
+    uint16 public yieldFeeBps;
+    uint16 public constant MAX_YIELD_FEE_BPS = 3000; // protocol can never take >30% of yield
+    address public feeTreasury;
+
     uint256 public nextSeasonId = 1;
     mapping(uint256 => Season) public seasons;
     mapping(uint256 => mapping(address => uint256)) public principalOf;
@@ -60,8 +68,20 @@ contract HarvestVault is Ownable, ReentrancyGuard {
     event Finalized(uint256 indexed seasonId, uint256 redeemed, uint256 yieldPot, bytes32 prizeMerkleRoot);
     event PrincipalClaimed(uint256 indexed seasonId, address indexed player, uint256 amount);
     event PrizeClaimed(uint256 indexed seasonId, address indexed player, uint256 amount);
+    event YieldFeeUpdated(address indexed treasury, uint16 bps);
+    event YieldFeeCollected(uint256 indexed seasonId, uint256 amount);
 
     constructor(address owner_) Ownable(owner_) {}
+
+    /// @notice Configure the protocol's share of realised yield. Capped, and
+    ///         requires a treasury when non-zero.
+    function setYieldFee(address treasury_, uint16 bps) external onlyOwner {
+        require(bps <= MAX_YIELD_FEE_BPS, "HarvestVault: fee too high");
+        require(bps == 0 || treasury_ != address(0), "HarvestVault: treasury zero");
+        feeTreasury = treasury_;
+        yieldFeeBps = bps;
+        emit YieldFeeUpdated(treasury_, bps);
+    }
 
     // ----------------------------- seasons ------------------------------ //
 
@@ -124,7 +144,16 @@ contract HarvestVault is Ownable, ReentrancyGuard {
         // withdraw the vault's entire position for this token (single active season)
         uint256 redeemed = ILendingPool(s.pool).withdraw(s.token, type(uint256).max, address(this));
         s.redeemed = redeemed;
-        s.yieldPot = redeemed > s.totalPrincipal ? redeemed - s.totalPrincipal : 0;
+        uint256 yieldPot = redeemed > s.totalPrincipal ? redeemed - s.totalPrincipal : 0;
+        // protocol fee comes out of the YIELD only — the principal below this
+        // line is untouched, so the no-loss guarantee cannot be affected
+        uint256 fee = (yieldPot * yieldFeeBps) / 10_000;
+        if (fee > 0) {
+            yieldPot -= fee;
+            IERC20(s.token).safeTransfer(feeTreasury, fee);
+            emit YieldFeeCollected(seasonId, fee);
+        }
+        s.yieldPot = yieldPot;
         s.prizeMerkleRoot = prizeMerkleRoot;
 
         emit Finalized(seasonId, redeemed, s.yieldPot, prizeMerkleRoot);

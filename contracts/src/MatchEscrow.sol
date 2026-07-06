@@ -56,7 +56,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         bytes32 transcriptCommitment; // keccak hash of the proposer's game transcript (set at proposeResult)
     }
 
-    uint16 public constant MAX_RAKE_BPS = 1000; // hard cap: rake can never exceed 10%
+    uint16 public constant MAX_RAKE_BPS = 2000; // hard cap: rake can never exceed 20%
     uint16 public constant BPS = 10_000;
     uint8 internal constant DRAW = 2;
     uint64 public constant MIN_CHALLENGE_WINDOW = 5 minutes; // owner cannot set below this
@@ -79,6 +79,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     uint16 public rakeBps;
     uint64 public challengeWindow;
     uint64 public matchTtl; // how long an Active match may sit unsettled before it can be voided
+    uint64 public openTtl; // how long an Open match may wait for a joiner before ANYONE can refund the creator
     uint128 public minStake; // floor on the per-player stake; 0 ⇒ no floor (default)
 
     uint256 public nextMatchId = 1;
@@ -99,6 +100,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     event MinStakeUpdated(uint128 minStake);
     event ChallengeWindowUpdated(uint64 challengeWindow);
     event MatchTtlUpdated(uint64 matchTtl);
+    event OpenTtlUpdated(uint64 openTtl);
     event TreasuryUpdated(address indexed treasury);
     event TokenAllowed(address indexed token, bool allowed);
 
@@ -119,6 +121,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         rakeBps = rakeBps_;
         challengeWindow = challengeWindow_;
         matchTtl = matchTtl_;
+        openTtl = matchTtl_; // same default; setOpenTtl adjusts independently
 
         DOMAIN_SEPARATOR = keccak256(
             abi.encode(DOMAIN_TYPEHASH, keccak256("AwaleMatchEscrow"), keccak256("1"), block.chainid, address(this))
@@ -148,6 +151,9 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         m.session0 = session0;
         m.status = Status.Open;
         m.rakeBps = rakeBps; // snapshot: a later setRake cannot change this match's terms
+        // an Open table nobody joins must never lock the stake forever: past
+        // this deadline ANYONE (a keeper) can refund the creator via voidExpired
+        m.activeDeadline = uint64(block.timestamp) + openTtl;
 
         IERC20(token).safeTransferFrom(msg.sender, address(this), stake);
         emit MatchCreated(matchId, msg.sender, token, stake);
@@ -307,12 +313,26 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     /// @dev    Also accepts Proposed status: if the challenge window overlaps the
     ///         TTL expiry, the match may be Proposed-but-expired. Allowing voidExpired
     ///         here ensures neither player is permanently locked out of a refund.
+    /// @dev Permissionless: an expired match is stuck money, and the players
+    ///      may be exactly the ones who can no longer act (lost device, lost
+    ///      keys). Anyone — in practice the server's keeper — may trigger the
+    ///      refund; funds only ever return to the players themselves. Expired
+    ///      Open matches (nobody ever joined) refund the creator the same way.
     function voidExpired(uint256 matchId) external nonReentrant {
         Match storage m = matches[matchId];
-        require(m.status == Status.Active || m.status == Status.Proposed, "MatchEscrow: not active or proposed");
-        require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
-        require(block.timestamp > m.activeDeadline, "MatchEscrow: not expired");
+        require(
+            m.status == Status.Open || m.status == Status.Active || m.status == Status.Proposed,
+            "MatchEscrow: not voidable"
+        );
+        require(m.activeDeadline != 0 && block.timestamp > m.activeDeadline, "MatchEscrow: not expired");
 
+        if (m.status == Status.Open) {
+            // nobody joined — same effect as the creator cancelling themselves
+            m.status = Status.Cancelled;
+            IERC20(m.token).safeTransfer(m.player0, m.stake);
+            emit MatchCancelled(matchId);
+            return;
+        }
         _void(matchId, m);
     }
 
@@ -399,6 +419,11 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     function setMatchTtl(uint64 matchTtl_) external onlyOwner {
         matchTtl = matchTtl_;
         emit MatchTtlUpdated(matchTtl_);
+    }
+
+    function setOpenTtl(uint64 openTtl_) external onlyOwner {
+        openTtl = openTtl_;
+        emit OpenTtlUpdated(openTtl_);
     }
 
     /// @notice Allow or disallow a stablecoin for staking. Restricting to
