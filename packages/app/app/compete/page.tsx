@@ -17,16 +17,34 @@ import { SkillLeaderboard } from "../../src/components/SkillLeaderboard.js";
 import { WeeklyLeague } from "../../src/components/WeeklyLeague.js";
 import { Icon, type IconName } from "../../src/components/Icon.js";
 import { RankHero } from "../../src/components/RankHero.js";
-import { harvestAddress } from "../../src/lib/league.js";
+import { harvestAddress, leagueComingSoon } from "../../src/lib/league.js";
 
-function Row({ href, icon, title, sub }: { href: string; icon: IconName; title: string; sub: string }) {
+function Row({ href, icon, title, sub, badge }: { href: string; icon: IconName; title: string; sub: string; badge?: string }) {
   return (
     <Link className="list-row" href={href}>
       <span className="lead gold">
         <Icon name={icon} size={19} />
       </span>
       <span className="col" style={{ flex: 1, gap: 1 }}>
-        <span style={{ fontWeight: 700, fontSize: 14.5 }}>{title}</span>
+        <span className="row" style={{ gap: 6, alignItems: "center" }}>
+          <span style={{ fontWeight: 700, fontSize: 14.5 }}>{title}</span>
+          {badge && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                textTransform: "uppercase",
+                letterSpacing: 0.4,
+                padding: "2px 6px",
+                borderRadius: 999,
+                color: "var(--gold)",
+                background: "rgba(201,162,74,0.14)",
+              }}
+            >
+              {badge}
+            </span>
+          )}
+        </span>
         <span className="faint">{sub}</span>
       </span>
       <Icon name="arrowRight" size={16} style={{ color: "var(--faint)" }} />
@@ -106,7 +124,17 @@ export default function Compete() {
         <>
           <span className="section-label">More ways to compete</span>
           <div className="stack" style={{ gap: 8 }}>
-            <Row href="/league" icon="trophy" title="Season" sub="No-loss savings — your deposit always comes back in full" />
+            <Row
+              href="/league"
+              icon="trophy"
+              title="Season"
+              badge={leagueComingSoon() ? "Soon" : undefined}
+              sub={
+                leagueComingSoon()
+                  ? "No-loss savings — launching shortly"
+                  : "No-loss savings — your deposit always comes back in full"
+              }
+            />
           </div>
         </>
       )}

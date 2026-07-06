@@ -13,6 +13,15 @@ export function harvestAddress(): Address | null {
   return a ? (a as Address) : null;
 }
 
+/** The no-loss league (yield) is gated on the external audit — the vault ships
+ *  locked on-chain. Until it launches we present it as "Coming soon" everywhere
+ *  as a product decision, independent of any on-chain gate (testnet vaults
+ *  predate it). Flip NEXT_PUBLIC_LEAGUE_LIVE to "1" once the audit clears and a
+ *  real season is open. */
+export function leagueComingSoon(): boolean {
+  return process.env.NEXT_PUBLIC_LEAGUE_LIVE !== "1";
+}
+
 export const SEASON_STATUS = { None: 0, Open: 1, Finalized: 2 } as const;
 
 export interface Season {

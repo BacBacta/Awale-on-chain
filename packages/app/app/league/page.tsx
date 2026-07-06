@@ -12,6 +12,7 @@ import {
   harvestVaultAbi,
   faucetAbi,
   harvestAddress,
+  leagueComingSoon,
   LEAGUE_SEASON,
   SEASON_STATUS,
   countdown,
@@ -39,7 +40,10 @@ export default function League() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [prize, setPrize] = useState<{ amount: bigint; proof: Hex[] } | null>(null);
-  const [locked, setLocked] = useState(false); // yield gated pending external audit
+  // Season reads as "Coming soon" while the yield feature is gated pending the
+  // external audit — a product decision (leagueComingSoon), or the on-chain gate.
+  const [onchainLocked, setOnchainLocked] = useState(false);
+  const locked = leagueComingSoon() || onchainLocked;
 
   // Prefill the deposit from a win's "grow winnings" link (?deposit=N).
   useEffect(() => {
@@ -69,9 +73,9 @@ export default function League() {
         functionName: "seasonsUnlocked",
         args: [],
       })) as boolean;
-      setLocked(!unlocked);
+      setOnchainLocked(!unlocked);
     } catch {
-      setLocked(false);
+      setOnchainLocked(false);
     }
     if (account) {
       const [p, b] = await Promise.all([
@@ -200,7 +204,11 @@ export default function League() {
     setPrize(null);
   }
 
-  if (!vault) {
+  // Full-page "Coming soon" when the league isn't configured, or it's gated
+  // (product / on-chain) AND the visitor has nothing to claim. Anyone with funds
+  // in a season still falls through to the claim UI below — a gate never traps.
+  const hasClaimable = mine > 0n || (prize != null && prize.amount > 0n);
+  if (!vault || (locked && !hasClaimable)) {
     return (
       <main className="pad stack" style={{ flex: 1, gap: 14 }}>
         <span className="title">Season</span>
@@ -210,8 +218,8 @@ export default function League() {
           </span>
           <span className="h2">Coming soon</span>
           <span className="muted">
-            Put money in for the season, play games, and share the prize pool — you always get your deposit back in
-            full. The league isn’t configured on this deployment yet.
+            The no-loss league — deposit your winnings, grow them over a season,
+            and always get your deposit back in full. Launching shortly.
           </span>
           <Link className="btn block" href="/" style={{ marginTop: 4 }}>
             Back to lobby
