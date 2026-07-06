@@ -174,11 +174,10 @@ public URL. Verified: the container boots against live Celo Sepolia and serves
 - [x] Stablecoin-only copy; feeCurrency on every tx; legacy (non-EIP-1559) txs
       (Celo has no `baseFeePerGas`, so viem emits type-0 legacy txs by default —
       verified on the sample match above).
-- [~] 360×640, SVG/WebP, bundle ≤ 2 MB (First Load JS ≈ 87–213 kB), PageSpeed 90+.
-      Bundle, `next.config.mjs` perf, and a socket.io lazy-load are done;
-      Lighthouse shows **A11y 100 / SEO 100 / best-practices 96** stable. The perf
-      score must be read on real infra — see [pagespeed.md](pagespeed.md) (local
-      container Lighthouse is CPU-noise-bound). **Run pagespeed.web.dev to confirm 90+.**
+- [x] 360×640, SVG/WebP, bundle ≤ 2 MB (First Load JS ≈ 87–213 kB), **PageSpeed 93**
+      (mobile, pagespeed.web.dev) — A11y 100 / best-practices 96 / SEO 100. Cleared
+      the 90+ gate via WebP hero assets + LCP preload + socket.io lazy-load; see
+      [pagespeed.md](pagespeed.md).
 - [~] Public `/stats` page — DAU / volume / revenue live; **MAU / retention /
       failed-tx still to add** (optional for listing, nice for the readiness call).
 - [x] In-app support, ToS/Privacy — `/tos` + `/privacy` pages, footer links, and
