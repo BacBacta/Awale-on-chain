@@ -16,7 +16,7 @@ import { parseUnits, type Address } from "viem";
 import { getInjectedProvider, connect, publicClient, effectiveFeeCurrency } from "../../src/lib/minipay.js";
 import { escrowConfig } from "../../src/lib/escrow.js";
 import { readWithRetry, sendWithStaleRetry, confirmTx } from "../../src/lib/tx.js";
-import { cardState, purchaseCost, priceTag, type CatalogEntry } from "../../src/lib/shop-logic.js";
+import { cardState, isUnlocked, purchaseCost, priceTag, type CatalogEntry } from "../../src/lib/shop-logic.js";
 import {
   BOARD_SKINS,
   SEED_SKINS,
@@ -28,7 +28,10 @@ import {
 } from "../../src/lib/skins.js";
 import { faucetAbi } from "../../src/lib/league.js";
 import { humanizeError } from "../../src/lib/errors.js";
+import { getProfile, TIERS } from "../../src/lib/profile.js";
 import { erc20Abi } from "../../../protocol/src/abis.js";
+
+const tierIndex = (name?: string) => (name ? TIERS.findIndex((t) => t.name === name) : -1);
 
 const DECIMALS = 18;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -46,6 +49,10 @@ export default function Shop() {
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [catalog, setCatalog] = useState<Record<number, CatalogEntry>>({});
+  // the player's rank index in the TIERS ladder (null until known) — drives the
+  // status gate: a Grandmaster skin shows "reach 👑 Grandmaster to unlock"
+  // until you're there.
+  const [playerRank, setPlayerRank] = useState<number | null>(null);
 
   // Gas paid in stablecoin inside MiniPay (its users hold no CELO); native gas
   // everywhere else. Use ONLY an explicitly-configured CIP-64 adapter — never
@@ -121,6 +128,20 @@ export default function Shop() {
       /* user declined */
     }
   }
+
+  // the player's rank (for the status gate) — the durable server profile Elo,
+  // same source as Compete and the ladder
+  useEffect(() => {
+    if (!account) return;
+    getProfile(account)
+      .then((prof) => {
+        if (!prof || prof.gamesPlayed === 0) return setPlayerRank(0); // unranked = lowest tier
+        let idx = 0;
+        for (let i = 0; i < TIERS.length; i++) if (prof.elo >= TIERS[i].min) idx = i;
+        setPlayerRank(idx);
+      })
+      .catch(() => setPlayerRank(0));
+  }, [account]);
 
   useEffect(() => {
     // background refresh: fail silent — a red banner the user never caused
@@ -223,29 +244,48 @@ export default function Shop() {
 
   const Card = (s: Skin) => {
     const entry = catalog[s.itemId];
+    // a champion trophy is never buyable — only owned (awarded) unlocks it
+    const unlocked = !s.champion && isUnlocked(tierIndex(s.tier), playerRank);
     const state = cardState({
       itemId: s.itemId,
       owned: !!owned[s.itemId],
       equipped: s.kind === "board" ? equipped.wood === s.asset : equipped.seed === s.asset,
       hasAccount: !!account,
+      unlocked,
       entry,
       fallbackPrice: s.price,
     });
     const scarce = entry?.left != null && entry.left > 0;
+    const gateTier = s.tier ? TIERS[tierIndex(s.tier)] : null;
+    // a locked prestige skin is shown but DIMMED — you see the prize you haven't
+    // earned yet; that's the aspiration
+    const dim = state === "locked";
     return (
-      <div className="card stack" key={s.key} style={{ gap: 8, padding: 12 }}>
+      <div className="card stack" key={s.key} style={{ gap: 8, padding: 12, opacity: dim ? 0.82 : 1 }}>
         <div
           style={{
             height: 72,
             borderRadius: 10,
+            position: "relative",
             background: s.kind === "board" ? `url(${s.asset}) center/cover` : "rgba(0,0,0,0.25)",
+            filter: dim ? "grayscale(0.5) brightness(0.8)" : undefined,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
             boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)",
           }}
         >
-          {s.kind === "seed" && <img src={s.asset} alt={s.name} width={48} height={48} />}
+          {s.kind === "seed" && <img src={s.asset} alt={s.name} width={48} height={48} style={{ filter: dim ? "grayscale(0.5)" : undefined }} />}
+          {dim && <span style={{ position: "absolute", fontSize: 22 }}>🔒</span>}
+          {/* desire badges, top-left of the art */}
+          {(s.champion || s.limited) && (
+            <span
+              className="chip"
+              style={{ position: "absolute", top: 6, left: 6, fontSize: 9.5, padding: "1px 6px", background: s.champion ? "rgba(246,200,99,0.9)" : "rgba(0,0,0,0.55)", color: s.champion ? "#1a1400" : "#fff", fontWeight: 800 }}
+            >
+              {s.champion ? "🏆 Champion" : "Limited"}
+            </span>
+          )}
         </div>
         {/* fixed-height rows: a card that resizes reflows the whole grid */}
         <div className="row" style={{ height: 22 }}>
@@ -265,6 +305,11 @@ export default function Shop() {
             <button className="btn secondary" style={{ flex: 1, whiteSpace: "nowrap", fontSize: 12.5 }} onClick={connectInteractive} disabled={busy}>
               Connect to buy
             </button>
+          ) : state === "locked" ? (
+            // aspiration, not a dead end: name the rank that unlocks it
+            <span className="faint" style={{ flex: 1, alignSelf: "center", textAlign: "center", fontSize: 11.5, lineHeight: 1.15 }}>
+              {s.champion ? "Win the weekly league" : `Reach ${gateTier?.icon ?? ""} ${s.tier}`}
+            </span>
           ) : state === "sold-out" ? (
             <button className="btn secondary" style={{ flex: 1 }} disabled>
               Sold out
@@ -289,7 +334,7 @@ export default function Shop() {
   };
 
   return (
-    <main className="pad stack" style={{ flex: 1, gap: 14 }} data-build="sc11">
+    <main className="pad stack" style={{ flex: 1, gap: 14 }} data-build="sc12">
       {/* fixed-height header: the test-money chip pops in when the wallet
           connects — without a reserved slot that shifted the whole page */}
       <div className="row" style={{ height: 32 }}>

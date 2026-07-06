@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseUnits } from "viem";
-import { cardState, purchaseCost, priceTag, type CatalogEntry } from "./shop-logic.js";
+import { cardState, isUnlocked, purchaseCost, priceTag, type CatalogEntry } from "./shop-logic.js";
 
 const DEC = 18;
 const onSale = (price: string, left: number | null = null): CatalogEntry => ({
@@ -9,7 +9,7 @@ const onSale = (price: string, left: number | null = null): CatalogEntry => ({
   left,
 });
 
-const base = { itemId: 10, owned: false, equipped: false, hasAccount: true, entry: onSale("0.25"), fallbackPrice: 0.25 };
+const base = { itemId: 10, owned: false, equipped: false, hasAccount: true, unlocked: true, entry: onSale("0.25"), fallbackPrice: 0.25 };
 
 describe("cardState", () => {
   it("free defaults are always equeippable, even with no account", () => {
@@ -48,6 +48,36 @@ describe("cardState", () => {
 
   it("limited stock still purchasable while some remain", () => {
     expect(cardState({ ...base, entry: onSale("0.25", 3) })).toBe("buy");
+  });
+
+  it("rank-gated + not unlocked → locked (aspiration, never a revert)", () => {
+    expect(cardState({ ...base, unlocked: false })).toBe("locked");
+  });
+
+  it("owning a gated skin beats the lock — an awarded trophy is equippable", () => {
+    expect(cardState({ ...base, unlocked: false, owned: true })).toBe("equip");
+  });
+
+  it("no account beats the lock in the message order (connect first)", () => {
+    expect(cardState({ ...base, unlocked: false, hasAccount: false })).toBe("connect");
+  });
+});
+
+describe("isUnlocked", () => {
+  it("ungated skins are always unlocked, even for a not-connected visitor", () => {
+    expect(isUnlocked(undefined, null)).toBe(true);
+    expect(isUnlocked(-1, null)).toBe(true);
+    expect(isUnlocked(0, null)).toBe(true);
+  });
+
+  it("gated + unknown rank → locked", () => {
+    expect(isUnlocked(3, null)).toBe(false);
+  });
+
+  it("unlocks exactly when the player's rank meets the gate", () => {
+    expect(isUnlocked(3, 2)).toBe(false); // below
+    expect(isUnlocked(3, 3)).toBe(true); // at
+    expect(isUnlocked(3, 4)).toBe(true); // above
   });
 });
 

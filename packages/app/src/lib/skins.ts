@@ -11,19 +11,34 @@ export interface Skin {
   asset: string;
   itemId: number; // 0 = free default (not an on-chain item)
   price?: number; // primary-sale price in whole tokens
+  /** Rank tier NAME required to buy this skin (see profile TIERS). Undefined =
+   *  available to everyone. A locked skin is shown greyed with "reach X to
+   *  unlock" — aspiration is the point: you SEE the prize before you earn it. */
+  tier?: string;
+  /** Limited edition — the on-chain maxSupply is the truth, this just labels it
+   *  before the catalogue loads (scarcity is the desire lever). */
+  limited?: boolean;
+  /** Awarded, not sold — minted to the weekly-league champion. Not on primary
+   *  sale (price 0 on-chain); the shop shows it as a trophy, ownable only by
+   *  winning. */
+  champion?: boolean;
 }
 
 export const BOARD_SKINS: Skin[] = [
   { key: "classic", kind: "board", name: "Classic Honey", asset: "/assets/wood.png", itemId: 0 },
   { key: "ebony", kind: "board", name: "Ebony", asset: "/assets/wood-ebony.png", itemId: 1, price: 0.5 },
-  { key: "pale", kind: "board", name: "Pale Ash", asset: "/assets/wood-pale.png", itemId: 2, price: 0.5 },
+  { key: "pale", kind: "board", name: "Pale Ash", asset: "/assets/wood-pale.png", itemId: 2, price: 0.5, tier: "Harvester" },
+  // flagship trophy: NOT for sale — minted only to the weekly-league champion
+  // (ownerMint). Status you can't buy, visible to every opponent on your board;
+  // limited by construction (one per week). The purest desire lever.
+  { key: "midnight", kind: "board", name: "Midnight", asset: "/assets/wood-dark.png", itemId: 3, limited: true, champion: true },
 ];
 
 export const SEED_SKINS: Skin[] = [
   { key: "amber", kind: "seed", name: "Amber", asset: "/assets/seed.png", itemId: 0 },
   { key: "jade", kind: "seed", name: "Jade", asset: "/assets/seed-jade.png", itemId: 10, price: 0.25 },
-  { key: "pearl", kind: "seed", name: "Pearl", asset: "/assets/seed-pearl.png", itemId: 11, price: 0.25 },
-  { key: "onyx", kind: "seed", name: "Onyx", asset: "/assets/seed-onyx.png", itemId: 12, price: 0.25 },
+  { key: "pearl", kind: "seed", name: "Pearl", asset: "/assets/seed-pearl.png", itemId: 11, price: 0.25, tier: "Sower" },
+  { key: "onyx", kind: "seed", name: "Onyx", asset: "/assets/seed-onyx.png", itemId: 12, price: 0.25, tier: "Captor" },
 ];
 
 export const ALL_SKINS = [...BOARD_SKINS, ...SEED_SKINS];
