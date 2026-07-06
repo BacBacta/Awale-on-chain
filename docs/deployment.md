@@ -165,15 +165,28 @@ public URL. Verified: the container boots against live Celo Sepolia and serves
 
 ## 5. Pre-listing checklist (MiniPay requirements)
 
-- [ ] Audited + Celoscan-verified contracts, with sample tx hashes.
-- [ ] Zero-click connect; no message signing; no raw `0x…` as a primary label.
-- [ ] Stablecoin-only copy; feeCurrency on every tx; legacy (non-EIP-1559) txs.
-- [ ] 360×640, SVG/WebP, bundle ≤ 2 MB (current build ≈ 135 kB First Load JS),
-      PageSpeed 90+.
-- [ ] Public `/stats` page (DAU/MAU/retention/volume/revenue/failed-tx).
-- [ ] In-app support, ToS/Privacy, 24h critical-fix SLA.
+- [x] Celoscan/Blockscout-verified contracts, with **sample tx hashes** — a full
+      v4 match (create → join → keeper finalizeStart → settleSigned) is recorded
+      in [sample-transactions.md](sample-transactions.md). External audit still
+      gates **mainnet** (not testnet listing).
+- [x] Zero-click connect; no message signing; no raw `0x…` as a primary label
+      (EIP-6963 + MiniPay fast-path; session-key move signing; display names).
+- [x] Stablecoin-only copy; feeCurrency on every tx; legacy (non-EIP-1559) txs
+      (Celo has no `baseFeePerGas`, so viem emits type-0 legacy txs by default —
+      verified on the sample match above).
+- [~] 360×640, SVG/WebP, bundle ≤ 2 MB (current build ≈ 87–224 kB First Load JS),
+      PageSpeed 90+. Bundle + `next.config.mjs` perf (compress, image formats,
+      immutable cache headers) done; **PageSpeed 90+ still to be measured on a
+      device / PageSpeed Insights against the live URL.**
+- [~] Public `/stats` page — DAU / volume / revenue live; **MAU / retention /
+      failed-tx still to add** (optional for listing, nice for the readiness call).
+- [x] In-app support, ToS/Privacy — `/tos` + `/privacy` pages, footer links, and
+      support email live; 24h critical-fix SLA stated in the ToS.
 - [ ] Submit the intake form at `minipay.to/mini-apps`; complete the readiness
-      form after the first call.
+      form after the first call. **(Needs: the sample tx links above + a PageSpeed
+      score + monthly-transacting-users estimate.)**
+
+Legend: `[x]` done · `[~]` mostly done, one measurable item left · `[ ]` open.
 
 ---
 
