@@ -73,7 +73,8 @@ a *regulatory* single point of failure, not just a product one.
 ## 4. Recommended model (layered, by value × low-friction × low blast-radius)
 
 ### ★ A. Take a slice of the League **yield** (not principal) — *best lever*
-A 15–20% protocol cut of the **yield only**; players keep no-loss + ~80% of yield.
+A **30%** protocol cut of the **yield only** (the target; also the contract's
+hard cap `MAX_YIELD_FEE_BPS`); players keep no-loss + **70% of yield**.
 - **Non-dissuasive:** you never lose principal — it only ever gains; a smaller win still feels free.
 - **Scales with TVL**, not with gambling volume. DeFi-native, defensible, regulation-friendlier.
 - **Cost:** a `HarvestVault` change (route a yield share to Treasury at `finalize`) + redeploy.

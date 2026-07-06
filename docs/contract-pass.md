@@ -52,4 +52,6 @@ Note: on-chain rake was 8% until escrow v2; the league math reads the actual
 ## Still open for the audit itself
 
 - HarvestVault external audit (gates enabling the Season + yield fee).
-- Then: `setYieldFee(treasury, 2000)` (20% of yield) per the economic model.
+- Then: `setYieldFee(treasury, 3000)` (30% of yield — the hard cap
+  `MAX_YIELD_FEE_BPS`, so the fee IS the maximum the contract can ever take).
+  Players keep 70% of yield; principal always returns in full (no-loss).
