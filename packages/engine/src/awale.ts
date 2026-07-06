@@ -21,9 +21,15 @@ export const SEEDS = 48;
 /** Winner sentinel for a draw (0 and 1 are the two players). */
 export const DRAW = 2;
 
-/** Consecutive non-capturing plies after which the game is split as a draw —
- *  the guard against endless cyclic positions (see `resolve`). */
+/** Consecutive non-capturing plies after which the game is split — the ultimate
+ *  backstop against endless cyclic positions (see `resolve`). Repetition
+ *  detection (see `adjudicate`) normally ends a cycle far sooner. */
 export const NO_CAPTURE_LIMIT = 40;
+
+/** How many times a position (board + player to move) may recur SINCE THE LAST
+ *  CAPTURE before the game is declared a provable cycle and ended. Threefold,
+ *  as in chess: the players had two chances to deviate and didn't. */
+export const REPETITION_LIMIT = 3;
 
 export interface GameState {
   /** 0..5 = player 0 (South), 6..11 = player 1 (North). */
@@ -196,4 +202,68 @@ export function applyMove(s: GameState, house: number): GameState {
 
   resolve(r);
   return r;
+}
+
+/** Canonical key of a position: the board plus whose turn it is. Two moments
+ *  with the same key are the same position — the whole game continues the same
+ *  way from both, so if one recurs the game is going in circles. */
+export function positionKey(s: GameState): string {
+  return `${s.pits.join(",")}|${s.turn}`;
+}
+
+/** End a provably-cyclic game the official Awalé way: each side collects the
+ *  seeds in its own row, then the seed leader wins (equal ⇒ draw). Identical
+ *  award to the NO_CAPTURE_LIMIT split — only the trigger is earlier. */
+function endByCycle(s: GameState): GameState {
+  const store0 = s.store0 + rowSum(s.pits, 0);
+  const store1 = s.store1 + rowSum(s.pits, 1);
+  return {
+    pits: Array(PITS).fill(0),
+    store0,
+    store1,
+    turn: s.turn,
+    over: true,
+    winner: store0 > store1 ? 0 : store1 > store0 ? 1 : DRAW,
+    noCaptureCount: s.noCaptureCount,
+  };
+}
+
+/**
+ * Authoritative adjudication of a full game from its ordered moves. Replays via
+ * `applyMove` (so every base rule still applies) AND ends the instant a position
+ * repeats REPETITION_LIMIT times since the last capture — the anti-stall rule.
+ * This is what the server and the on-chain ReplayVerifier use to decide the
+ * canonical result; a losing player can no longer drag a dead position out to
+ * the 40-ply backstop. Throws on an illegal move (like `applyMove`).
+ *
+ * The repetition window RESETS on every capture: a capture removes seeds for
+ * good, so a pre-capture position can never recur — only a truly stuck endgame
+ * cycles, and it cycles fast (few seeds ⇒ few distinct positions).
+ */
+export function adjudicate(moves: number[]): GameState {
+  let s = initialState();
+  const seen = new Map<string, number>();
+  seen.set(positionKey(s), 1);
+  for (const move of moves) {
+    const before = s.store0 + s.store1;
+    s = applyMove(s, move);
+    if (s.over) return s; // a base rule already ended it (majority / starve / 40)
+    if (s.store0 + s.store1 > before) {
+      seen.clear(); // capture = real progress; no repetition carries across it
+      seen.set(positionKey(s), 1);
+      continue;
+    }
+    const key = positionKey(s);
+    const count = (seen.get(key) ?? 0) + 1;
+    seen.set(key, count);
+    if (count >= REPETITION_LIMIT) return endByCycle(s);
+  }
+  return s;
+}
+
+/** True iff appending `move` to `moves` ends the game (by any rule, including
+ *  repetition). Lets a live driver decide when to stop without re-deriving the
+ *  whole adjudication itself. `moves` must be the accepted history so far. */
+export function endsGame(moves: number[], move: number): boolean {
+  return adjudicate([...moves, move]).over;
 }
