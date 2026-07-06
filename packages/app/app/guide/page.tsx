@@ -105,7 +105,7 @@ export default function Guide() {
         <span className="muted" style={{ lineHeight: 1.5 }}>
           <b style={{ color: "var(--text)" }}>The weekly league.</b> Money games score automatically: play 5 in a week
           and you&apos;re in. Every Monday the pot is shared by EVERY ranked player in
-          proportion to their points — more points, bigger share — and the top 3 add a small podium bonus. Winners collect their prize with one tap in Compete. Half of every house
+          proportion to their points — more points, bigger share — and the top 3 add a small podium bonus. Winners collect their prize with one tap in Compete. 45% of every house
           fee feeds that pot — so the fee partly comes back to the players. Wins are 3 points, draws score nothing, and only your first 3 games
           against the same opponent count.
         </span>

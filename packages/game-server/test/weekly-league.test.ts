@@ -23,7 +23,7 @@ const POT = 1_000_000_000_000_000_000n; // two 0.5-token stakes
 const RAKE_BPS = 800;
 
 function newLeague(opts: { minGames?: number; pairCap?: number } = {}) {
-  return new WeeklyLeague(new InMemoryLeagueStore(), { poolShareBps: 5000, ...opts });
+  return new WeeklyLeague(new InMemoryLeagueStore(), { poolShareBps: 4500, ...opts });
 }
 
 const payNobody = async () => [] as LeagueWinner[];
@@ -39,13 +39,13 @@ describe("weekKey / weekEndMs", () => {
 });
 
 describe("WeeklyLeague.recordGame", () => {
-  it("scores 3 for a win, 0 for a loss, and half the rake feeds the pool", async () => {
+  it("scores 3 for a win, 0 for a loss, and 45% of the rake feeds the pool", async () => {
     const league = newLeague();
     await league.recordGame([A, B], 0, POT, RAKE_BPS, TOKEN, WED);
 
     const s = await league.snapshot(A, WED);
     // pool = pot * 8% rake * 50% share
-    expect(BigInt(s.poolWei)).toBe((POT * 800n * 5000n) / 100_000_000n);
+    expect(BigInt(s.poolWei)).toBe((POT * 800n * 4500n) / 100_000_000n);
     expect(s.token).toBe(TOKEN);
     expect(s.me).toEqual({ rank: null, points: 3, games: 1, wins: 1 }); // rank null below minGames
     expect((await league.snapshot(B, WED)).me).toEqual({ rank: null, points: 0, games: 1, wins: 0 });
@@ -106,7 +106,7 @@ describe("WeeklyLeague.rollover", () => {
     await league.recordGame([A, B], 0, POT, RAKE_BPS, TOKEN, WED);
     await league.recordGame([A, B], 0, POT, RAKE_BPS, TOKEN, WED);
     await league.recordGame([A, B], 1, POT, RAKE_BPS, TOKEN, WED);
-    const pool = (POT * 800n * 5000n / 100_000_000n) * 3n;
+    const pool = (POT * 800n * 4500n / 100_000_000n) * 3n;
 
     let paidArgs: LeagueWinner[] = [];
     const result = await league.rollover(async (_t, w) => ((paidArgs = w), w), NEXT_TUE);
@@ -114,7 +114,7 @@ describe("WeeklyLeague.rollover", () => {
     expect(result?.week).toBe("2026-06-29");
     expect(paidArgs.map((w) => w.address)).toEqual([A, B]);
     // A 6pts, B 3pts → 80% dividend split 2:1, plus the podium bonuses
-    const dividend = (pool * 8000n) / 10_000n;
+    const dividend = (pool * 9000n) / 10_000n;
     expect(BigInt(paidArgs[0].amountWei)).toBe((pool * BigInt(PODIUM_BPS[0])) / 10_000n + (dividend * 6n) / 9n);
     expect(BigInt(paidArgs[1].amountWei)).toBe((pool * BigInt(PODIUM_BPS[1])) / 10_000n + (dividend * 3n) / 9n);
 
@@ -132,7 +132,7 @@ describe("WeeklyLeague.rollover", () => {
     const league = newLeague({ minGames: 1 });
     await league.rollover(payNobody, WED);
     await league.recordGame([A, B], 0, POT, RAKE_BPS, TOKEN, WED);
-    const pool = (POT * 800n * 5000n) / 100_000_000n;
+    const pool = (POT * 800n * 4500n) / 100_000_000n;
 
     const result = await league.rollover(payNobody, NEXT_TUE);
     expect(result?.winners).toEqual([]);
@@ -144,17 +144,17 @@ describe("computePrizes — small podium bonus + 80% dividend for ALL ranked", (
   const std = (address: string, points: number) => ({ address: address as `0x${string}`, points, games: 5, wins: points / 3 });
   const POOL = 10_000_000n; // 10 units at 6 dp — keeps shares readable
 
-  it("everyone ranked gets a points-share; ranks 1-3 add 10/6/4% bonuses", () => {
+  it("everyone ranked gets a points-share; ranks 1-3 add 5/3/2% bonuses", () => {
     const ranked = [std("0xa", 15), std("0xb", 12), std("0xc", 9), std("0xd", 9), std("0xe", 6), std("0xf", 3)];
     const prizes = computePrizes(ranked, POOL);
-    // dividend = 8_000_000 over 54 points
+    // dividend = 9_000_000 over 54 points
     expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([
-      1_000_000n + 2_222_222n, // #1: 10% bonus + 15/54
-      600_000n + 1_777_777n, // #2: 6% + 12/54
-      400_000n + 1_333_333n, // #3: 4% + 9/54
-      1_333_333n, // #4: 9/54
-      888_888n, // #5: 6/54
-      444_444n, // #6: 3/54
+      500_000n + 2_500_000n, // #1: 5% bonus + 15/54
+      300_000n + 2_000_000n, // #2: 3% + 12/54
+      200_000n + 1_500_000n, // #3: 2% + 9/54
+      1_500_000n, // #4: 9/54
+      1_000_000n, // #5: 6/54
+      500_000n, // #6: 3/54
     ]);
     const total = prizes.reduce((a, p) => a + BigInt(p.amountWei), 0n);
     expect(total <= POOL).toBe(true); // never mints; dust carries
@@ -169,14 +169,14 @@ describe("computePrizes — small podium bonus + 80% dividend for ALL ranked", (
   it("two players: both paid (bonus + shared dividend); the unused #3 bonus carries", () => {
     const prizes = computePrizes([std("0xa", 6), std("0xb", 3)], POOL);
     expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([
-      1_000_000n + 5_333_333n, // 10% + 6/9 of the dividend
-      600_000n + 2_666_666n, // 6% + 3/9
+      500_000n + 6_000_000n, // 5% + 6/9 of the dividend
+      300_000n + 3_000_000n, // 3% + 3/9
     ]);
   });
 
   it("all-draw week (zero points everywhere): only the podium bonuses pay", () => {
     const prizes = computePrizes([std("0xa", 0), std("0xb", 0), std("0xc", 0), std("0xd", 0)], POOL);
-    expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([1_000_000n, 600_000n, 400_000n]);
+    expect(prizes.map((p) => BigInt(p.amountWei))).toEqual([500_000n, 300_000n, 200_000n]);
   });
 
   it("empty standings → no prizes, whole pool carries", () => {
