@@ -5,7 +5,7 @@ import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
 import { readContract } from "viem/actions";
 import { type Address } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
-import { escrowConfig } from "../lib/escrow.js";
+import { escrowConfig, legacyEscrows } from "../lib/escrow.js";
 import { listLocalMatches, STATUS } from "../lib/matches.js";
 import { fmt } from "../lib/money.js";
 import { getProfile, rankFor } from "../lib/profile.js";
@@ -74,28 +74,47 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
           .catch(() => {});
       }
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
-
-      // One parallel round of getMatch first (fast), THEN hunt logs only for
-      // the Resolved ids whose outcome isn't already in the immutable cache.
-      // Typically that's zero or one recent match — found within the first
-      // window or two — where the old code re-walked 400k blocks every visit.
+      // a player's history spans contract migrations — read the current escrow
+      // AND any legacy ones, or a redeploy silently zeroes their stats. Each
+      // local id belongs to ONE contract: the escrow where it exists and this
+      // wallet is a player. First match wins (current escrow first).
+      const escrows = [cfg.escrow, ...legacyEscrows()];
+      const me = address?.toLowerCase();
+      type Rec = { id: bigint; escrow: Address; m: { status: number; stake: bigint; player0: Address; player1: Address } };
       const records = await withTimeout(
         Promise.all(
-          ids.map((id) =>
-            readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "getMatch", args: [id] })
-              .then((m) => ({ id, m: m as { status: number; stake: bigint; player0: Address; player1: Address } }))
-              .catch(() => null),
-          ),
+          ids.map(async (id): Promise<Rec | null> => {
+            for (const esc of escrows) {
+              try {
+                const m = (await readContract(client, { address: esc, abi: matchEscrowAbi, functionName: "getMatch", args: [id] })) as Rec["m"];
+                if (Number(m.status) === 0) continue; // None on this contract — try the next
+                if (me && m.player0.toLowerCase() !== me && m.player1.toLowerCase() !== me) continue; // someone else's id here
+                return { id, escrow: esc, m };
+              } catch {
+                /* try the next escrow */
+              }
+            }
+            return null;
+          }),
         ),
-        8_000,
-        [] as ({ id: bigint; m: { status: number; stake: bigint; player0: Address; player1: Address } } | null)[],
+        9_000,
+        [] as (Rec | null)[],
       );
-      const resolvedIds = records.filter((r) => r !== null && Number(r.m.status) === STATUS.Resolved).map((r) => r!.id);
-      const winnerOf = cachedOutcomes(resolvedIds);
-      const missing = resolvedIds.filter((id) => !winnerOf.has(id.toString()));
-      if (missing.length > 0) {
-        const found = await withTimeout(scanSettled(client, cfg.escrow, missing), 10_000, new Map<string, Outcome>());
-        for (const [k, v] of found) winnerOf.set(k, v);
+
+      // resolve outcomes PER escrow (MatchSettled events are contract-scoped)
+      const winnerOf = new Map<string, Outcome>();
+      const byEscrow = new Map<Address, bigint[]>();
+      for (const r of records) {
+        if (r && Number(r.m.status) === STATUS.Resolved) byEscrow.set(r.escrow, [...(byEscrow.get(r.escrow) ?? []), r.id]);
+      }
+      for (const [esc, rids] of byEscrow) {
+        const cached = cachedOutcomes(rids);
+        for (const [k, v] of cached) winnerOf.set(k, v);
+        const missing = rids.filter((id) => !cached.has(id.toString()));
+        if (missing.length > 0) {
+          const found = await withTimeout(scanSettled(client, esc, missing), 10_000, new Map<string, Outcome>());
+          for (const [k, v] of found) winnerOf.set(k, v);
+        }
       }
 
       const s: Stats = { played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n };

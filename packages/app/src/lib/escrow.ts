@@ -50,6 +50,15 @@ export function escrowConfig(): EscrowConfig | null {
   return cachedConfig;
 }
 
+/** Previous escrow deployments a player's history may still live on (comma-
+ *  separated NEXT_PUBLIC_LEGACY_ESCROW_ADDRESSES). A player's record spans
+ *  contract migrations — reading only the current escrow silently zeroed their
+ *  stats the day we redeployed. Empty on a fresh (mainnet) deployment. */
+export function legacyEscrows(): Address[] {
+  const raw = process.env.NEXT_PUBLIC_LEGACY_ESCROW_ADDRESSES;
+  return raw ? (raw.split(",").map((s) => s.trim()).filter(Boolean) as Address[]) : [];
+}
+
 /** Convert a human stake (e.g. "2.5") to base units for the token's decimals. */
 export function parseStake(human: string, decimals: number): bigint {
   return parseUnits(human as `${number}`, decimals);
