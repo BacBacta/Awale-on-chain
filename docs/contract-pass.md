@@ -37,11 +37,33 @@ claimed ("Collect now" in Compete), not pushed.
 Note: on-chain rake was 8% until escrow v2; the league math reads the actual
 `rakeBps` snapshotted per match, so the transition needs no server change.
 
+## 1b. MatchEscrow v3 + ReplayVerifier v2 — anti-stall (deployed 2026-07-06)
+
+Threefold-repetition (anti-stall) rule made transversal: a trailing player can
+no longer drag a decided endgame out forever. Off-chain the server/engine end a
+provably-cyclic position via `adjudicate`; on-chain the **new ReplayVerifier**
+mirrors the same rule in `verify`, so a repetition-ended money game resolves to
+the seed-leader on the *challenge* path (the old verifier lacked the rule and
+would have *voided*/refunded instead). Happy path (`settleSigned`) already paid
+correctly — this closes the dispute path. Economics identical to v2 (rake 1100
+bps, window 600s, TTLs 86400s, aUSD allowed). Deployed by
+`script/DeployEscrowV3.s.sol` (deploys the verifier + escrow together).
+
+- **MatchEscrow v3** `0x53c7594ca2943ee43fB24a6F11C6b438b7F06EFA` (current)
+- **ReplayVerifier v2** `0xF6B27BBDe627eD9f241C3017aCa33bb472064395` (current)
+- Parity net: `ReplayVerifier.t.sol` verifies a real 98-ply repetition game
+  (from the TS engine, `fixtures/repetition.json`) to the identical swept
+  outcome on-chain; an extra ply reverts. Foundry 135 green.
+
 ## Deployment record (Celo Sepolia)
 
-- MatchEscrow v2: see `NEXT_PUBLIC_ESCROW_ADDRESS` (app env) / `ESCROW_ADDRESS`
-  (server env) — deployed by `script/DeployEscrowV2.s.sol`, aUSD allowed,
-  rake 1100 bps, window 600s, TTLs 86400s.
+- MatchEscrow v3 `0x53c7594ca2943ee43fB24a6F11C6b438b7F06EFA` — current escrow
+  (`NEXT_PUBLIC_ESCROW_ADDRESS` / `ESCROW_ADDRESS`), verifier
+  `0xF6B27BBDe627eD9f241C3017aCa33bb472064395`.
+- MatchEscrow v2 `0x616E36848B660a58dB3cb3181D935A802847cc24` — now legacy
+  (in `NEXT_PUBLIC_LEGACY_ESCROW_ADDRESSES`, keeps history/stats continuity),
+  old verifier `0xBE1B068842cA735DE9F8EA0daAbd371fFEA6Ef78`. Deployed by
+  `script/DeployEscrowV2.s.sol`, aUSD allowed, rake 1100 bps, window 600s.
 - v1 escrow `0x813eF5EAAF5E90D791F6A8FEdeE2F1990CCB4F54` still holds history
   (leaderboard/stats reset with the new address — expected on testnet).
   Any stake still stuck on v1 (e.g. matches #45/#46 pre-TTL at switch time)
