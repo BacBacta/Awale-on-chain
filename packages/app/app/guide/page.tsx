@@ -66,6 +66,24 @@ export default function Guide() {
         </Link>
       </div>
 
+      {/* how a game ends — including the anti-stall rule, in plain words */}
+      <span className="section-label" id="ending" style={{ scrollMarginTop: 16 }}>
+        How a game ends
+      </span>
+      <div className="card stack" style={{ gap: 10 }}>
+        <span className="muted" style={{ lineHeight: 1.5 }}>
+          Grab more than half the seeds — 25 of the 48 — and the game is yours. It can also end when a side has
+          no seeds left to play.
+        </span>
+        <span className="muted" style={{ lineHeight: 1.5 }}>
+          And if the board just keeps repeating — the same position coming back again and again, with no captures,
+          often a trailing player shuffling seeds to avoid a loss — the game is settled where it stands: each side
+          keeps the seeds on its own row, and whoever has more wins. You&apos;ll see a{" "}
+          <span style={{ color: "var(--gold)" }}>repeating position</span> warning one move before this happens, so
+          no one can drag a decided game out forever.
+        </span>
+      </div>
+
       {/* the five ways to play — same names as the home screen doors */}
       <span className="section-label" id="play" style={{ scrollMarginTop: 16 }}>
         Ways to play
