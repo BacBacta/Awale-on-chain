@@ -41,19 +41,19 @@ export interface Transcript {
  * pending forfeit's claimed ply, return the rebuttal transcript that refutes a
  * FALSE/stale forfeit — or null if the claim is legitimate.
  *
- * A forfeit accuses the opponent of not moving at `forfeitPly`. If the hub
- * already holds their move at that ply (transcript length > forfeitPly), the
- * accused is present and the claim is stale → rebut with exactly the committed
- * prefix plus that one move. If the hub has only `forfeitPly` moves, the accused
- * genuinely never moved → real abandonment, let the forfeit stand (null).
+ * A forfeit accuses the opponent of not moving at `forfeitPly`. Since the v2 ack
+ * gate lets a forfeit be opened only against a position the accused acknowledged,
+ * every proposable forfeit's committed prefix is a REAL prefix of the hub's game.
+ * So if the hub game is longer than that prefix (the accused actually played on),
+ * we rebut with the FULL hub transcript: the contract leapfrogs the anti-replay
+ * floor straight to the proven frontier (retiring every stale forfeit below it in
+ * one tx) and settles to the canonical winner if it's terminal. If the hub holds
+ * only `forfeitPly` moves the accused genuinely never moved → real abandonment,
+ * let the forfeit stand (null).
  */
 export function forfeitRebuttal(hubTranscript: Transcript, forfeitPly: number): Transcript | null {
-  if (hubTranscript.moves.length < forfeitPly + 1) return null; // genuine abandonment
-  return {
-    ...hubTranscript,
-    moves: hubTranscript.moves.slice(0, forfeitPly + 1),
-    sigs: hubTranscript.sigs.slice(0, forfeitPly + 1),
-  };
+  if (hubTranscript.moves.length <= forfeitPly) return null; // genuine abandonment
+  return hubTranscript; // full continuation → leapfrog to frontier / settle if terminal
 }
 
 /** Serializable form of a live match, for persistence + rehydration. */

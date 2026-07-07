@@ -453,12 +453,18 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         emit ForfeitProposed(matchId, m.proposedWinner, m.forfeitPly, m.challengeDeadline);
     }
 
-    /// @notice Rebut a pending forfeit by supplying the accused's next legal
-    ///         signed move — proof of presence. If that move ends the game, the
-    ///         canonical winner is paid; otherwise play resumes.
-    /// @dev PERMISSIONLESS: a valid signed move can only ever help the accused
-    ///      (prove presence / advance the game / settle to the true winner), so
-    ///      the server's keeper may submit it on an honest player's behalf.
+    /// @notice Rebut a pending forfeit by supplying the accused's real continuation
+    ///         of the committed prefix — ANY validly-signed transcript one or more
+    ///         moves longer. If it reaches a terminal state the canonical winner is
+    ///         paid (a one-transaction escape from a stale forfeit for the true
+    ///         winner); otherwise play resumes and the anti-replay floor jumps to
+    ///         the PROVEN frontier, so a single rebuttal retires every stale
+    ///         forfeit at or below it (no per-ply gauntlet).
+    /// @dev PERMISSIONLESS: a valid signed continuation can only ever help the
+    ///      accused / enforce the true result, so the server's keeper (or the
+    ///      accused's own client) may submit it. The leapfrog-to-frontier is the
+    ///      anti-reach-back hardening: a losing claimant holding the accused's old
+    ///      turn-acks cannot force the winner through one window per ply.
     function rebutForfeit(uint256 matchId, ReplayVerifier.Transcript calldata t2) external nonReentrant {
         Match storage m = matches[matchId];
         require(m.status == Status.ForfeitPending, "MatchEscrow: not forfeit-pending");
@@ -466,28 +472,32 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         require(t2.matchId == matchId, "MatchEscrow: wrong match");
         require(t2.session0 == m.session0 && t2.session1 == m.session1, "MatchEscrow: session mismatch");
         require(t2.startTurn == m.startTurn, "MatchEscrow: startTurn mismatch");
-        require(t2.moves.length == uint256(m.forfeitPly) + 1, "MatchEscrow: not a one-move rebuttal");
-        // the rebuttal must extend the EXACT committed prefix by one move
+        // strictly longer than the committed prefix (≥ one real continuation move)
+        require(t2.moves.length > m.forfeitPly, "MatchEscrow: rebuttal too short");
+        // the rebuttal must EXTEND the exact committed prefix (its first forfeitPly
+        // moves must equal it), so it can only be the accused's real continuation
         require(
             _prefixHash(matchId, m.startTurn, t2.moves, m.forfeitPly) == m.forfeitPrefix,
             "MatchEscrow: prefix mismatch"
         );
 
-        // verify() re-checks every signature (incl. the accused's new move, bound
-        // to its exact position) and reverts on any illegal move
+        // verify() re-checks every signature (incl. the accused's continuation,
+        // each bound to its exact position) and reverts on any illegal move
         AwaleRules.GameState memory state2 = verifier.verify(t2);
-        emit ForfeitRebutted(matchId, m.forfeitPly);
         if (state2.over) {
-            // the response ended the game → pay the canonical winner
+            // the continuation ends the game → settle to the canonical winner
+            // (this is how the true winner escapes a loser's stale forfeit in one tx)
             _payout(matchId, m, state2.winner);
         } else {
             // presence proven → resume play; refresh the TTL so the resumed game
-            // isn't instantly voidable, and raise the anti-replay floor
-            m.lastRebuttedPly = m.forfeitPly;
+            // isn't instantly voidable, and jump the anti-replay floor to the
+            // proven frontier so no stale forfeit at/below it can reopen
+            m.lastRebuttedPly = uint32(t2.moves.length);
             m.forfeitPrefix = bytes32(0);
             m.forfeitPly = 0;
             m.status = Status.Active;
             m.activeDeadline = uint64(block.timestamp) + matchTtl;
+            emit ForfeitRebutted(matchId, uint32(t2.moves.length));
         }
     }
 

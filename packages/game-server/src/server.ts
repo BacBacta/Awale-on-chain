@@ -174,6 +174,12 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
   // via "watch"), and which seats have already spent their one grace.
   const socketSeats = new Map<string, { roomId: string; player: 0 | 1 }>();
   const graceUsed = new Set<string>(); // `${roomId}:${player}`
+  // Latest turn-ack per staked match, indexed by player. A player signs an ack
+  // when they receive the state making it their turn; the OPPONENT needs it to
+  // open a v2 forfeit against them (MatchEscrow.proposeForfeit anti-fabrication
+  // anchor). The latest ack is always for the current turn — i.e. exactly the
+  // position a timed-out player is being forfeited at.
+  const matchAcks = new Map<string, [Hex | null, Hex | null]>();
 
   // Rematch: after a game the two STILL-CONNECTED sockets can agree to play
   // again without going back to the lobby. Keyed by finished-match room id →
@@ -446,7 +452,15 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
   }
 
   function emitClaimEligible(roomId: string, winner: 0 | 1 | 2, transcript: Transcript): void {
-    io.to(roomId).emit("claim-eligible", { matchId: roomId, winner, transcript: serializeTranscript(transcript) });
+    // for an abandonment (non-terminal) forfeit the winner needs the LOSER's
+    // turn-ack; a terminal game settles via proposeResult and ignores it.
+    const ackSig = winner === 0 || winner === 1 ? (matchAcks.get(roomId)?.[winner === 0 ? 1 : 0] ?? undefined) : undefined;
+    io.to(roomId).emit("claim-eligible", {
+      matchId: roomId,
+      winner,
+      transcript: serializeTranscript(transcript),
+      ackSig,
+    });
   }
 
   // Broadcast a just-finished match's state/gameover. Shared by every ending —
@@ -780,6 +794,17 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
         }
       },
     );
+
+    // The accused's turn-ack: a player signs it when their client receives the
+    // state that makes it their turn, so the opponent can open a v2 forfeit
+    // against them ONLY for a position they acknowledged. We keep the latest per
+    // player; it is exactly the position a timed-out player would be forfeited at.
+    socket.on("turn-ack", (msg: { matchId: string; player: 0 | 1; ackSig: Hex }) => {
+      if (msg.player !== 0 && msg.player !== 1) return;
+      const prev = matchAcks.get(msg.matchId) ?? [null, null];
+      prev[msg.player] = msg.ackSig;
+      matchAcks.set(msg.matchId, prev);
+    });
 
     // collect a session-key-signed result; settle once both players have signed
     socket.on("result-sig", async (msg: { matchId: string; signature: Hex }) => {

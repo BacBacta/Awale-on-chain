@@ -7,7 +7,7 @@ import { type Socket } from "socket.io-client";
 import { readContract } from "viem/actions";
 import type { Address, Hex } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
-import { loadSession, createSessionKey, persistSession, signMove, signResult, signResign, signDrawOffer, type SessionKey } from "../lib/session.js";
+import { loadSession, createSessionKey, persistSession, signMove, signAck, signResult, signResign, signDrawOffer, type SessionKey } from "../lib/session.js";
 import { escrowConfig, proposeResult, proposeForfeit, challengeResult, cancelMatch, approve, joinMatch, joinMatchWithCode, finalizeResult, finalizeForfeit, type WriteClient } from "../lib/escrow.js";
 import { humanizeError } from "../lib/errors.js";
 import { readWithRetry, confirmTx } from "../lib/tx.js";
@@ -300,6 +300,16 @@ export function LiveMatch({
         if (!msg.state.over) setTurnStartedAt(Date.now()); // legacy fallback only
         // one short of REPETITION_LIMIT ⇒ warn: a repeat now ends & scores the game
         setRepWarn(!msg.state.over && (msg.repeat ?? 1) >= REPETITION_LIMIT - 1);
+        // v2 forfeit anchor: the instant it becomes OUR turn on a staked match,
+        // sign a turn-ack for this exact position and hand it to the server, so
+        // the opponent can only ever forfeit us at a board we acknowledged. If we
+        // then abandon, the server relays this ack to let them claim the pot.
+        const role = roleRef.current;
+        if (casualRole == null && !msg.state.over && role !== null && msg.state.turn === role && session.current && ctx.current) {
+          void signAck(session.current, matchId, BigInt(msg.ply), msg.state, ctx.current).then((ackSig) =>
+            socket.current?.emit("turn-ack", { matchId: matchId.toString(), player: role, ackSig }),
+          );
+        }
       });
       sock.on("gameover", async (msg: { winner: number }) => {
         setStatus(msg.winner === myRole ? "You win 🎉" : msg.winner === 2 ? "Draw" : "You lose");

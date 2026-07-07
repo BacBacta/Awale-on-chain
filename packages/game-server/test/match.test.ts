@@ -55,11 +55,12 @@ describe("forfeitRebuttal (keeper backstop)", () => {
     expect(forfeitRebuttal(t(2), 3)).toBeNull(); // hub even shorter
   });
 
-  it("rebuts a stale claim by truncating to the committed prefix + one move", () => {
-    const r = forfeitRebuttal(t(10), 3);
+  it("rebuts a stale claim with the FULL hub transcript (leapfrog to frontier)", () => {
+    const full = t(10);
+    const r = forfeitRebuttal(full, 3);
     expect(r).not.toBeNull();
-    expect(r!.moves).toEqual([0, 1, 2, 3]); // forfeitPly + 1
-    expect(r!.sigs).toHaveLength(4);
+    expect(r!.moves).toHaveLength(10); // full continuation, not truncated
+    expect(r).toBe(full);
   });
 });
 

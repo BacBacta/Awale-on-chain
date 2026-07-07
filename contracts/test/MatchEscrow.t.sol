@@ -707,7 +707,7 @@ contract MatchEscrowTest is Test {
 
         MatchEscrow.Match memory m = escrow.getMatch(id);
         assertEq(uint8(m.status), uint8(MatchEscrow.Status.Active), "game resumes");
-        assertEq(m.lastRebuttedPly, N, "anti-replay floor raised");
+        assertEq(m.lastRebuttedPly, N + 1, "anti-replay floor raised to the proven frontier");
         assertEq(usdc.balanceOf(alice), aBefore, "no payout on resume");
         assertEq(usdc.balanceOf(bob), bBefore, "no payout on resume");
     }
@@ -751,18 +751,78 @@ contract MatchEscrowTest is Test {
         escrow.rebutForfeit(id, reb);
     }
 
-    function test_forfeit_rebutWrongLength() public {
+    // A rebuttal must be strictly LONGER than the committed prefix (≥1 real
+    // continuation move); one that isn't is rejected. (Longer-than-+1 is allowed
+    // — that's the leapfrog-to-frontier hardening, tested separately.)
+    function test_forfeit_rebutTooShort() public {
         uint256 id = _createAndJoin();
         uint8 startTurn = escrow.getMatch(id).startTurn;
         uint256 N = 6;
         ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
-        ReplayVerifier.Transcript memory tooLong = _buildPartialTranscript(id, startTurn, N + 2);
+        ReplayVerifier.Transcript memory tooShort = _buildPartialTranscript(id, startTurn, N); // == forfeitPly
         (address claimant,) = _forfeitRoles(startTurn, N);
-        bytes memory ack = _forfeitAck(id, startTurn, N); // compute before prank (verifier calls would consume it)
+        bytes memory ack = _forfeitAck(id, startTurn, N); // compute before prank
         vm.prank(claimant);
         escrow.proposeForfeit(id, pfx, ack);
-        vm.expectRevert(bytes("MatchEscrow: not a one-move rebuttal"));
-        escrow.rebutForfeit(id, tooLong);
+        vm.expectRevert(bytes("MatchEscrow: rebuttal too short"));
+        escrow.rebutForfeit(id, tooShort);
+    }
+
+    // [re-audit v2 hardening] Reach-back defence: a LOSER opens a stale forfeit at
+    // an old ply (with the winner's genuine old ack) naming themselves winner; the
+    // true winner escapes in ONE tx by rebutting with the full terminal transcript,
+    // which settles to the CANONICAL winner — not the loser.
+    function test_forfeit_reachbackTerminalRebuttalSettlesTrueWinner() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        (ReplayVerifier.Transcript memory full, uint8 winner) = _buildFullTranscript(id, startTurn);
+        assertLt(winner, 2, "decisive game");
+
+        // an early ply N (far behind the frontier) where it's the WINNER's turn,
+        // so the LOSER can reach back and accuse the winner of "abandoning"
+        uint256 N = 4;
+        while ((uint256(startTurn) + N) % 2 != winner) N++;
+        (address claimant, address accused) = _forfeitRoles(startTurn, N);
+        assertEq(accused, winner == 0 ? alice : bob, "accused is the true winner");
+
+        ReplayVerifier.Transcript memory stale = _truncate(full, N);
+        bytes memory ack = _forfeitAck(id, startTurn, N); // winner's genuine old ack
+        vm.prank(claimant);
+        escrow.proposeForfeit(id, stale, ack);
+        assertEq(escrow.getMatch(id).proposedWinner, claimant == alice ? 0 : 1, "loser named as winner");
+
+        address winnerAddr = winner == 0 ? alice : bob;
+        uint256 before = usdc.balanceOf(winnerAddr);
+        escrow.rebutForfeit(id, full); // permissionless, one tx, full terminal line
+        uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(winnerAddr), before + prize, "true winner paid, stale forfeit defeated");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Resolved));
+    }
+
+    // [re-audit v2 hardening] One leapfrog rebuttal advances the anti-replay floor
+    // to the proven frontier, so a losing griefer can't reopen forfeits at every
+    // lower ply (no per-ply gauntlet).
+    function test_forfeit_leapfrogRebuttalBlocksStaleReforfeit() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        uint256 N = 4;
+        ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
+        ReplayVerifier.Transcript memory long = _buildPartialTranscript(id, startTurn, N + 6);
+        (address claimant,) = _forfeitRoles(startTurn, N);
+        bytes memory ack = _forfeitAck(id, startTurn, N);
+        vm.prank(claimant);
+        escrow.proposeForfeit(id, pfx, ack);
+
+        escrow.rebutForfeit(id, long); // non-terminal leapfrog → floor jumps to N+6
+        assertEq(escrow.getMatch(id).lastRebuttedPly, N + 6, "floor jumped to frontier");
+
+        // re-opening at any ply at/below the frontier is now rejected as stale
+        ReplayVerifier.Transcript memory stale = _buildPartialTranscript(id, startTurn, N + 2);
+        (address claimant2,) = _forfeitRoles(startTurn, N + 2);
+        bytes memory ack2 = _forfeitAck(id, startTurn, N + 2);
+        vm.prank(claimant2);
+        vm.expectRevert(bytes("MatchEscrow: stale forfeit ply"));
+        escrow.proposeForfeit(id, stale, ack2);
     }
 
     // A pending forfeit can NEVER be refunded away — closes the abandon→refund
