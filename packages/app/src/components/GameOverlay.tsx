@@ -5,11 +5,13 @@ import { Icon } from "./Icon.js";
 import { sfx } from "../lib/sound.js";
 
 // End-of-game celebration moment. Win/lose/draw each get a distinct treatment.
-// TODO(premium): swap the CSS confetti for a Lottie burst — lottie-react is
-// already a dependency; drop a win.json into /public and render <Lottie/> here.
+// The win burst is pure CSS on purpose — a weightless celebration beats pulling
+// a runtime animation lib into a perf-budgeted MiniPay app (a heavy Lottie for
+// confetti would undo the First-Load work for no real gain).
 
-const CONFETTI = Array.from({ length: 28 }, (_, i) => i);
-const COLORS = ["#3ddc6f", "#f5c451", "#fbe6b0", "#ff8f5c", "#7ad6ff"];
+const CONFETTI = Array.from({ length: 32 }, (_, i) => i);
+// gold-forward for a win, with a few cool accents so it reads as *prize*, not party
+const COLORS = ["#f6c863", "#f5c451", "#fbe6b0", "#3ddc6f", "#ffffff", "#7ad6ff"];
 
 function haptic(p: number | number[]) {
   try {
@@ -93,6 +95,8 @@ export function GameOverlay({
             const left = (i * 37) % 100;
             const delay = (i % 7) * 90;
             const dur = 1400 + (i % 5) * 260;
+            // varied sizes read as depth, not a uniform grid of dots
+            const w = 6 + (i % 3) * 2;
             return (
               <span
                 key={i}
@@ -100,8 +104,8 @@ export function GameOverlay({
                   position: "absolute",
                   top: "-8%",
                   left: `${left}%`,
-                  width: 8,
-                  height: 12,
+                  width: w,
+                  height: w + 4,
                   borderRadius: 2,
                   background: COLORS[i % COLORS.length],
                   opacity: 0.9,

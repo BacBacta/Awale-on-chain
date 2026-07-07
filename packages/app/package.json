@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Awalé MiniPay mini-app (Next.js + viem): zero-click connect, session keys, stablecoin play.",
+  "description": "Awal\u00e9 MiniPay mini-app (Next.js + viem): zero-click connect, session keys, stablecoin play.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -14,7 +14,6 @@
   "dependencies": {
     "@selfxyz/qrcode": "^1.0.24",
     "lighthouse": "^13.4.0",
-    "lottie-react": "^2.4.0",
     "next": "14.2.15",
     "react": "18.3.1",
     "react-dom": "18.3.1",
