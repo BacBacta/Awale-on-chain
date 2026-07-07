@@ -268,7 +268,18 @@ let cashPairStore: CashPairStore = new InMemoryCashPairStore();
 // Collect. A credited prize is a DEBT: Redis-backed in production.
 let leaguePrizes: LeaguePrizeStore = new InMemoryLeaguePrizeStore();
 if (process.env.REDIS_URL) {
-  const redis = new IORedis(process.env.REDIS_URL, { family: 6, maxRetriesPerRequest: 5, lazyConnect: true });
+  // Two shapes are supported:
+  //  - Fly-managed Upstash (redis://…, no TLS): reached over Fly's internal
+  //    network, which is IPv6-only → force family: 6.
+  //  - Direct Upstash free tier (rediss://…, TLS): a PUBLIC endpoint that
+  //    resolves normally (IPv4/dual-stack) and ioredis auto-enables TLS from
+  //    the rediss:// scheme → do NOT force IPv6 (that would break DNS there).
+  const isTls = process.env.REDIS_URL.startsWith("rediss://");
+  const redis = new IORedis(process.env.REDIS_URL, {
+    maxRetriesPerRequest: 5,
+    lazyConnect: true,
+    ...(isTls ? {} : { family: 6 }),
+  });
   redis.on("error", (e) => console.warn(`[redis] ${e.message}`));
   redis.on("ready", () => console.log("[redis] connected"));
   redis.connect().catch((e) => console.warn(`[redis] initial connect failed: ${(e as Error).message}`));
