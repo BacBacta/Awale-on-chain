@@ -782,10 +782,11 @@ export function LiveMatch({
         <div className="card stack animate-in" style={{ gap: 8 }}>
           <span className="muted">
             Your opponent claimed {theirClaim.winner === 2 ? "a draw" : theirClaim.winner === role ? "you as the winner" : "victory"} on-chain.
-            If that's not right, dispute it with the real game — it can't take the pot on a false claim.
+            {" "}A false claim can never take the pot — our server automatically counters it with the real
+            game, so your winnings are safe even if you close the app. You can also settle it yourself right now.
           </span>
           <button className="btn block" onClick={dispute}>
-            Dispute
+            Settle with the real game
           </button>
         </div>
       )}
