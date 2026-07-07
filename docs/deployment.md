@@ -173,7 +173,15 @@ public URL. Verified: the container boots against live Celo Sepolia and serves
       (EIP-6963 + MiniPay fast-path; session-key move signing; display names).
 - [x] Stablecoin-only copy; feeCurrency on every tx; legacy (non-EIP-1559) txs
       (Celo has no `baseFeePerGas`, so viem emits type-0 legacy txs by default —
-      verified on the sample match above).
+      verified on the sample match above). **feeCurrency is per-token** — resolved
+      from the tx's stablecoin via `tokens.ts` (USDm pays in USDm; USDC/USDT via
+      their adapters), including the Weekly-race on-chain prize claim. **Mainnet:
+      set `NEXT_PUBLIC_FEE_CURRENCY` (app) and `FEE_CURRENCY` (server) to the
+      deployed token's feeCurrency** so every tx — and the operator's own —
+      pays gas in stablecoin, not native CELO. On testnet the stake token is a
+      Mock USDm that is NOT in Celo Sepolia's feeCurrency whitelist, so testnet
+      txs necessarily fall back to native CELO; this clears on mainnet's real
+      whitelisted tokens.
 - [x] 360×640, SVG/WebP, bundle ≤ 2 MB (First Load JS ≈ 87–213 kB), **PageSpeed 93**
       (mobile, pagespeed.web.dev) — A11y 100 / best-practices 96 / SEO 100. Cleared
       the 90+ gate via WebP hero assets + LCP preload + socket.io lazy-load; see
