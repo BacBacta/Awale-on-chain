@@ -1249,6 +1249,8 @@ if (settlement) {
 // Genuine abandonment (the hub has no such move) is left to stand →
 // finalizeForfeit pays the claimant. Symmetric to the anticheat challenge above.
 const rebutted = new Set<string>();
+// poll-based forfeit rebuttal dedup (keyed matchId:forfeitPly), robust to dropped events
+const polledRebut = new Set<string>();
 if (settlement) {
   publicClient.watchContractEvent({
     address: ESCROW,
@@ -1320,7 +1322,7 @@ async function keeperTick(): Promise<void> {
         abi: matchEscrowAbi,
         functionName: "getMatch",
         args: [BigInt(idStr)],
-      })) as { status: number; startTurn: number; proposedWinner: number; challengeDeadline: bigint; activeDeadline: bigint; revealBlock: bigint; player0: Address; player1: Address };
+      })) as { status: number; startTurn: number; proposedWinner: number; challengeDeadline: bigint; activeDeadline: bigint; revealBlock: bigint; forfeitPly: number; player0: Address; player1: Address };
       const status = Number(m.status);
       if (status === EscrowStatus.Resolved || status === EscrowStatus.Voided || status === EscrowStatus.Cancelled) {
         tracked.delete(idStr); // terminal — stop watching
@@ -1328,6 +1330,29 @@ async function keeperTick(): Promise<void> {
         continue;
       }
       keeperPlayers.set(idStr, [m.player0, m.player1]);
+
+      // Poll-based forfeit defence (robust to a dropped ForfeitProposed event):
+      // if the hub holds a continuation past the committed forfeit ply, the claim
+      // is stale/false — rebut with the FULL hub transcript; the contract leapfrogs
+      // the anti-replay floor to the frontier (or settles the true winner if
+      // terminal). Genuine abandonment (hub length == forfeitPly) falls through to
+      // finalizeForfeit. This makes the rebuttal poll-based, not event-only.
+      if (status === EscrowStatus.ForfeitPending) {
+        const forfeitPly = Number(m.forfeitPly);
+        const rebutKey = `${idStr}:${forfeitPly}`;
+        const hubT = hub.transcript(BigInt(idStr));
+        if (hubT && hubT.moves.length > forfeitPly && !polledRebut.has(rebutKey)) {
+          polledRebut.add(rebutKey);
+          void settlement!
+            .rebutForfeit(hubT)
+            .then((h) => console.log(`[forfeit-poll] rebut match ${idStr} @ply ${forfeitPly} (${h})`))
+            .catch((e) => {
+              polledRebut.delete(rebutKey);
+              console.warn(`[forfeit-poll] rebut match ${idStr} failed: ${(e as Error).message}`);
+            });
+          continue; // rebut resolves/leapfrogs it — don't also finalize this tick
+        }
+      }
       matches.push({
         matchId: BigInt(idStr),
         status,
