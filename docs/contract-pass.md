@@ -100,11 +100,24 @@ server guard: the keeper refuses to finalize a proposal that contradicts a
 hub-known terminal result. Economics identical; same verifier reused. The app's
 dispute card now reassures the winner their pot is auto-protected even offline.
 
+## 1e. MatchEscrow v6 — staked friend matches (deployed 2026-07-07)
+
+Single addition vs v5: **invite-locked matches** so friends can stake against
+each other. `createMatchWithInvite` commits `keccak256(code)`; only
+`joinMatchWithCode` with the link's secret code takes the seat, and plain
+`joinMatch` rejects locked matches — without this, any lobby bot could take the
+friend's seat the moment the match appeared on-chain (friend links bypass the
+skill matchmaking money games get). Rake/settlement/refund rules identical.
+Lobby scans (client + server) filter locked matches out; /matches gains the
+"Invite a friend — for money" flow; the /play join-offer uses the link's code.
+
 ## Deployment record (Celo Sepolia)
 
-- **MatchEscrow v5** `0x5A281615A2A927E5684af7898F46d01D0646230e` — current
+- **MatchEscrow v6** `0x6b118F89cf54FFf83A635f188e3ad8d4AaAA8613` — current
   escrow (`NEXT_PUBLIC_ESCROW_ADDRESS` / `ESCROW_ADDRESS`), deploy block
-  **30146165**, verifier `0xF6B27BBDe627eD9f241C3017aCa33bb472064395` (reused).
+  **30152290**, verifier `0xF6B27BBDe627eD9f241C3017aCa33bb472064395` (reused).
+- MatchEscrow v5 `0x5A281615A2A927E5684af7898F46d01D0646230e` — legacy
+  (H-03 anti-theft pass), deploy block 30146165.
 - MatchEscrow v4 `0x34473d4b1dD93314b13605277681b4202C55c4E8` — legacy
   (M1 pass; had the H-03 keeper gap).
 - MatchEscrow v3 `0x53c7594ca2943ee43fB24a6F11C6b438b7F06EFA` — legacy
