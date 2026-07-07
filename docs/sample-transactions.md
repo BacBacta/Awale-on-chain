@@ -31,3 +31,25 @@ Notes:
 
 Regenerate with `scratchpad/sample-match3.sh` (fresh random keys — never reuse
 well-known test keys on a public testnet; sweeper bots drain them on arrival).
+
+## Match #1 on v6 — staked friend match (invite-locked)
+
+Proves the v6 friend-stakes path end-to-end on Celo Sepolia: an invite-locked
+match rejects strangers, the friend with the link's code joins and wins, and the
+11% rake routes to the Treasury exactly as any money match.
+
+- MatchEscrow v6 — `0x6b118F89cf54FFf83A635f188e3ad8d4AaAA8613`
+
+| Step | Actor | Tx |
+|---|---|---|
+| `createMatchWithInvite` (seat locked to keccak(code)) | operator | [`0xeb4fff16…c872669fcb`](https://celo-sepolia.blockscout.com/tx/0xeb4fff161466462a146cd48153c93e37737472263de765d52fc543c872669fcb) |
+| `joinMatchWithCode` (fresh non-owner friend, with the code) | friend | [`0xb86c11d2…b7aeb2a61`](https://celo-sepolia.blockscout.com/tx/0xb86c11d2fe01a36b5cb874514d998e32212a7901c065cd9c1e75170b7aeb2a61) |
+| `settleSigned` (winner = friend) | either | [`0x9b970479…10ccaa7c0`](https://celo-sepolia.blockscout.com/tx/0x9b970479c8f58e3087f716b5b4bab55bc77297f879979e74e2dfb3710ccaa7c0) |
+
+Verified on-chain: a stranger's `joinMatch` reverts `invite only` and a wrong
+code reverts `bad invite code`; escrow drains to 0; the friend (a fresh
+non-owner wallet) receives 1.78 aUSD; the Treasury takes 0.22 aUSD (11% of the
+2 aUSD pot). Regenerate with `scratchpad/friend-e2e2.sh` (fresh keys, explicit
+operator nonces, `--legacy --gas-price $(cast gas-price)` — forno's estimate
+doubles the real price, and its load-balanced reads lag right after a mine, so
+read `nextMatchId` from the MatchCreated event, not a bare call).
