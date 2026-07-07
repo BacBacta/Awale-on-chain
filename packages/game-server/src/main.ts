@@ -12,6 +12,7 @@ import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { createNonceManager, jsonRpc } from "viem/nonce";
 import { GameHub } from "./hub.js";
+import { forfeitRebuttal } from "./match.js";
 import { attachSocketIO } from "./server.js";
 import { watchMatchJoined, watchStartFinalized, openMatchFromChain, type ChainMatch, type EventWatcher } from "./listener.js";
 import { SettlementClient } from "./chain.js";
@@ -1236,6 +1237,46 @@ if (settlement) {
     },
     onError: () => {
       /* forno filter drop — the honest player's own client remains the backstop */
+    },
+  });
+}
+
+// Forfeit backstop: rebut a FALSE/stale forfeit on an honest player's behalf.
+// A forfeit accuses the opponent of not moving at `forfeitPly`; if the hub
+// already holds their move at that ply, the accused is present and the claim is
+// stale → the keeper submits that move (permissionless rebutForfeit) so an
+// abandonment claim can't rob a player who merely wasn't watching the chain.
+// Genuine abandonment (the hub has no such move) is left to stand →
+// finalizeForfeit pays the claimant. Symmetric to the anticheat challenge above.
+const rebutted = new Set<string>();
+if (settlement) {
+  publicClient.watchContractEvent({
+    address: ESCROW,
+    abi: matchEscrowAbi,
+    eventName: "ForfeitProposed",
+    onLogs: (logs) => {
+      for (const log of logs) {
+        const a = log.args as { matchId?: bigint; forfeitPly?: number };
+        if (a.matchId === undefined || a.forfeitPly === undefined) continue;
+        const claimKey = `${a.matchId}:${a.forfeitPly}`; // one rebut attempt per distinct claim
+        if (rebutted.has(claimKey)) continue;
+        const t = hub.transcript(a.matchId);
+        if (!t) continue;
+        const rebuttal = forfeitRebuttal(t, Number(a.forfeitPly));
+        if (!rebuttal) continue; // genuine abandonment — let the forfeit stand
+        rebutted.add(claimKey);
+        console.warn(`[forfeit-backstop] match ${a.matchId}: stale forfeit at ply ${a.forfeitPly} — rebutting with the real move`);
+        void settlement!
+          .rebutForfeit(rebuttal)
+          .then((h) => console.log(`[forfeit-backstop] rebut match ${a.matchId} submitted (${h})`))
+          .catch((e) => {
+            rebutted.delete(claimKey); // let a retry try again
+            console.warn(`[forfeit-backstop] rebut match ${a.matchId} failed: ${(e as Error).message}`);
+          });
+      }
+    },
+    onError: () => {
+      /* forno filter drop — the accused's own client can still rebut */
     },
   });
 }

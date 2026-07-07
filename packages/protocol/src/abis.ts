@@ -290,6 +290,24 @@ export const matchEscrowAbi = [
   },
   {
     type: "event",
+    name: "ForfeitProposed",
+    inputs: [
+      { name: "matchId", type: "uint256", indexed: true },
+      { name: "claimant", type: "uint8", indexed: false },
+      { name: "forfeitPly", type: "uint32", indexed: false },
+      { name: "deadline", type: "uint64", indexed: false },
+    ],
+  },
+  {
+    type: "event",
+    name: "ForfeitRebutted",
+    inputs: [
+      { name: "matchId", type: "uint256", indexed: true },
+      { name: "forfeitPly", type: "uint32", indexed: false },
+    ],
+  },
+  {
+    type: "event",
     name: "MatchCreated",
     inputs: [
       { name: "matchId", type: "uint256", indexed: true },

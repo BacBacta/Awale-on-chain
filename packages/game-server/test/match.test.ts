@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Address, Hex } from "viem";
 import { DRAW } from "../../engine/src/awale.js";
-import { Match, type MatchConfig } from "../src/match.js";
+import { Match, forfeitRebuttal, type MatchConfig, type Transcript } from "../src/match.js";
 import { moveDigest, resignDigest, drawOfferDigest, stateHash, type MoveContext } from "../src/eip712.js";
 
 const VERIFIER: Address = "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3";
@@ -39,6 +39,29 @@ function signDrawOffer(player: 0 | 1, matchId: bigint, ply: number): Promise<Hex
   const acct = player === 0 ? acct0 : acct1;
   return acct.sign({ hash: drawOfferDigest(matchId, BigInt(ply), ctx) });
 }
+
+describe("forfeitRebuttal (keeper backstop)", () => {
+  const t = (n: number): Transcript => ({
+    matchId: 1n,
+    session0: acct0.address,
+    session1: acct1.address,
+    startTurn: 0,
+    moves: Array.from({ length: n }, (_, i) => i % 6),
+    sigs: Array.from({ length: n }, (_, i) => `0x0${i}` as Hex),
+  });
+
+  it("returns null for a genuine abandonment (hub has no move at forfeitPly)", () => {
+    expect(forfeitRebuttal(t(3), 3)).toBeNull(); // exactly forfeitPly moves
+    expect(forfeitRebuttal(t(2), 3)).toBeNull(); // hub even shorter
+  });
+
+  it("rebuts a stale claim by truncating to the committed prefix + one move", () => {
+    const r = forfeitRebuttal(t(10), 3);
+    expect(r).not.toBeNull();
+    expect(r!.moves).toEqual([0, 1, 2, 3]); // forfeitPly + 1
+    expect(r!.sigs).toHaveLength(4);
+  });
+});
 
 describe("Match orchestration", () => {
   it("accepts correctly-signed moves and advances state", async () => {

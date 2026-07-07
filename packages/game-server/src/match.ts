@@ -36,6 +36,26 @@ export interface Transcript {
   sigs: Hex[];
 }
 
+/**
+ * Keeper backstop: given the hub's authoritative signed transcript and a
+ * pending forfeit's claimed ply, return the rebuttal transcript that refutes a
+ * FALSE/stale forfeit — or null if the claim is legitimate.
+ *
+ * A forfeit accuses the opponent of not moving at `forfeitPly`. If the hub
+ * already holds their move at that ply (transcript length > forfeitPly), the
+ * accused is present and the claim is stale → rebut with exactly the committed
+ * prefix plus that one move. If the hub has only `forfeitPly` moves, the accused
+ * genuinely never moved → real abandonment, let the forfeit stand (null).
+ */
+export function forfeitRebuttal(hubTranscript: Transcript, forfeitPly: number): Transcript | null {
+  if (hubTranscript.moves.length < forfeitPly + 1) return null; // genuine abandonment
+  return {
+    ...hubTranscript,
+    moves: hubTranscript.moves.slice(0, forfeitPly + 1),
+    sigs: hubTranscript.sigs.slice(0, forfeitPly + 1),
+  };
+}
+
 /** Serializable form of a live match, for persistence + rehydration. */
 export interface MatchSnapshot {
   matchId: bigint;
