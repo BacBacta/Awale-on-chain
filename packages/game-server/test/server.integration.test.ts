@@ -8,7 +8,8 @@ import { GameHub } from "../src/hub.js";
 import { Matchmaker } from "../src/matchmaking.js";
 import { attachSocketIO, type ServerDeps, type SocketHandle } from "../src/server.js";
 import { InMemoryCashPairStore } from "../src/cash-pair-store.js";
-import { moveDigest, resignDigest } from "../src/eip712.js";
+import { moveDigest, resignDigest, stateHash } from "../src/eip712.js";
+const OPENING = { pits: Array(12).fill(4), store0: 0, store1: 0, turn: 0, noCaptureCount: 0 };
 
 const VERIFIER: Address = "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3";
 const CHAIN_ID = 31337n;
@@ -66,7 +67,7 @@ describe("Socket.IO transport (integration)", () => {
 
     // player 0 plays house 0, signed with its session key
     const house = 0;
-    const sig = await acct0.sign({ hash: moveDigest(1n, 0n, house, { chainId: CHAIN_ID, verifier: VERIFIER }) });
+    const sig = await acct0.sign({ hash: moveDigest(1n, 0n, house, stateHash(OPENING), { chainId: CHAIN_ID, verifier: VERIFIER }) });
 
     const next = await new Promise<{ state: { turn: number } }>((resolve) => {
       client.once("state", resolve);
@@ -91,7 +92,7 @@ describe("Socket.IO transport (integration)", () => {
     client.emit("watch", { matchId: "2" });
 
     // player 0's move signed by player 1's key -> rejected
-    const badSig = await acct1.sign({ hash: moveDigest(2n, 0n, 0, { chainId: CHAIN_ID, verifier: VERIFIER }) });
+    const badSig = await acct1.sign({ hash: moveDigest(2n, 0n, 0, stateHash(OPENING), { chainId: CHAIN_ID, verifier: VERIFIER }) });
     const err = await new Promise<{ message: string }>((resolve) => {
       client.once("error", resolve);
       client.emit("move", { matchId: "2", player: 0, house: 0, signature: badSig });

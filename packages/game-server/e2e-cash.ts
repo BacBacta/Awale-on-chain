@@ -9,7 +9,8 @@ import { io, type Socket } from "socket.io-client";
 import { createWalletClient, createPublicClient, http, parseEventLogs, parseAbi, type Address, type Hex } from "viem";
 import { privateKeyToAccount, generatePrivateKey } from "viem/accounts";
 import { celoSepolia } from "viem/chains";
-import { moveDigest, resultDigest, resignDigest } from "/workspaces/Awale-on-chain/packages/protocol/src/eip712.js";
+import { moveDigest, resultDigest, resignDigest, stateHash } from "/workspaces/Awale-on-chain/packages/protocol/src/eip712.js";
+const OPENING = { pits: Array(12).fill(4), store0: 0, store1: 0, turn: 0, noCaptureCount: 0 };
 import { matchEscrowAbi, erc20Abi } from "/workspaces/Awale-on-chain/packages/protocol/src/abis.js";
 
 const SERVER = "https://awale-game-server.fly.dev";
@@ -173,7 +174,7 @@ async function main() {
   const moverSock = mover === 0 ? sa : sb;
   const moverSess = mover === 0 ? sessA.key : sessB.key;
   const ctx = { chainId: CHAIN_ID, verifier };
-  const sig = await privateKeyToAccount(moverSess).sign({ hash: moveDigest(matchId, 0n, 0, ctx) });
+  const sig = await privateKeyToAccount(moverSess).sign({ hash: moveDigest(matchId, 0n, 0, stateHash(OPENING), ctx) });
   const afterMove = until<StateMsg>("state after move", 20_000, (done) =>
     sa.on("state", (m: StateMsg) => (m.ply === 1 ? done(m) : undefined)),
   );

@@ -4,7 +4,8 @@ import type { Address } from "viem";
 import { AsyncMatchService } from "../src/async-match.js";
 import { InMemoryMatchStore } from "../src/persistence/store.js";
 import type { Notifier } from "../src/notifications/notifier.js";
-import { moveDigest, resignDigest } from "../src/eip712.js";
+import { moveDigest, resignDigest, stateHash } from "../src/eip712.js";
+const OPENING = { pits: Array(12).fill(4), store0: 0, store1: 0, turn: 0, noCaptureCount: 0 };
 
 const VERIFIER: Address = "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3";
 const CHAIN_ID = 31337n;
@@ -52,7 +53,7 @@ describe("AsyncMatchService", () => {
     const { svc, calls, id } = await newService();
 
     // player 0 plays house 2 (ply 0)
-    const sig = await s0.sign({ hash: moveDigest(42n, 0n, 2, { chainId: CHAIN_ID, verifier: VERIFIER }) });
+    const sig = await s0.sign({ hash: moveDigest(42n, 0n, 2, stateHash(OPENING), { chainId: CHAIN_ID, verifier: VERIFIER }) });
     const state = await svc.move(id, 0, 2, sig);
 
     expect(state.turn).toBe(1); // turn passed to the opponent
@@ -61,13 +62,13 @@ describe("AsyncMatchService", () => {
 
   it("rejects a move signed by the wrong key", async () => {
     const { svc, id } = await newService();
-    const bad = await s1.sign({ hash: moveDigest(42n, 0n, 2, { chainId: CHAIN_ID, verifier: VERIFIER }) });
+    const bad = await s1.sign({ hash: moveDigest(42n, 0n, 2, stateHash(OPENING), { chainId: CHAIN_ID, verifier: VERIFIER }) });
     await expect(svc.move(id, 0, 2, bad)).rejects.toThrow(/signature/);
   });
 
   it("survives a reload: state replays from the store, turn-flagged per player", async () => {
     const { svc, id } = await newService();
-    const sig = await s0.sign({ hash: moveDigest(42n, 0n, 2, { chainId: CHAIN_ID, verifier: VERIFIER }) });
+    const sig = await s0.sign({ hash: moveDigest(42n, 0n, 2, stateHash(OPENING), { chainId: CHAIN_ID, verifier: VERIFIER }) });
     await svc.move(id, 0, 2, sig);
 
     const st = await svc.getState(id);
@@ -216,7 +217,7 @@ describe("AsyncMatchService", () => {
     it("the per-match clock survives moves", async () => {
       const { svc, id } = await newService();
       await svc.setTurnClock(id, 600_000);
-      const sig = await s0.sign({ hash: moveDigest(42n, 0n, 2, { chainId: CHAIN_ID, verifier: VERIFIER }) });
+      const sig = await s0.sign({ hash: moveDigest(42n, 0n, 2, stateHash(OPENING), { chainId: CHAIN_ID, verifier: VERIFIER }) });
       await svc.move(id, 0, 2, sig);
       expect((await svc.getState(id))?.turnClockMs).toBe(600_000);
     });

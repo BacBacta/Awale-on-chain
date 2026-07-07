@@ -11,7 +11,7 @@
 // the contract would accept.
 
 import { initialState, applyMove, legalMovesMask, adjudicate, repetitionCount, DRAW, type GameState } from "../../engine/src/awale.js";
-import { moveDigest, resignDigest, drawOfferDigest, type MoveContext } from "./eip712.js";
+import { moveDigest, resignDigest, drawOfferDigest, stateHash, type MoveContext } from "./eip712.js";
 import { recoverAddress, type Address, type Hex } from "viem";
 
 export interface MatchConfig {
@@ -135,7 +135,8 @@ export class Match {
     if (this.state.over) throw new Error("match over");
     if (player !== this.state.turn) throw new Error("not your turn");
 
-    const digest = moveDigest(this.cfg.matchId, BigInt(this.ply), house, this.ctx());
+    // the signature binds the exact pre-move position (this.state is pre-applyMove)
+    const digest = moveDigest(this.cfg.matchId, BigInt(this.ply), house, stateHash(this.state), this.ctx());
     const signer = await recoverAddress({ hash: digest, signature });
     if (signer.toLowerCase() !== this.cfg.sessions[player].toLowerCase()) {
       throw new Error("bad move signature");

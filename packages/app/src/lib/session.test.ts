@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { recoverAddress, type Address } from "viem";
 import { createSessionKey, signMove, signResult } from "./session.js";
-import { moveDigest, resultDigest } from "../../../protocol/src/eip712.js";
+import { moveDigest, resultDigest, stateHash } from "../../../protocol/src/eip712.js";
+const OPENING = { pits: Array(12).fill(4), store0: 0, store1: 0, turn: 0, noCaptureCount: 0 };
 
 const VERIFIER: Address = "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3";
 const ESCROW: Address = "0xf13D09eD3cbdD1C930d4de74808de1f33B6b3D4f";
@@ -16,9 +17,9 @@ describe("session keys", () => {
 
   it("produces move signatures that recover to the session address", async () => {
     const s = createSessionKey();
-    const sig = await signMove(s, 1n, 0n, 3, { chainId, verifier: VERIFIER });
+    const sig = await signMove(s, 1n, 0n, 3, OPENING, { chainId, verifier: VERIFIER });
     const recovered = await recoverAddress({
-      hash: moveDigest(1n, 0n, 3, { chainId, verifier: VERIFIER }),
+      hash: moveDigest(1n, 0n, 3, stateHash(OPENING), { chainId, verifier: VERIFIER }),
       signature: sig,
     });
     expect(recovered.toLowerCase()).toBe(s.address.toLowerCase());

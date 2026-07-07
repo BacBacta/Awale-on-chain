@@ -15,8 +15,10 @@ import {
   resultDigest,
   resignDigest,
   drawOfferDigest,
+  stateHash,
   type MoveContext,
   type ResultContext,
+  type MovePosition,
 } from "../../../protocol/src/eip712.js";
 
 export interface SessionKey {
@@ -34,9 +36,12 @@ export function signMove(
   matchId: bigint,
   ply: bigint,
   house: number,
+  position: MovePosition, // the PRE-move game state (its hash binds the signature)
   ctx: MoveContext,
 ): Promise<Hex> {
-  return privateKeyToAccount(session.privateKey).sign({ hash: moveDigest(matchId, ply, house, ctx) });
+  return privateKeyToAccount(session.privateKey).sign({
+    hash: moveDigest(matchId, ply, house, stateHash(position), ctx),
+  });
 }
 
 export function signResult(

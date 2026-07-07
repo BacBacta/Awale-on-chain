@@ -357,7 +357,7 @@ export function LiveMatch({
   async function play(house: number) {
     if (!state || state.over || role === null || state.turn !== role) return;
     if (!session.current || !ctx.current) return;
-    const sig = await signMove(session.current, matchId, BigInt(ply), house, ctx.current);
+    const sig = await signMove(session.current, matchId, BigInt(ply), house, state, ctx.current);
     socket.current?.emit("move", { matchId: matchId.toString(), player: role, house, signature: sig as Hex });
   }
 

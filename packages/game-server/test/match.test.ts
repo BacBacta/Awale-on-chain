@@ -3,7 +3,7 @@ import { privateKeyToAccount } from "viem/accounts";
 import type { Address, Hex } from "viem";
 import { DRAW } from "../../engine/src/awale.js";
 import { Match, type MatchConfig } from "../src/match.js";
-import { moveDigest, resignDigest, drawOfferDigest, type MoveContext } from "../src/eip712.js";
+import { moveDigest, resignDigest, drawOfferDigest, stateHash, type MoveContext } from "../src/eip712.js";
 
 const VERIFIER: Address = "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3";
 const CHAIN_ID = 31337n;
@@ -23,9 +23,11 @@ function config(startTurn: 0 | 1 = 0): MatchConfig {
 
 const ctx: MoveContext = { chainId: CHAIN_ID, verifier: VERIFIER };
 
-function signFor(player: 0 | 1, matchId: bigint, ply: number, house: number): Promise<Hex> {
+// signs the current move of `m` (its state binds the signature to the exact
+// pre-move position, matching Match.submitMove's on-chain-parity check)
+function signFor(m: Match, player: 0 | 1, house: number): Promise<Hex> {
   const acct = player === 0 ? acct0 : acct1;
-  return acct.sign({ hash: moveDigest(matchId, BigInt(ply), house, ctx) });
+  return acct.sign({ hash: moveDigest(m.cfg.matchId, BigInt(m.ply), house, stateHash(m.state), ctx) });
 }
 
 function signResign(player: 0 | 1, matchId: bigint, ply: number): Promise<Hex> {
@@ -42,7 +44,7 @@ describe("Match orchestration", () => {
   it("accepts correctly-signed moves and advances state", async () => {
     const m = new Match(config(0));
     const house = m.legalMoves()[0];
-    const sig = await signFor(0, m.cfg.matchId, m.ply, house);
+    const sig = await signFor(m, 0, house);
     await m.submitMove(0, house, sig);
 
     expect(m.ply).toBe(1);
@@ -54,7 +56,7 @@ describe("Match orchestration", () => {
   it("rejects a move out of turn", async () => {
     const m = new Match(config(0));
     const house = m.legalMoves()[0];
-    const sig = await signFor(1, m.cfg.matchId, m.ply, house);
+    const sig = await signFor(m, 1, house);
     await expect(m.submitMove(1, house, sig)).rejects.toThrow("not your turn");
   });
 
@@ -62,7 +64,7 @@ describe("Match orchestration", () => {
     const m = new Match(config(0));
     const house = m.legalMoves()[0];
     // player 0's move signed by player 1's key
-    const sig = await signFor(1, m.cfg.matchId, m.ply, house);
+    const sig = await signFor(m, 1, house);
     await expect(m.submitMove(0, house, sig)).rejects.toThrow("bad move signature");
   });
 
@@ -71,7 +73,7 @@ describe("Match orchestration", () => {
     // find an empty / illegal house for player 0 at the opening: all are legal,
     // so instead sign an out-of-range house, which the engine rejects
     const badHouse = 9;
-    const sig = await signFor(0, m.cfg.matchId, m.ply, badHouse);
+    const sig = await signFor(m, 0, badHouse);
     await expect(m.submitMove(0, badHouse, sig)).rejects.toThrow();
   });
 
@@ -81,7 +83,7 @@ describe("Match orchestration", () => {
     while (!m.over && guard++ < 5000) {
       const player = m.turn as 0 | 1;
       const house = m.legalMoves()[0];
-      const sig = await signFor(player, m.cfg.matchId, m.ply, house);
+      const sig = await signFor(m, player, house);
       await m.submitMove(player, house, sig);
     }
     expect(m.over).toBe(true);
@@ -100,9 +102,9 @@ describe("Match orchestration", () => {
     while (!m.over && guard++ < 5000) {
       const player = m.turn as 0 | 1;
       const house = m.legalMoves()[0];
-      await m.submitMove(player, house, await signFor(player, m.cfg.matchId, m.ply, house));
+      await m.submitMove(player, house, await signFor(m, player, house));
     }
-    const sig = await signFor(0, m.cfg.matchId, m.ply, 0);
+    const sig = await signFor(m, 0, 0);
     await expect(m.submitMove(0, 0, sig)).rejects.toThrow("match over");
   });
 
@@ -199,7 +201,7 @@ describe("Match orchestration", () => {
       expect(m.clockRemainingMs(1)).toBe(180_000);
 
       const house = m.legalMoves()[0];
-      await m.submitMove(0, house, await signFor(0, m.cfg.matchId, m.ply, house));
+      await m.submitMove(0, house, await signFor(m, 0, house));
       expect(m.clockRemainingMs(0)).toBe(150_000); // banked
       advance(10_000); // now player 1 is burning time
       expect(m.clockRemainingMs(1)).toBe(170_000);

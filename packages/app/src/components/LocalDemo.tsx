@@ -98,7 +98,7 @@ export function LocalDemo() {
     if (busy || state.over || state.turn !== 0) return;
     setBusy(true);
     try {
-      await signMove(sessions[0], DEMO_MATCH_ID, BigInt(ply), house, DEMO_CTX);
+      await signMove(sessions[0], DEMO_MATCH_ID, BigInt(ply), house, state, DEMO_CTX);
       // adjudicate the full history so a threefold repetition ends the game here
       // exactly as it would on the server / on-chain (not just applyMove)
       movesRef.current.push(house);
@@ -118,7 +118,7 @@ export function LocalDemo() {
         const botHouse = chooseMove(next, difficulty);
         const botDur = moveDurationMs(seedsOf(next, 6 + botHouse));
         setThinking(false);
-        await signMove(sessions[1], DEMO_MATCH_ID, BigInt(p), botHouse, DEMO_CTX);
+        await signMove(sessions[1], DEMO_MATCH_ID, BigInt(p), botHouse, next, DEMO_CTX);
         movesRef.current.push(botHouse);
         next = adjudicate(movesRef.current);
         p += 1;

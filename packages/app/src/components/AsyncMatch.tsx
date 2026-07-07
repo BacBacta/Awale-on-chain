@@ -109,7 +109,7 @@ export function AsyncMatch({ matchId }: { matchId: string }) {
     if (!data || !session.current || !cfg || role === null) return;
     if (data.over || data.open || data.turn !== role) return;
     try {
-      const sig = await signMove(session.current, BigInt(matchId), BigInt(data.ply), house, {
+      const sig = await signMove(session.current, BigInt(matchId), BigInt(data.ply), house, data.state, {
         chainId: BigInt(cfg.chainId),
         verifier: cfg.verifier,
       });

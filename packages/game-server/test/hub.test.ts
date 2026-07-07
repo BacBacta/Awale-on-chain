@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Address } from "viem";
 import { GameHub } from "../src/hub.js";
-import { moveDigest } from "../src/eip712.js";
+import { moveDigest, stateHash } from "../src/eip712.js";
+const OPENING = { pits: Array(12).fill(4), store0: 0, store1: 0, turn: 0, noCaptureCount: 0 };
 
 const VERIFIER: Address = "0x5aAdFB43eF8dAF45DD80F4676345b7676f1D70e3";
 const CHAIN_ID = 31337n;
@@ -24,7 +25,7 @@ describe("GameHub", () => {
 
     const m = hub.get(7n)!;
     const house = m.legalMoves()[0];
-    const sig = await acct0.sign({ hash: moveDigest(7n, 0n, house, { chainId: CHAIN_ID, verifier: VERIFIER }) });
+    const sig = await acct0.sign({ hash: moveDigest(7n, 0n, house, stateHash(OPENING), { chainId: CHAIN_ID, verifier: VERIFIER }) });
     const state = await hub.move(7n, 0, house, sig);
 
     expect(state.turn).toBe(1);

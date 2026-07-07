@@ -20,7 +20,7 @@ import {
 const DOMAIN_TYPEHASH = keccak256(
   toBytes("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
 );
-const MOVE_TYPEHASH = keccak256(toBytes("Move(uint256 matchId,uint256 ply,uint8 house)"));
+const MOVE_TYPEHASH = keccak256(toBytes("Move(uint256 matchId,uint256 ply,uint8 house,bytes32 state)"));
 const RESULT_TYPEHASH = keccak256(toBytes("Result(uint256 matchId,uint8 winner)"));
 // Off-chain only: authenticates a resign request to the game server (never
 // submitted on-chain). Reuses the verifier domain like Move, distinct
@@ -52,17 +52,41 @@ export interface MoveContext {
   verifier: Address;
 }
 
+/** The pre-move game state a move signature binds to. Superset-compatible with
+ *  the engine's GameState, so `stateHash(gameState)` works directly. */
+export interface MovePosition {
+  pits: number[]; // 12 houses (0..5 player 0, 6..11 player 1)
+  store0: number;
+  store1: number;
+  turn: number;
+  noCaptureCount: number;
+}
+
+/** keccak of the pre-move game state a move signature binds to — byte-identical
+ *  to ReplayVerifier.stateHash (abi.encode(pits[12], store0, store1, turn,
+ *  noCaptureCount)). Binding each ply signature to its exact position closes
+ *  ply-equivocation and keeps the on-chain forfeit history unforkable. */
+export function stateHash(s: MovePosition): Hex {
+  return keccak256(
+    encodeAbiParameters(
+      [{ type: "uint8[12]" }, { type: "uint8" }, { type: "uint8" }, { type: "uint8" }, { type: "uint8" }],
+      [s.pits, s.store0, s.store1, s.turn, s.noCaptureCount],
+    ),
+  );
+}
+
 export interface ResultContext {
   chainId: bigint;
   escrow: Address;
 }
 
-/** Digest a session key signs to authorise one move (ReplayVerifier.moveDigest). */
-export function moveDigest(matchId: bigint, ply: bigint, house: number, ctx: MoveContext): Hex {
+/** Digest a session key signs to authorise one move (ReplayVerifier.moveDigest).
+ *  `state` is stateHash(pre-move position). */
+export function moveDigest(matchId: bigint, ply: bigint, house: number, state: Hex, ctx: MoveContext): Hex {
   const structHash = keccak256(
     encodeAbiParameters(
-      [{ type: "bytes32" }, { type: "uint256" }, { type: "uint256" }, { type: "uint8" }],
-      [MOVE_TYPEHASH, matchId, ply, house],
+      [{ type: "bytes32" }, { type: "uint256" }, { type: "uint256" }, { type: "uint8" }, { type: "bytes32" }],
+      [MOVE_TYPEHASH, matchId, ply, house, state],
     ),
   );
   return typedDataHash(domainSeparator(VERIFIER_DOMAIN_NAME, ctx.chainId, ctx.verifier), structHash);
@@ -103,8 +127,9 @@ export function recoverMoveSigner(
   matchId: bigint,
   ply: bigint,
   house: number,
+  state: Hex,
   ctx: MoveContext,
   signature: Hex,
 ): Promise<Address> {
-  return recoverAddress({ hash: moveDigest(matchId, ply, house, ctx), signature });
+  return recoverAddress({ hash: moveDigest(matchId, ply, house, state, ctx), signature });
 }

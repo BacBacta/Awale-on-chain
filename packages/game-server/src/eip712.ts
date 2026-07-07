@@ -6,6 +6,8 @@ export {
   resignDigest,
   drawOfferDigest,
   recoverMoveSigner,
+  stateHash,
   type MoveContext,
   type ResultContext,
+  type MovePosition,
 } from "../../protocol/src/eip712.js";

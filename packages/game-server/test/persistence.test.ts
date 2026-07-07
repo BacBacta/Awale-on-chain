@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { privateKeyToAccount } from "viem/accounts";
 import type { Address } from "viem";
 import { Match, type MatchConfig } from "../src/match.js";
-import { moveDigest } from "../src/eip712.js";
+import { moveDigest, stateHash } from "../src/eip712.js";
 import { InMemoryLiveMatchStore, InMemoryLeaderboardStore } from "../src/store/memory.js";
 import { RedisLiveMatchStore, type RedisLike } from "../src/store/redis.js";
 import { snapshotToJson, snapshotFromJson } from "../src/store/serialize.js";
@@ -23,7 +23,7 @@ async function playTwo(m: Match): Promise<void> {
     const player = m.turn as 0 | 1;
     const house = m.legalMoves()[0];
     const acct = player === 0 ? acct0 : acct1;
-    const sig = await acct.sign({ hash: moveDigest(m.cfg.matchId, BigInt(m.ply), house, { chainId: CHAIN_ID, verifier: VERIFIER }) });
+    const sig = await acct.sign({ hash: moveDigest(m.cfg.matchId, BigInt(m.ply), house, stateHash(m.state), { chainId: CHAIN_ID, verifier: VERIFIER }) });
     await m.submitMove(player, house, sig);
   }
 }
