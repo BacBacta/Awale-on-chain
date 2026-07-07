@@ -63,15 +63,18 @@ export function WeeklyLeague() {
           winner meets it in both places (renders nothing when none is pending) */}
       <PrizeCollect address={me} />
       <div className="card stack animate-in" style={{ gap: 14, padding: 18 }}>
+        {/* GREEN is this card's identity — money. Gold is reserved for skill
+            (rating / tiers / the Ladder), so the race can never be mistaken for
+            the skill board it sits above. */}
         <div className="row">
-          <span className="chip gold">🏁 Weekly race</span>
+          <span className="chip positive">🏁 Weekly race</span>
           <span className="faint">Ends in {raceEndsIn(data.endsAt)}</span>
         </div>
 
-        {/* the pot is the hero — one big number */}
+        {/* the pot is the hero — one big number, in money-green */}
         {pool > 0n ? (
           <div className="col" style={{ gap: 2 }}>
-            <span className="display" style={{ color: "var(--gold)", fontSize: 34, lineHeight: 0.95, fontVariantNumeric: "tabular-nums" }}>
+            <span className="display" style={{ color: "var(--accent)", fontSize: 34, lineHeight: 0.95, fontVariantNumeric: "tabular-nums" }}>
               {fmt(pool, STAKE_DECIMALS)} {STAKE_SYMBOL}
             </span>
             <span className="faint">this week&apos;s pot · splits by points on Monday</span>
@@ -139,7 +142,7 @@ export function WeeklyLeague() {
                         {friendlyName(r.address)}
                         {mine && <span style={{ color: "var(--accent)", fontWeight: 650 }}> · you</span>}
                       </span>
-                      <span className="score" style={{ fontSize: 17, fontWeight: 750, color: "var(--gold)", fontVariantNumeric: "tabular-nums" }}>
+                      <span className="score" style={{ fontSize: 17, fontWeight: 750, color: "var(--accent)", fontVariantNumeric: "tabular-nums" }}>
                         {r.points} <span style={{ fontSize: 11, fontWeight: 600, color: "var(--faint)" }}>pts</span>
                       </span>
                     </div>
