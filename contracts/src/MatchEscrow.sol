@@ -491,8 +491,12 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         } else {
             // presence proven → resume play; refresh the TTL so the resumed game
             // isn't instantly voidable, and jump the anti-replay floor to the
-            // proven frontier so no stale forfeit at/below it can reopen
-            m.lastRebuttedPly = uint32(t2.moves.length);
+            // highest ANSWERED ply (= frontier length − 1). A rebuttal of length L
+            // proves the moves at indices 0..L-1; the mover at the live frontier
+            // ply L has NOT answered, so a fresh forfeit there (length L) must stay
+            // open — hence `- 1`, not the raw length, or an abandoner could bait a
+            // rebuttal and then walk away un-forfeitable at the frontier.
+            m.lastRebuttedPly = uint32(t2.moves.length) - 1;
             m.forfeitPrefix = bytes32(0);
             m.forfeitPly = 0;
             m.status = Status.Active;

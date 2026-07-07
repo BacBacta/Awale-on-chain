@@ -707,7 +707,7 @@ contract MatchEscrowTest is Test {
 
         MatchEscrow.Match memory m = escrow.getMatch(id);
         assertEq(uint8(m.status), uint8(MatchEscrow.Status.Active), "game resumes");
-        assertEq(m.lastRebuttedPly, N + 1, "anti-replay floor raised to the proven frontier");
+        assertEq(m.lastRebuttedPly, N, "anti-replay floor = highest answered ply (frontier len - 1)");
         assertEq(usdc.balanceOf(alice), aBefore, "no payout on resume");
         assertEq(usdc.balanceOf(bob), bBefore, "no payout on resume");
     }
@@ -813,8 +813,8 @@ contract MatchEscrowTest is Test {
         vm.prank(claimant);
         escrow.proposeForfeit(id, pfx, ack);
 
-        escrow.rebutForfeit(id, long); // non-terminal leapfrog → floor jumps to N+6
-        assertEq(escrow.getMatch(id).lastRebuttedPly, N + 6, "floor jumped to frontier");
+        escrow.rebutForfeit(id, long); // non-terminal leapfrog → floor jumps to frontier
+        assertEq(escrow.getMatch(id).lastRebuttedPly, N + 5, "floor = frontier length - 1 (highest answered ply)");
 
         // re-opening at any ply at/below the frontier is now rejected as stale
         ReplayVerifier.Transcript memory stale = _buildPartialTranscript(id, startTurn, N + 2);
@@ -888,6 +888,35 @@ contract MatchEscrowTest is Test {
         vm.prank(claimant);
         vm.expectRevert(bytes("MatchEscrow: missing turn ack"));
         escrow.proposeForfeit(id, pfx, wrongPlyAck);
+    }
+
+    // [4th re-audit fix] off-by-one: after a rebuttal resumes the game, the mover
+    // at the live frontier CAN still be forfeited there (the deterrent isn't
+    // delayed by one ply). Before the `- 1` fix this reverted "stale forfeit ply"
+    // and let an abandoner at the frontier force a refund.
+    function test_forfeit_frontierForfeitableAfterRebuttal() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        uint256 N = 6;
+        ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
+        ReplayVerifier.Transcript memory reb = _buildPartialTranscript(id, startTurn, N + 1);
+        (address claimant,) = _forfeitRoles(startTurn, N);
+        bytes memory ack = _forfeitAck(id, startTurn, N);
+        vm.prank(claimant);
+        escrow.proposeForfeit(id, pfx, ack);
+        escrow.rebutForfeit(id, reb); // resume; lastRebuttedPly = N (frontier len N+1 - 1)
+
+        // the mover at the frontier ply N+1 abandons; the other player forfeits them THERE
+        ReplayVerifier.Transcript memory frontier = _buildPartialTranscript(id, startTurn, N + 1);
+        (address claimant2,) = _forfeitRoles(startTurn, N + 1);
+        bytes memory ack2 = _forfeitAck(id, startTurn, N + 1); // before prank
+        vm.prank(claimant2);
+        escrow.proposeForfeit(id, frontier, ack2); // must NOT revert "stale forfeit ply"
+        assertEq(
+            uint8(escrow.getMatch(id).status),
+            uint8(MatchEscrow.Status.ForfeitPending),
+            "frontier ply stays forfeitable"
+        );
     }
 
     // ------------------------- stake floor ------------------------------- //

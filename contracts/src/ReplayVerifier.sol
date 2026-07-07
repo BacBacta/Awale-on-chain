@@ -45,6 +45,13 @@ contract ReplayVerifier {
     /// @dev Upper bound on transcript length, guarding the replay loop against
     ///      an unbounded-gas griefing submission. Repetition ends real games in
     ///      far fewer plies.
+    /// @dev INVARIANT (forfeit liveness): a real Awalé game terminates well below
+    ///      MAX_PLIES — the 40-ply no-capture split (AwaleRules.NO_CAPTURE_LIMIT)
+    ///      plus ≤24 captures caps it near ~1000 plies. MatchEscrow.rebutForfeit
+    ///      relies on this: an accused must always be able to answer a forfeit at
+    ///      ply P with a transcript of length P+1 ≤ MAX_PLIES. Do NOT raise
+    ///      NO_CAPTURE_LIMIT / capture bounds toward MAX_PLIES, nor lower MAX_PLIES
+    ///      toward achievable game lengths, or a forfeit could become un-rebuttable.
     uint256 internal constant MAX_PLIES = 4096;
 
     /// @dev Positions (board + turn) recurring this many times SINCE THE LAST
