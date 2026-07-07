@@ -20,6 +20,20 @@ describe("keeperActions", () => {
     expect(keeperActions(matches, now)).toEqual([]);
   });
 
+  it("finalizes a forfeit past its response window (no rebuttal → claimant wins)", () => {
+    const matches: KeeperMatch[] = [
+      { matchId: 8n, status: EscrowStatus.ForfeitPending, challengeDeadline: now - 1, activeDeadline: 0 },
+    ];
+    expect(keeperActions(matches, now)).toEqual([{ matchId: 8n, action: "finalizeForfeit" }]);
+  });
+
+  it("does not finalize a forfeit before its window closes (a rebuttal could still land)", () => {
+    const matches: KeeperMatch[] = [
+      { matchId: 8n, status: EscrowStatus.ForfeitPending, challengeDeadline: now + 100, activeDeadline: 0 },
+    ];
+    expect(keeperActions(matches, now)).toEqual([]);
+  });
+
   it("voids an active match past its TTL", () => {
     const matches: KeeperMatch[] = [
       { matchId: 2n, status: EscrowStatus.Active, challengeDeadline: 0, activeDeadline: now - 1 },
@@ -66,15 +80,20 @@ describe("runKeeper", () => {
         calls.push(`void:${id}`);
         return "0xvoid" as Hex;
       },
+      finalizeForfeit: async (id: bigint) => {
+        calls.push(`forfeit:${id}`);
+        return "0xfrf" as Hex;
+      },
     } as unknown as SettlementClient;
 
     const hashes = await runKeeper(client, [
       { matchId: 1n, action: "finalize" },
       { matchId: 2n, action: "voidExpired" },
+      { matchId: 8n, action: "finalizeForfeit" },
     ]);
 
-    expect(calls).toEqual(["finalize:1", "void:2"]);
-    expect(hashes).toEqual(["0xfin", "0xvoid"]);
+    expect(calls).toEqual(["finalize:1", "void:2", "forfeit:8"]);
+    expect(hashes).toEqual(["0xfin", "0xvoid", "0xfrf"]);
   });
 });
 

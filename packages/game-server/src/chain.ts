@@ -12,8 +12,6 @@ import {
   createWalletClient,
   createPublicClient,
   http,
-  encodeAbiParameters,
-  keccak256,
   type Account,
   type Address,
   type Hex,
@@ -47,13 +45,24 @@ const escrowAbi = [
     outputs: [],
   },
   {
+    // v7: proposeResult proves a terminal transcript on-chain
     type: "function",
     name: "proposeResult",
     stateMutability: "nonpayable",
     inputs: [
       { name: "matchId", type: "uint256" },
-      { name: "winner", type: "uint8" },
-      { name: "commitment", type: "bytes32" },
+      {
+        name: "t",
+        type: "tuple",
+        components: [
+          { name: "matchId", type: "uint256" },
+          { name: "session0", type: "address" },
+          { name: "session1", type: "address" },
+          { name: "startTurn", type: "uint8" },
+          { name: "moves", type: "uint8[]" },
+          { name: "sigs", type: "bytes[]" },
+        ],
+      },
     ],
     outputs: [],
   },
@@ -97,6 +106,55 @@ const escrowAbi = [
         ],
       },
     ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "proposeForfeit",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      {
+        name: "t",
+        type: "tuple",
+        components: [
+          { name: "matchId", type: "uint256" },
+          { name: "session0", type: "address" },
+          { name: "session1", type: "address" },
+          { name: "startTurn", type: "uint8" },
+          { name: "moves", type: "uint8[]" },
+          { name: "sigs", type: "bytes[]" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "rebutForfeit",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      {
+        name: "t2",
+        type: "tuple",
+        components: [
+          { name: "matchId", type: "uint256" },
+          { name: "session0", type: "address" },
+          { name: "session1", type: "address" },
+          { name: "startTurn", type: "uint8" },
+          { name: "moves", type: "uint8[]" },
+          { name: "sigs", type: "bytes[]" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "finalizeForfeit",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchId", type: "uint256" }],
     outputs: [],
   },
 ] as const;
@@ -144,22 +202,27 @@ export class SettlementClient {
     });
   }
 
-  /** Abandonment/refusal: claim a result and open the challenge window. */
-  proposeResult(matchId: bigint, winner: number, transcript: Transcript): Promise<Hex> {
-    // Must match ReplayVerifier.transcriptHash: keccak256(abi.encode(matchId, startTurn, moves))
-    const commitment = keccak256(
-      encodeAbiParameters(
-        [{ type: "uint256" }, { type: "uint8" }, { type: "uint8[]" }],
-        [matchId, transcript.startTurn, transcript.moves],
-      ),
-    );
+  /** Refusal-to-sign: prove a FINISHED game on-chain by submitting the full
+   *  signed terminal transcript; the contract pays the proven winner (v7). */
+  proposeResult(transcript: Transcript): Promise<Hex> {
     return this.wallet.writeContract({
       address: this.escrow,
       abi: escrowAbi,
       functionName: "proposeResult",
-      args: [matchId, winner, commitment],
+      args: [transcript.matchId, this.transcriptTuple(transcript)],
       feeCurrency: this.feeCurrency,
     });
+  }
+
+  private transcriptTuple(t: Transcript) {
+    return {
+      matchId: t.matchId,
+      session0: t.session0,
+      session1: t.session1,
+      startTurn: t.startTurn,
+      moves: t.moves,
+      sigs: t.sigs,
+    };
   }
 
   /** Pay out a proposed result once its challenge window has elapsed. */
@@ -212,6 +275,41 @@ export class SettlementClient {
           sigs: transcript.sigs,
         },
       ],
+      feeCurrency: this.feeCurrency,
+    });
+  }
+
+  /** Forfeit clock: prove it's the opponent's turn on a live game (the prefix
+   *  ends where they must move) and open the response window. */
+  proposeForfeit(transcript: Transcript): Promise<Hex> {
+    return this.wallet.writeContract({
+      address: this.escrow,
+      abi: escrowAbi,
+      functionName: "proposeForfeit",
+      args: [transcript.matchId, this.transcriptTuple(transcript)],
+      feeCurrency: this.feeCurrency,
+    });
+  }
+
+  /** Forfeit clock: rebut a false forfeit on an honest player's behalf with the
+   *  accused's next signed move (the committed prefix plus one). Permissionless. */
+  rebutForfeit(transcript: Transcript): Promise<Hex> {
+    return this.wallet.writeContract({
+      address: this.escrow,
+      abi: escrowAbi,
+      functionName: "rebutForfeit",
+      args: [transcript.matchId, this.transcriptTuple(transcript)],
+      feeCurrency: this.feeCurrency,
+    });
+  }
+
+  /** Forfeit clock: pay the claimant once the window elapses with no rebuttal. */
+  finalizeForfeit(matchId: bigint): Promise<Hex> {
+    return this.wallet.writeContract({
+      address: this.escrow,
+      abi: escrowAbi,
+      functionName: "finalizeForfeit",
+      args: [matchId],
       feeCurrency: this.feeCurrency,
     });
   }

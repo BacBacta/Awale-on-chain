@@ -67,10 +67,14 @@ export interface MovePosition {
  *  noCaptureCount)). Binding each ply signature to its exact position closes
  *  ply-equivocation and keeps the on-chain forfeit history unforkable. */
 export function stateHash(s: MovePosition): Hex {
+  // pits is a fixed uint8[12] on-chain; viem types it as a 12-tuple
+  const pits = s.pits as unknown as readonly [
+    number, number, number, number, number, number, number, number, number, number, number, number,
+  ];
   return keccak256(
     encodeAbiParameters(
       [{ type: "uint8[12]" }, { type: "uint8" }, { type: "uint8" }, { type: "uint8" }, { type: "uint8" }],
-      [s.pits, s.store0, s.store1, s.turn, s.noCaptureCount],
+      [pits, s.store0, s.store1, s.turn, s.noCaptureCount],
     ),
   );
 }

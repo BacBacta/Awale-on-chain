@@ -17,6 +17,7 @@ export const EscrowStatus = {
   Resolved: 4,
   Cancelled: 5,
   Voided: 6,
+  ForfeitPending: 7,
 } as const;
 
 /** startTurn sentinel meaning the first-move flip is not yet fixed (contract: START_UNSET). */
@@ -32,11 +33,15 @@ export interface KeeperMatch {
   proposedWinner?: number; // 0/1/DRAW, valid while Proposed — for the anti-theft finalize guard
 }
 
-export type KeeperAction = { matchId: bigint; action: "finalize" | "voidExpired" | "finalizeStart" };
+export type KeeperAction = {
+  matchId: bigint;
+  action: "finalize" | "voidExpired" | "finalizeStart" | "finalizeForfeit";
+};
 
 /**
  * Decide which on-chain actions are due. Pure and deterministic.
- *  - Proposed and past its challenge window           -> finalize
+ *  - Proposed and past its challenge window            -> finalize
+ *  - ForfeitPending and past its window (no rebuttal)  -> finalizeForfeit
  *  - Active, first move not yet fixed, reveal block mined -> finalizeStart
  *  - Active and past its TTL                           -> voidExpired
  *
@@ -48,6 +53,9 @@ export function keeperActions(matches: KeeperMatch[], now: number, blockNumber =
   for (const m of matches) {
     if (m.status === EscrowStatus.Proposed && now > m.challengeDeadline) {
       out.push({ matchId: m.matchId, action: "finalize" });
+    } else if (m.status === EscrowStatus.ForfeitPending && now > m.challengeDeadline) {
+      // window elapsed with no rebuttal -> the accused abandoned, claimant wins
+      out.push({ matchId: m.matchId, action: "finalizeForfeit" });
     } else if (m.status === EscrowStatus.Active) {
       if (m.startTurn === START_UNSET && m.revealBlock && blockNumber > m.revealBlock) {
         out.push({ matchId: m.matchId, action: "finalizeStart" });
@@ -92,6 +100,7 @@ export async function runKeeper(
   for (const a of actions) {
     try {
       if (a.action === "finalize") hashes.push(await client.finalize(a.matchId));
+      else if (a.action === "finalizeForfeit") hashes.push(await client.finalizeForfeit(a.matchId));
       else if (a.action === "finalizeStart") hashes.push(await client.finalizeStart(a.matchId));
       else hashes.push(await client.voidExpired(a.matchId));
     } catch (err) {

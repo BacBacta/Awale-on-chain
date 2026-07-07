@@ -183,15 +183,40 @@ export function transcriptCommitment(matchId: bigint, startTurn: 0 | 1, moves: n
   );
 }
 
-export function proposeResult(
-  wallet: WriteClient,
-  p: { account: Address; escrow: Address; matchId: bigint; winner: 0 | 1 | 2; startTurn: 0 | 1; moves: number[]; feeCurrency?: Address },
-): Promise<Hex> {
+/** Transcript a proposeResult / forfeit call submits on-chain. */
+interface TranscriptArgs {
+  account: Address;
+  escrow: Address;
+  matchId: bigint;
+  session0: Address;
+  session1: Address;
+  startTurn: 0 | 1;
+  moves: number[];
+  sigs: Hex[];
+  feeCurrency?: Address;
+}
+
+function transcriptTuple(p: TranscriptArgs) {
+  return {
+    matchId: p.matchId,
+    session0: p.session0,
+    session1: p.session1,
+    startTurn: p.startTurn,
+    moves: p.moves,
+    sigs: p.sigs,
+  };
+}
+
+/** Prove a FINISHED game on-chain when the loser won't co-sign: submit the full
+ *  signed terminal transcript. The contract replays it and pays the PROVEN
+ *  winner (v7 — a winner can no longer be merely asserted). A non-terminal game
+ *  has no winner and reverts here; abandonment goes through {proposeForfeit}. */
+export function proposeResult(wallet: WriteClient, p: TranscriptArgs): Promise<Hex> {
   return wallet.writeContract({
     address: p.escrow,
     abi: matchEscrowAbi,
     functionName: "proposeResult",
-    args: [p.matchId, p.winner, transcriptCommitment(p.matchId, p.startTurn, p.moves)],
+    args: [p.matchId, transcriptTuple(p)],
     account: p.account,
     feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });
@@ -223,6 +248,50 @@ export function challengeResult(
     ],
     account: p.account,
     feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
+  });
+}
+
+/** Move-clock forfeit: prove it's the OPPONENT's turn on a still-live game
+ *  (`moves`/`sigs` end where they must move) and open the response window. If
+ *  they never answer, {finalizeForfeit} pays you the pot. */
+export function proposeForfeit(wallet: WriteClient, p: TranscriptArgs): Promise<Hex> {
+  return wallet.writeContract({
+    address: p.escrow,
+    abi: matchEscrowAbi,
+    functionName: "proposeForfeit",
+    args: [p.matchId, transcriptTuple(p)],
+    account: p.account,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency),
+  });
+}
+
+/** Rebut a forfeit against you by supplying your next legal signed move — the
+ *  committed prefix plus exactly one move. Proves presence; play resumes (or, if
+ *  it ends the game, pays the true winner). */
+export function rebutForfeit(wallet: WriteClient, p: TranscriptArgs): Promise<Hex> {
+  return wallet.writeContract({
+    address: p.escrow,
+    abi: matchEscrowAbi,
+    functionName: "rebutForfeit",
+    args: [p.matchId, transcriptTuple(p)],
+    account: p.account,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency),
+  });
+}
+
+/** Claim the pot after a forfeit window elapses with no rebuttal. Permissionless
+ *  — normally the keeper calls it, but the winning player can too. */
+export function finalizeForfeit(
+  wallet: WriteClient,
+  p: { account: Address; escrow: Address; matchId: bigint; feeCurrency?: Address },
+): Promise<Hex> {
+  return wallet.writeContract({
+    address: p.escrow,
+    abi: matchEscrowAbi,
+    functionName: "finalizeForfeit",
+    args: [p.matchId],
+    account: p.account,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency),
   });
 }
 

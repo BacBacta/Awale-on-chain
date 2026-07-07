@@ -8,14 +8,14 @@ import { readContract } from "viem/actions";
 import type { Address, Hex } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
 import { loadSession, createSessionKey, persistSession, signMove, signResult, signResign, signDrawOffer, type SessionKey } from "../lib/session.js";
-import { escrowConfig, proposeResult, challengeResult, cancelMatch, approve, joinMatch, joinMatchWithCode, finalizeResult, type WriteClient } from "../lib/escrow.js";
+import { escrowConfig, proposeResult, proposeForfeit, challengeResult, cancelMatch, approve, joinMatch, joinMatchWithCode, finalizeResult, finalizeForfeit, type WriteClient } from "../lib/escrow.js";
 import { humanizeError } from "../lib/errors.js";
 import { readWithRetry, confirmTx } from "../lib/tx.js";
 import { stakeTokens } from "../lib/stakeTokens.js";
 import { recordLocalMatch } from "../lib/matches.js";
 import { track } from "../lib/analytics.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
-import { legalMovesMask, endKind, REPETITION_LIMIT, type GameState } from "../../../engine/src/awale.js";
+import { legalMovesMask, endKind, adjudicate, REPETITION_LIMIT, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
@@ -106,6 +106,7 @@ export function LiveMatch({
   // the keeper should finalize a past-window claim; when it hasn't, the winner
   // gets a "Collect now" button instead of waiting on a machine that may be down
   const [collectReady, setCollectReady] = useState(false);
+  const [collectForfeit, setCollectForfeit] = useState(false); // pay via finalizeForfeit vs finalize
   const [collecting, setCollecting] = useState(false);
   // Per-move clock: a fresh window every turn. Miss it and you forfeit —
   // the app never plays your money for you. Settles instantly when the loser
@@ -420,26 +421,36 @@ export function LiveMatch({
   // signatures) and *we* are the declared winner — settle it on-chain
   // ourselves rather than waiting on a server that was never allowed to do
   // this on our behalf. No user action needed; it just happens.
-  async function selfClaim(winner: 0 | 1 | 2, transcript: WireTranscript) {
+  async function selfClaim(_winner: 0 | 1 | 2, transcript: WireTranscript) {
     const cfg = escrowConfig();
     if (!cfg || !wallet.current || !myAddress.current) return;
-    setClaimStatus("Opponent ran out of time — securing your win…");
+    const args = {
+      account: myAddress.current,
+      escrow: cfg.escrow,
+      matchId,
+      session0: transcript.session0,
+      session1: transcript.session1,
+      startTurn: transcript.startTurn,
+      moves: transcript.moves,
+      sigs: transcript.sigs,
+      feeCurrency: feeCurrency.current,
+    };
+    // Did the game actually FINISH, or did the opponent abandon mid-game? A
+    // finished game proves the winner via proposeResult; an unfinished one opens
+    // the forfeit clock — the opponent can only answer by playing on (and losing
+    // for real), else they forfeit the pot. A winner is never asserted on an
+    // unfinished game, so a losing player can't abandon into a refund.
+    const finished = adjudicate(transcript.moves, transcript.startTurn).over;
+    setClaimStatus(finished ? "Securing your win…" : "Opponent left — claiming your win…");
     try {
-      await proposeResult(wallet.current, {
-        account: myAddress.current,
-        escrow: cfg.escrow,
-        matchId,
-        winner,
-        startTurn: transcript.startTurn,
-        moves: transcript.moves,
-        feeCurrency: feeCurrency.current,
-      });
+      if (finished) await proposeResult(wallet.current, args);
+      else await proposeForfeit(wallet.current, args);
       setOutcome(0); // show the victory screen immediately, not a frozen board
       setStatus("You win 🎉");
-      // honest: the claim opens a ~10-minute window the opponent could contest;
+      // honest: this opens a short window the opponent could still answer in;
       // only after it closes does the payout land (the keeper sends it — and if
       // it doesn't, the poll below surfaces a "Collect now" button).
-      setClaimStatus("Opponent left — you win. Your payout arrives automatically in about 10 minutes.");
+      setClaimStatus("Opponent left — you win. Your payout arrives automatically in a few minutes.");
       setSettleWatch(true);
     } catch (e) {
       setClaimStatus(`Claim failed: ${humanizeError(e)}`);
@@ -483,7 +494,8 @@ export function LiveMatch({
     setCollecting(true);
     setClaimStatus("Collecting your winnings…");
     try {
-      const h = await finalizeResult(wallet.current, {
+      const collect = collectForfeit ? finalizeForfeit : finalizeResult;
+      const h = await collect(wallet.current, {
         account: myAddress.current,
         escrow: cfg.escrow,
         matchId,
@@ -671,14 +683,16 @@ export function LiveMatch({
           setClaimStatus(won ? "Paid ✓ — your winnings are in your wallet." : null);
           setStatus(won ? "You win — paid out ✅" : "You lose — out of time");
         } else if (
-          st === 3 &&
+          (st === 3 || st === 7) && // Proposed or ForfeitPending
           Number(m.proposedWinner) === roleRef.current &&
           Number(m.challengeDeadline) > 0 &&
           Date.now() / 1000 > Number(m.challengeDeadline)
         ) {
-          // my win, window closed, keeper hasn't paid yet → offer self-service
+          // my win, window closed, keeper hasn't paid yet → offer self-service.
+          // ForfeitPending pays via finalizeForfeit, Proposed via finalize.
+          setCollectForfeit(st === 7);
           setCollectReady(true);
-        } else if (st >= 5) {
+        } else if (st === 5 || st === 6) {
           // Cancelled/Voided — both stakes went back in full
           setChainEnded("refunded");
           setTimedOut(false);

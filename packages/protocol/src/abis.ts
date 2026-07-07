@@ -170,13 +170,25 @@ export const matchEscrowAbi = [
     outputs: [],
   },
   {
+    // v7: proposeResult proves a terminal transcript on-chain (no more asserted
+    // winner + attacker-chosen commitment)
     type: "function",
     name: "proposeResult",
     stateMutability: "nonpayable",
     inputs: [
       { name: "matchId", type: "uint256" },
-      { name: "winner", type: "uint8" },
-      { name: "commitment", type: "bytes32" },
+      {
+        name: "t",
+        type: "tuple",
+        components: [
+          { name: "matchId", type: "uint256" },
+          { name: "session0", type: "address" },
+          { name: "session1", type: "address" },
+          { name: "startTurn", type: "uint8" },
+          { name: "moves", type: "uint8[]" },
+          { name: "sigs", type: "bytes[]" },
+        ],
+      },
     ],
     outputs: [],
   },
@@ -199,6 +211,58 @@ export const matchEscrowAbi = [
         ],
       },
     ],
+    outputs: [],
+  },
+  {
+    // v7 forfeit clock: prove it's the opponent's turn on a live game
+    type: "function",
+    name: "proposeForfeit",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      {
+        name: "t",
+        type: "tuple",
+        components: [
+          { name: "matchId", type: "uint256" },
+          { name: "session0", type: "address" },
+          { name: "session1", type: "address" },
+          { name: "startTurn", type: "uint8" },
+          { name: "moves", type: "uint8[]" },
+          { name: "sigs", type: "bytes[]" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+  {
+    // v7 forfeit clock: answer with the accused's next signed move (prefix + 1)
+    type: "function",
+    name: "rebutForfeit",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      {
+        name: "t2",
+        type: "tuple",
+        components: [
+          { name: "matchId", type: "uint256" },
+          { name: "session0", type: "address" },
+          { name: "session1", type: "address" },
+          { name: "startTurn", type: "uint8" },
+          { name: "moves", type: "uint8[]" },
+          { name: "sigs", type: "bytes[]" },
+        ],
+      },
+    ],
+    outputs: [],
+  },
+  {
+    // v7 forfeit clock: window elapsed with no rebuttal -> claimant wins the pot
+    type: "function",
+    name: "finalizeForfeit",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "matchId", type: "uint256" }],
     outputs: [],
   },
   {
