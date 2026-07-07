@@ -116,8 +116,10 @@ export default function Compete() {
       {/* today's quests */}
       {profile && <DailyQuests quests={profile.quests ?? []} perfectDays={profile.perfectDays ?? 0} />}
 
-      {/* the ladder — renders only once someone is on it */}
-      <SkillLeaderboard label="Ladder" />
+      {/* the ladder — renders only once someone is on it. Top 3 + your own
+          pinned row: enough to show the summit and your climb without turning
+          the page into a wall of near-identical rows (density kills it). */}
+      <SkillLeaderboard label="Ladder" top={3} />
 
       {/* the other arenas — each row names its game and its metric, so the
           three boards (rating / weekly pts / all-time money) never blur */}

@@ -74,10 +74,10 @@ export function WeeklyLeague() {
             <span className="display" style={{ color: "var(--gold)", fontSize: 34, lineHeight: 0.95, fontVariantNumeric: "tabular-nums" }}>
               {fmt(pool, STAKE_DECIMALS)} {STAKE_SYMBOL}
             </span>
-            <span className="faint">this week&apos;s pot · Monday it splits by points — everyone in the race gets a share, podium adds a bonus</span>
+            <span className="faint">this week&apos;s pot · splits by points on Monday</span>
           </div>
         ) : (
-          <span className="muted">The pot grows with every money game this week. Monday it splits by points — everyone in the race gets a share, and the podium adds a bonus.</span>
+          <span className="muted">Every money game this week grows the pot — it splits by points on Monday.</span>
         )}
 
         {entered && data.me ? (
@@ -111,11 +111,9 @@ export function WeeklyLeague() {
             </span>
           </div>
           {data.standings.length === 0 ? (
-            <div className="card flat stack" style={{ padding: "16px 12px", gap: 4, alignItems: "center", textAlign: "center" }}>
-              <span style={{ fontSize: 22 }}>🏁</span>
-              <span style={{ fontWeight: 700, fontSize: 14 }}>No one&apos;s scored yet this week</span>
-              <span className="faint" style={{ fontSize: 12.5 }}>Win a money game to take the #1 spot — it resets Monday.</span>
-            </div>
+            <span className="faint" style={{ fontSize: 12.5, padding: "2px 2px 0" }}>
+              No points yet — the first win (3 pts) takes #1.
+            </span>
           ) : (
             <div className="card flat" style={{ padding: 6, gap: 0 }}>
               {(() => {
@@ -165,9 +163,11 @@ export function WeeklyLeague() {
           )}
         </div>
 
-        <span className="faint" style={{ fontSize: 11.5 }}>
-          Win = 3 pts · resets every Monday{SELF_CONFIGURED ? " · prizes require a one-time identity check" : ""}
-        </span>
+        {SELF_CONFIGURED && (
+          <span className="faint" style={{ fontSize: 11.5 }}>
+            Prizes require a one-time identity check.
+          </span>
+        )}
       </div>
     </>
   );
