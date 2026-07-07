@@ -57,6 +57,8 @@ import {
   type LeagueStore,
   type LeagueWinner,
 } from "./weekly-league.js";
+import { buildPrizeTree } from "./league.js";
+import { weeklyPrizesAbi, roundFromWeek, type PublishedClaim } from "./weekly-prizes.js";
 import { SettledLedger, InMemoryLedgerStore, RedisLedgerStore, type LedgerStore } from "./settled-ledger.js";
 import { InboxNotifier, InMemoryInboxStore, RedisInboxStore, inboxSnapshot, type InboxStore } from "./notifications/inbox.js";
 import { erc20Abi, matchEscrowAbi, tournamentEscrowAbi } from "../../protocol/src/abis.js";
@@ -713,6 +715,24 @@ const httpServer = createServer((req, res) => {
       .snapshot(address ?? undefined)
       .then((s) => json(200, s))
       .catch((e) => json(500, { error: (e as Error).message }));
+    return;
+  }
+  // --- on-chain Weekly-race prize: the Merkle proof this wallet needs to claim
+  //     from the WeeklyPrizes distributor (present only when configured) ---
+  if (req.method === "GET" && url.pathname === "/weekly-prizes") {
+    const address = url.searchParams.get("address") as Address | null;
+    if (!WEEKLY_PRIZES) return json(200, { distributor: null });
+    if (!address) return json(400, { error: "address required" });
+    const key = address.toLowerCase();
+    // scan the published rounds for an unclaimed prize for this wallet
+    for (const [round, byAddr] of merkleClaims) {
+      const c = byAddr.get(key);
+      if (c) {
+        json(200, { distributor: WEEKLY_PRIZES, round, amountWei: c.amountWei, proof: c.proof });
+        return;
+      }
+    }
+    json(200, { distributor: WEEKLY_PRIZES, round: null });
     return;
   }
   // --- all-time money leaderboard, fed from MatchSettled (was a client-side
@@ -1590,11 +1610,59 @@ async function backfillTick(): Promise<void> {
   if ("unref" in bt) bt.unref();
 }
 
+// Trust-minimised payout: when a WeeklyPrizes distributor is configured, each
+// week's pot is funded INTO the contract and a Merkle root over the winners is
+// published on-chain, so a winner claims from the CONTRACT (they can collect
+// even if this server disappears). Falls back to the custodial credit below
+// when the distributor isn't configured, so testnet keeps working mid-migration.
+const WEEKLY_PRIZES = (process.env.WEEKLY_PRIZES_ADDRESS || undefined) as Address | undefined;
+const WEEKLY_PRIZES_RECLAIM_DAYS = Number(process.env.WEEKLY_PRIZES_RECLAIM_DAYS ?? "30");
+// per-round published claims (round → account → amount+proof), served to the app
+// so it can build its on-chain claim. In-memory: rebuilt each rollover; the
+// on-chain root is the source of truth (Redis persistence folds into the
+// server-persistence mainnet blocker).
+const merkleClaims = new Map<string, Map<string, PublishedClaim>>();
+
+async function leaguePublishMerkle(token: Address, winners: LeagueWinner[], week: string): Promise<LeagueWinner[]> {
+  if (!operatorAccount) return []; // no signer → carry the pot to next week
+  const round = roundFromWeek(week);
+  const tree = buildPrizeTree(winners.map((w) => ({ account: w.address, amount: BigInt(w.amountWei) })));
+  if (tree.claims.length === 0) return [];
+  const total = winners.reduce((a, w) => a + BigInt(w.amountWei), 0n);
+  const reclaimAfter = BigInt(Math.floor(Date.now() / 1000) + WEEKLY_PRIZES_RECLAIM_DAYS * 86_400);
+  const wallet = createWalletClient({ chain: chainFor(CHAIN_ID), transport: rpcTransport, account: operatorAccount });
+  const feeArg = FEE_CURRENCY ? { feeCurrency: FEE_CURRENCY } : {};
+
+  try {
+    // fund the pot: approve the exact amount, then publish (funds + seals root)
+    const ah = (await wallet.writeContract({
+      address: token, abi: erc20Abi, functionName: "approve", args: [WEEKLY_PRIZES!, total], ...feeArg,
+    } as Parameters<typeof wallet.writeContract>[0])) as Hex;
+    await publicClient.waitForTransactionReceipt({ hash: ah });
+    const ph = (await wallet.writeContract({
+      address: WEEKLY_PRIZES!, abi: weeklyPrizesAbi, functionName: "publishRound",
+      args: [round, token, tree.root, total, reclaimAfter], ...feeArg,
+    } as Parameters<typeof wallet.writeContract>[0])) as Hex;
+    const rcpt = await publicClient.waitForTransactionReceipt({ hash: ph });
+    if (rcpt.status !== "success") throw new Error(`publishRound reverted (${ph})`);
+  } catch (e) {
+    console.warn(`[weekly-prizes] publish week ${week} failed (pot carried over): ${(e as Error).message}`);
+    return []; // nothing published → carry the whole pot to next week
+  }
+
+  // serve the proofs so winners can claim on-chain
+  const byAddr = new Map<string, PublishedClaim>();
+  for (const c of tree.claims) byAddr.set(c.account.toLowerCase(), { account: c.account, amountWei: c.amount.toString(), proof: c.proof });
+  merkleClaims.set(round.toString(), byAddr);
+  console.log(`[weekly-prizes] week ${week} → round ${round}: ${winners.length} winners, root ${tree.root} funded ${total}`);
+  return winners; // all handled on-chain
+}
+
 // League prizes are CREDITED at rollover and paid when the winner taps
 // Collect in the app (POST /league/claim) — a claim is a celebration moment
 // and brings the winner back. Crediting counts as "paid" for the pool's
 // accounting: the debt now lives in the prize store, not the pool carry.
-async function leagueCredit(token: Address, winners: LeagueWinner[]): Promise<LeagueWinner[]> {
+async function leagueCredit(token: Address, winners: LeagueWinner[], _week: string): Promise<LeagueWinner[]> {
   const credited: LeagueWinner[] = [];
   const week = new Date().toISOString().slice(0, 10);
   for (let i = 0; i < winners.length; i++) {
@@ -1690,7 +1758,9 @@ async function awardChampionTrophy(champion: Address, week: string): Promise<voi
 }
 
 async function leagueTick(): Promise<void> {
-  const result = await league.rollover(leagueCredit);
+  // on-chain Merkle payout when a distributor is configured; custodial otherwise
+  const payout = WEEKLY_PRIZES && operatorAccount ? leaguePublishMerkle : leagueCredit;
+  const result = await league.rollover(payout);
   if (!result) return;
   console.log(`[league] week ${result.week} closed — pool ${result.poolWei}, ${result.winners.length} credited`);
   // the #1 finisher gets the Midnight board — a trophy that can't be bought

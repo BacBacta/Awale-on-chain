@@ -4,9 +4,46 @@
 // splits the rest pro-rata to points. Prizes are CREDITED, not pushed — the
 // winner collects with one tap (POST /league/claim).
 
-import type { Address } from "viem";
+import type { Address, Hex } from "viem";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
+
+/** Minimal ABI for claiming a Weekly-race prize from the on-chain distributor. */
+export const weeklyPrizesAbi = [
+  {
+    type: "function",
+    name: "claim",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "round", type: "uint256" },
+      { name: "amount", type: "uint256" },
+      { name: "proof", type: "bytes32[]" },
+    ],
+    outputs: [],
+  },
+] as const;
+
+/** An escrowed, sealed-on-chain prize the winner claims themselves (trust-
+ *  minimised path). Null when no distributor is configured (custodial mode) or
+ *  this wallet has nothing to claim on-chain. */
+export interface OnchainPrize {
+  distributor: Address;
+  round: bigint;
+  amountWei: bigint;
+  proof: Hex[];
+}
+
+export async function getOnchainPrize(address: Address): Promise<OnchainPrize | null> {
+  if (!SERVER_URL) return null;
+  try {
+    const res = await fetch(`${SERVER_URL}/weekly-prizes?address=${address}`, { signal: AbortSignal.timeout(5000) });
+    const d = (await res.json()) as { distributor?: Address | null; round?: string | null; amountWei?: string; proof?: Hex[] };
+    if (!res.ok || !d.distributor || !d.round || !d.amountWei) return null;
+    return { distributor: d.distributor, round: BigInt(d.round), amountWei: BigInt(d.amountWei), proof: d.proof ?? [] };
+  } catch {
+    return null;
+  }
+}
 
 export interface LeagueStanding {
   address: Address;

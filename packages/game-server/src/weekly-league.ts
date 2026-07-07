@@ -311,7 +311,7 @@ export class WeeklyLeague {
    * on every tick.
    */
   async rollover(
-    payout: (token: Address, winners: LeagueWinner[]) => Promise<LeagueWinner[]>,
+    payout: (token: Address, winners: LeagueWinner[], week: string) => Promise<LeagueWinner[]>,
     now = new Date(),
   ): Promise<LeagueHistoryEntry | null> {
     const current = weekKey(now);
@@ -329,7 +329,7 @@ export class WeeklyLeague {
     // podium (40/20/10) + points-proportional dividend for everyone else
     const due: LeagueWinner[] = computePrizes(ranked, pool);
 
-    const paid = due.length > 0 && w.token ? await payout(w.token, due) : [];
+    const paid = due.length > 0 && w.token ? await payout(w.token, due, open) : [];
     const paidTotal = paid.reduce((a, c) => a + BigInt(c.amountWei), 0n);
 
     // whatever wasn't paid out (no eligible players, unpaid shares, failed
