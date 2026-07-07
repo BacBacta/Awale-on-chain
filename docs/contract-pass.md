@@ -87,11 +87,26 @@ Dispute path is now invariant-fuzzed too (`MatchEscrowChallenge.invariant.t.sol`
 terminal challenges only ever pay the canonical winner, premature claims only
 ever void — under random false claims and a changing rake.
 
+## 1d. MatchEscrow v5 — audit H-03 (deployed 2026-07-07)
+
+Anti-theft: v4's L-04 fix gated ALL of `challenge` to match players, which
+silently killed the server keeper's backstop — the keeper isn't a player, so it
+could not refute a losing opponent's `proposeResult(self)`+`finalize` theft when
+the honest winner was offline for the window. v5 splits the gate: the **terminal**
+branch (a full, doubly-signed transcript pays the canonical winner) is
+permissionless — anyone, crucially the keeper, may enforce the true result — while
+the **void** branch stays participant-only (the actual L-04 grief). Plus a
+server guard: the keeper refuses to finalize a proposal that contradicts a
+hub-known terminal result. Economics identical; same verifier reused. The app's
+dispute card now reassures the winner their pot is auto-protected even offline.
+
 ## Deployment record (Celo Sepolia)
 
-- **MatchEscrow v4** `0x34473d4b1dD93314b13605277681b4202C55c4E8` — current
+- **MatchEscrow v5** `0x5A281615A2A927E5684af7898F46d01D0646230e` — current
   escrow (`NEXT_PUBLIC_ESCROW_ADDRESS` / `ESCROW_ADDRESS`), deploy block
-  30077576, verifier `0xF6B27BBDe627eD9f241C3017aCa33bb472064395` (reused).
+  **30146165**, verifier `0xF6B27BBDe627eD9f241C3017aCa33bb472064395` (reused).
+- MatchEscrow v4 `0x34473d4b1dD93314b13605277681b4202C55c4E8` — legacy
+  (M1 pass; had the H-03 keeper gap).
 - MatchEscrow v3 `0x53c7594ca2943ee43fB24a6F11C6b438b7F06EFA` — legacy
   (repetition pass; had the M1 quirk).
 - MatchEscrow v2 `0x616E36848B660a58dB3cb3181D935A802847cc24` — legacy,
