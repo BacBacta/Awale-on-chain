@@ -29,6 +29,7 @@ export const weeklyPrizesAbi = [
 export interface OnchainPrize {
   distributor: Address;
   round: bigint;
+  token: Address; // the prize token — the feeCurrency is derived from it
   amountWei: bigint;
   proof: Hex[];
 }
@@ -37,9 +38,9 @@ export async function getOnchainPrize(address: Address): Promise<OnchainPrize | 
   if (!SERVER_URL) return null;
   try {
     const res = await fetch(`${SERVER_URL}/weekly-prizes?address=${address}`, { signal: AbortSignal.timeout(5000) });
-    const d = (await res.json()) as { distributor?: Address | null; round?: string | null; amountWei?: string; proof?: Hex[] };
-    if (!res.ok || !d.distributor || !d.round || !d.amountWei) return null;
-    return { distributor: d.distributor, round: BigInt(d.round), amountWei: BigInt(d.amountWei), proof: d.proof ?? [] };
+    const d = (await res.json()) as { distributor?: Address | null; round?: string | null; token?: Address; amountWei?: string; proof?: Hex[] };
+    if (!res.ok || !d.distributor || !d.round || !d.token || !d.amountWei) return null;
+    return { distributor: d.distributor, round: BigInt(d.round), token: d.token, amountWei: BigInt(d.amountWei), proof: d.proof ?? [] };
   } catch {
     return null;
   }

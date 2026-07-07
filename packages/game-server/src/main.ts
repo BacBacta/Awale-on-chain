@@ -725,10 +725,10 @@ const httpServer = createServer((req, res) => {
     if (!address) return json(400, { error: "address required" });
     const key = address.toLowerCase();
     // scan the published rounds for an unclaimed prize for this wallet
-    for (const [round, byAddr] of merkleClaims) {
-      const c = byAddr.get(key);
+    for (const [round, r] of merkleClaims) {
+      const c = r.byAddr.get(key);
       if (c) {
-        json(200, { distributor: WEEKLY_PRIZES, round, amountWei: c.amountWei, proof: c.proof });
+        json(200, { distributor: WEEKLY_PRIZES, round, token: r.token, amountWei: c.amountWei, proof: c.proof });
         return;
       }
     }
@@ -1617,11 +1617,12 @@ async function backfillTick(): Promise<void> {
 // when the distributor isn't configured, so testnet keeps working mid-migration.
 const WEEKLY_PRIZES = (process.env.WEEKLY_PRIZES_ADDRESS || undefined) as Address | undefined;
 const WEEKLY_PRIZES_RECLAIM_DAYS = Number(process.env.WEEKLY_PRIZES_RECLAIM_DAYS ?? "30");
-// per-round published claims (round → account → amount+proof), served to the app
-// so it can build its on-chain claim. In-memory: rebuilt each rollover; the
-// on-chain root is the source of truth (Redis persistence folds into the
-// server-persistence mainnet blocker).
-const merkleClaims = new Map<string, Map<string, PublishedClaim>>();
+// per-round published claims (round → {token, account → amount+proof}), served
+// to the app so it can build its on-chain claim (and pick the right feeCurrency
+// for the prize's token). In-memory: rebuilt each rollover; the on-chain root is
+// the source of truth (Redis persistence folds into the server-persistence
+// mainnet blocker).
+const merkleClaims = new Map<string, { token: Address; byAddr: Map<string, PublishedClaim> }>();
 
 async function leaguePublishMerkle(token: Address, winners: LeagueWinner[], week: string): Promise<LeagueWinner[]> {
   if (!operatorAccount) return []; // no signer → carry the pot to next week
@@ -1653,7 +1654,7 @@ async function leaguePublishMerkle(token: Address, winners: LeagueWinner[], week
   // serve the proofs so winners can claim on-chain
   const byAddr = new Map<string, PublishedClaim>();
   for (const c of tree.claims) byAddr.set(c.account.toLowerCase(), { account: c.account, amountWei: c.amount.toString(), proof: c.proof });
-  merkleClaims.set(round.toString(), byAddr);
+  merkleClaims.set(round.toString(), { token, byAddr });
   console.log(`[weekly-prizes] week ${week} → round ${round}: ${winners.length} winners, root ${tree.root} funded ${total}`);
   return winners; // all handled on-chain
 }

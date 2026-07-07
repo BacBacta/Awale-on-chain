@@ -27,11 +27,21 @@ import {
 } from "../lib/weeklyLeague.js";
 import { getInjectedProvider, connect, publicClient, effectiveFeeCurrency } from "../lib/minipay.js";
 import { escrowConfig } from "../lib/escrow.js";
+import { stakeTokens } from "../lib/stakeTokens.js";
 import { humanizeError } from "../lib/errors.js";
 import { fmt } from "../lib/money.js";
 import { Icon } from "./Icon.js";
 
-const FEE_CURRENCY = (process.env.NEXT_PUBLIC_FEE_CURRENCY || undefined) as `0x${string}` | undefined;
+const FEE_CURRENCY_ENV = (process.env.NEXT_PUBLIC_FEE_CURRENCY || undefined) as `0x${string}` | undefined;
+
+/** The CIP-64 feeCurrency for the prize's token, so a MiniPay winner pays the
+ *  claim's network fee in that stablecoin (never native CELO — MiniPay users
+ *  hold no CELO). Resolved per-token like every other money tx in the app;
+ *  falls back to the configured default. */
+function feeCurrencyFor(token: Address): Address | undefined {
+  const match = stakeTokens().find((t) => t.address.toLowerCase() === token.toLowerCase());
+  return (match?.feeCurrency as Address | undefined) ?? FEE_CURRENCY_ENV;
+}
 
 export function PrizeCollect({ address }: { address: Address | null }) {
   const [total, setTotal] = useState<bigint>(0n);
@@ -86,7 +96,8 @@ export function PrizeCollect({ address }: { address: Address | null }) {
           functionName: "claim",
           args: [onchain.round, onchain.amountWei, onchain.proof],
           account: address,
-          feeCurrency: effectiveFeeCurrency(FEE_CURRENCY),
+          // MiniPay winners pay this claim's gas in the prize's stablecoin, never CELO
+          feeCurrency: effectiveFeeCurrency(feeCurrencyFor(onchain.token)),
         });
         await waitForTransactionReceipt(publicClient(cfg.rpcUrl, cfg.chainId), { hash });
       } else {
