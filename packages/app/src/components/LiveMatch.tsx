@@ -336,11 +336,17 @@ export function LiveMatch({
       // settled via the two-signature fast path. Whoever the payload names as
       // `winner` should self-claim; if it's the *other* player, offer to
       // dispute instead of silently losing to a claim that may be wrong.
-      sock.on("claim-eligible", (msg: { winner: 0 | 1 | 2; transcript: WireTranscript }) => {
-        if (casualRole != null) return; // no on-chain settlement for casual play
-        if (msg.winner === roleRef.current) void selfClaim(msg.winner, msg.transcript);
-        else setTimedOut(true); // eligibility only — nothing on-chain to dispute yet
-      });
+      sock.on(
+        "claim-eligible",
+        (msg: { winner: 0 | 1 | 2; transcript: WireTranscript; ackSig?: Hex }) => {
+          if (casualRole != null) return; // no on-chain settlement for casual play
+          // ackSig is the loser's turn-ack the server relays for an abandonment
+          // (non-terminal) forfeit; a finished game settles via proposeResult and
+          // needs none.
+          if (msg.winner === roleRef.current) void selfClaim(msg.winner, msg.transcript, msg.ackSig);
+          else setTimedOut(true); // eligibility only — nothing on-chain to dispute yet
+        },
+      );
       // Reply to our own catch-up "get-transcript" request (a claim existed
       // from before we reconnected) — same handling as a live claim-eligible.
       sock.on("transcript", (msg: { transcript: WireTranscript }) => {
@@ -421,7 +427,7 @@ export function LiveMatch({
   // signatures) and *we* are the declared winner — settle it on-chain
   // ourselves rather than waiting on a server that was never allowed to do
   // this on our behalf. No user action needed; it just happens.
-  async function selfClaim(_winner: 0 | 1 | 2, transcript: WireTranscript) {
+  async function selfClaim(_winner: 0 | 1 | 2, transcript: WireTranscript, ackSig?: Hex) {
     const cfg = escrowConfig();
     if (!cfg || !wallet.current || !myAddress.current) return;
     const args = {
@@ -437,14 +443,18 @@ export function LiveMatch({
     };
     // Did the game actually FINISH, or did the opponent abandon mid-game? A
     // finished game proves the winner via proposeResult; an unfinished one opens
-    // the forfeit clock — the opponent can only answer by playing on (and losing
-    // for real), else they forfeit the pot. A winner is never asserted on an
-    // unfinished game, so a losing player can't abandon into a refund.
+    // the forfeit clock — but ONLY with the opponent's turn-ack (anti-fabrication
+    // anchor). Without it we cannot (and must not be able to) claim a forfeit; the
+    // TTL refund is the fallback. A winner is never asserted on an unfinished game.
     const finished = adjudicate(transcript.moves, transcript.startTurn).over;
+    if (!finished && !ackSig) {
+      setClaimStatus("Opponent left mid-game — you'll be refunded automatically if they don't return.");
+      return;
+    }
     setClaimStatus(finished ? "Securing your win…" : "Opponent left — claiming your win…");
     try {
       if (finished) await proposeResult(wallet.current, args);
-      else await proposeForfeit(wallet.current, args);
+      else await proposeForfeit(wallet.current, { ...args, ackSig: ackSig! });
       setOutcome(0); // show the victory screen immediately, not a frozen board
       setStatus("You win 🎉");
       // honest: this opens a short window the opponent could still answer in;

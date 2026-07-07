@@ -1,5 +1,35 @@
 # On-chain forfeit clock — design spec
 
+**Status:** v2 (acknowledged-turn). The **v1 clock below (proposeForfeit/rebutForfeit/finalizeForfeit with a claimant-chosen prefix) is UNSOUND** — the 12-agent re-audit (`Awale-on-chain-pashov-ai-reaudit-report-20260707-195418.md`) found a critical (7-agent convergence): a player can sign a legal-but-never-played move for their OWN turn (own-move equivocation — `moveDigest` binds the position, not which legal move is chosen), forking onto a branch the opponent never signed, fabricating "it's the opponent's turn," which neither the keeper (slices the real hub transcript → "prefix mismatch") nor an offline opponent can rebut → `finalizeForfeit` steals the pot. This section is kept for the record; the sound redesign is below.
+
+---
+
+# v2 — Acknowledged-turn forfeit (the sound design)
+
+**Root cause of v1:** the forfeit trusted a claimant-chosen prefix as the canonical line, but a player can fabricate "opponent to move" out of their own signature. You cannot, on-chain, distinguish a real forfeit from a fabricated one **unless the accused signed that it is their turn.**
+
+**Fix:** you may only forfeit the opponent at a position the opponent **explicitly acknowledged**.
+
+- New EIP-712 signature **`TurnAck`**: `ackDigest(matchId, ply, state)` where `state = stateHash(pre-move position)`. A player's client signs this **automatically upon receiving the opponent's move that hands them the turn** — "I acknowledge that at this exact state it is ply `ply` and my move." The server relays it to the opponent.
+- **`proposeForfeit(matchId, t, ackSig)`** additionally requires `ackSig` to be the **accused's** session-key signature over `ackDigest(matchId, t.moves.length, stateHash(state))`, where `state` is the replayed position at the end of `t` (the accused's turn).
+
+**Why the fork is closed:** the flipping move (the claimant's move at the end of the prefix) produces `state`; `ackDigest` binds `stateHash(state)`; the accused only ever signs an ack for a state their client actually **received**. A forked/withheld move yields a `state` the accused never saw → no valid `ackSig` → `proposeForfeit` reverts. A player cannot forge the accused's session key. The ply-0/first-mover fabrication is closed the same way (no ack exists).
+
+**Stale claim** (real prefix, accused's ack real, but the accused already moved on): still rebuttable — the accused/keeper submits the accused's real next move (`rebutForfeit`), exactly as v1.
+
+**Honest security properties (stated plainly, including the limits):**
+- ✅ **No theft.** By construction you can only forfeit a turn the accused's own key acknowledged; nothing can be fabricated.
+- ✅ **Churn strongly reduced.** A losing player's client auto-acks each turn on receipt, so they **cannot abandon on their own turn** (already acked → forfeitable). To escape they must abandon **blind, during the opponent's turn**, before seeing the result — a much weaker, pre-emptive incentive.
+- ⚠️ **Residual (irreducible).** A player who goes offline *before receiving* the opponent's move never acks that turn → cannot be forfeited → `voidExpired` refund. This is the fundamental trustless limit (you cannot force a party to sign). Mitigated **off-chain** (reputation, abandonment penalties, matchmaking) — never by fabricating an on-chain signature.
+
+**Off-chain changes (lockstep):** app auto-signs `TurnAck` on receiving a turn-flipping move and relays it; the winner's `selfClaim`/`proposeForfeit` includes the loser's ack; the server relays+stores acks; **the client rebuttal watcher (`ForfeitProposed` → `rebutForfeit`) — dead code in v1 — is wired** so an online accused defends automatically. Keeper backstop unchanged (rebuts stale claims from the hub).
+
+**This v2 surface MUST pass its own (3rd) 12-agent re-audit before mainnet.**
+
+---
+
+# v1 (UNSOUND — kept for the record)
+
 **Status:** proposal, pre-implementation. Reviewed against the Pashov audit that produced Finding-1 (attacker-controlled `proposeResult` commitment). This mechanism is *new attack surface* and MUST go through the same 12-agent audit before mainnet.
 
 ## Problem

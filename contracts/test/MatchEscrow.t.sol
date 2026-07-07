@@ -147,6 +147,28 @@ contract MatchEscrowTest is Test {
         claimant = accusedIdx == 0 ? bob : alice;
     }
 
+    /// @dev The lowest-legal-move state at ply `plies` — matches _buildPartialTranscript.
+    function _stateAtPly(uint8 startTurn, uint256 plies) internal pure returns (AwaleRules.GameState memory s) {
+        s = AwaleRules.initialState();
+        s.turn = startTurn;
+        for (uint256 ply = 0; ply < plies; ply++) {
+            s = AwaleRules.applyMove(s, _lowest(AwaleRules.legalMovesMask(s)));
+        }
+    }
+
+    /// @dev A TurnAck signature over the position at `ply`, signed by key `pk`.
+    function _ackWith(uint256 pk, uint256 matchId, uint256 ply, bytes32 sh) internal view returns (bytes memory) {
+        (uint8 v, bytes32 r, bytes32 sig) = vm.sign(pk, verifier.ackDigest(matchId, ply, sh));
+        return abi.encodePacked(r, sig, v);
+    }
+
+    /// @dev The ACCUSED's valid turn-ack for a forfeit at ply `plies` (their turn).
+    function _forfeitAck(uint256 matchId, uint8 startTurn, uint256 plies) internal view returns (bytes memory) {
+        AwaleRules.GameState memory s = _stateAtPly(startTurn, plies);
+        uint256 pk = s.turn == 0 ? pk0 : pk1; // the accused (whoever is to move)
+        return _ackWith(pk, matchId, plies, verifier.stateHash(s));
+    }
+
     /// @dev A well-formed but empty Transcript, for reverts that fire before the
     ///      transcript body is ever read (status / deadline / player / startTurn).
     function _emptyTranscript(uint256 matchId) internal view returns (ReplayVerifier.Transcript memory t) {
@@ -617,8 +639,9 @@ contract MatchEscrowTest is Test {
         ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
         (address claimant,) = _forfeitRoles(startTurn, N);
 
+        bytes memory ack = _forfeitAck(id, startTurn, N); // compute before prank (verifier calls would consume it)
         vm.prank(claimant);
-        escrow.proposeForfeit(id, pfx);
+        escrow.proposeForfeit(id, pfx, ack);
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.ForfeitPending));
 
         vm.expectRevert(bytes("MatchEscrow: window open"));
@@ -641,7 +664,7 @@ contract MatchEscrowTest is Test {
         (, address accused) = _forfeitRoles(startTurn, N);
         vm.prank(accused);
         vm.expectRevert(bytes("MatchEscrow: cannot forfeit your own turn"));
-        escrow.proposeForfeit(id, pfx);
+        escrow.proposeForfeit(id, pfx, hex"");
     }
 
     function test_forfeit_nonPlayerCannotPropose() public {
@@ -650,7 +673,7 @@ contract MatchEscrowTest is Test {
         ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, 6);
         vm.prank(address(0xdead));
         vm.expectRevert(bytes("MatchEscrow: not a player"));
-        escrow.proposeForfeit(id, pfx);
+        escrow.proposeForfeit(id, pfx, hex"");
     }
 
     // A finished game has no "opponent's turn" to forfeit — use proposeResult.
@@ -660,7 +683,7 @@ contract MatchEscrowTest is Test {
         (ReplayVerifier.Transcript memory full,) = _buildFullTranscript(id, startTurn);
         vm.prank(alice);
         vm.expectRevert(bytes("MatchEscrow: game over"));
-        escrow.proposeForfeit(id, full);
+        escrow.proposeForfeit(id, full, hex"");
     }
 
     // Rebutting with the accused's next legal move proves presence and resumes
@@ -673,8 +696,9 @@ contract MatchEscrowTest is Test {
         ReplayVerifier.Transcript memory reb = _buildPartialTranscript(id, startTurn, N + 1);
         (address claimant,) = _forfeitRoles(startTurn, N);
 
+        bytes memory ack = _forfeitAck(id, startTurn, N); // compute before prank (verifier calls would consume it)
         vm.prank(claimant);
-        escrow.proposeForfeit(id, pfx);
+        escrow.proposeForfeit(id, pfx, ack);
 
         uint256 aBefore = usdc.balanceOf(alice);
         uint256 bBefore = usdc.balanceOf(bob);
@@ -699,8 +723,9 @@ contract MatchEscrowTest is Test {
         ReplayVerifier.Transcript memory pfx = _truncate(full, M - 1); // one move from terminal
         (address claimant,) = _forfeitRoles(startTurn, M - 1);
 
+        bytes memory ack = _forfeitAck(id, startTurn, M - 1); // compute before prank
         vm.prank(claimant);
-        escrow.proposeForfeit(id, pfx);
+        escrow.proposeForfeit(id, pfx, ack);
 
         address winnerAddr = winner == 0 ? alice : bob;
         uint256 before = usdc.balanceOf(winnerAddr);
@@ -718,8 +743,9 @@ contract MatchEscrowTest is Test {
         ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
         ReplayVerifier.Transcript memory reb = _buildPartialTranscript(id, startTurn, N + 1);
         (address claimant,) = _forfeitRoles(startTurn, N);
+        bytes memory ack = _forfeitAck(id, startTurn, N); // compute before prank (verifier calls would consume it)
         vm.prank(claimant);
-        escrow.proposeForfeit(id, pfx);
+        escrow.proposeForfeit(id, pfx, ack);
         vm.warp(block.timestamp + WINDOW + 1);
         vm.expectRevert(bytes("MatchEscrow: window closed"));
         escrow.rebutForfeit(id, reb);
@@ -732,8 +758,9 @@ contract MatchEscrowTest is Test {
         ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
         ReplayVerifier.Transcript memory tooLong = _buildPartialTranscript(id, startTurn, N + 2);
         (address claimant,) = _forfeitRoles(startTurn, N);
+        bytes memory ack = _forfeitAck(id, startTurn, N); // compute before prank (verifier calls would consume it)
         vm.prank(claimant);
-        escrow.proposeForfeit(id, pfx);
+        escrow.proposeForfeit(id, pfx, ack);
         vm.expectRevert(bytes("MatchEscrow: not a one-move rebuttal"));
         escrow.rebutForfeit(id, tooLong);
     }
@@ -746,8 +773,9 @@ contract MatchEscrowTest is Test {
         uint256 N = 6;
         ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
         (address claimant,) = _forfeitRoles(startTurn, N);
+        bytes memory ack = _forfeitAck(id, startTurn, N); // compute before prank (verifier calls would consume it)
         vm.prank(claimant);
-        escrow.proposeForfeit(id, pfx);
+        escrow.proposeForfeit(id, pfx, ack);
 
         vm.warp(block.timestamp + TTL + 1);
         vm.expectRevert(bytes("MatchEscrow: not voidable"));
@@ -767,13 +795,39 @@ contract MatchEscrowTest is Test {
         ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
         ReplayVerifier.Transcript memory reb = _buildPartialTranscript(id, startTurn, N + 1);
         (address claimant,) = _forfeitRoles(startTurn, N);
+        bytes memory ack = _forfeitAck(id, startTurn, N); // compute before prank (verifier calls would consume it)
         vm.prank(claimant);
-        escrow.proposeForfeit(id, pfx);
+        escrow.proposeForfeit(id, pfx, ack);
         escrow.rebutForfeit(id, reb); // lastRebuttedPly = N, back to Active
 
         vm.prank(claimant);
         vm.expectRevert(bytes("MatchEscrow: stale forfeit ply"));
-        escrow.proposeForfeit(id, pfx);
+        escrow.proposeForfeit(id, pfx, hex"");
+    }
+
+    // [re-audit critical fix] a forfeit WITHOUT the accused's turn-ack reverts.
+    // This closes the own-move-equivocation theft: a claimant holds only their
+    // OWN session key, so they cannot produce the accused's ack for a fabricated
+    // (forked/withheld) "opponent-to-move" position the accused never saw.
+    function test_forfeit_revertsWithoutValidAck() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        uint256 N = 6;
+        ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
+        (address claimant,) = _forfeitRoles(startTurn, N);
+        uint256 claimantPk = claimant == alice ? pk0 : pk1;
+
+        // ack over the correct position but signed by the CLAIMANT (wrong signer)
+        bytes memory forgedAck = _ackWith(claimantPk, id, N, verifier.stateHash(_stateAtPly(startTurn, N)));
+        vm.prank(claimant);
+        vm.expectRevert(bytes("MatchEscrow: missing turn ack"));
+        escrow.proposeForfeit(id, pfx, forgedAck);
+
+        // an ack for a DIFFERENT ply (stale/mismatched position) also fails
+        bytes memory wrongPlyAck = _forfeitAck(id, startTurn, N + 2);
+        vm.prank(claimant);
+        vm.expectRevert(bytes("MatchEscrow: missing turn ack"));
+        escrow.proposeForfeit(id, pfx, wrongPlyAck);
     }
 
     // ------------------------- stake floor ------------------------------- //

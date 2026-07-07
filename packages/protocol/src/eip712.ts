@@ -21,6 +21,7 @@ const DOMAIN_TYPEHASH = keccak256(
   toBytes("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
 );
 const MOVE_TYPEHASH = keccak256(toBytes("Move(uint256 matchId,uint256 ply,uint8 house,bytes32 state)"));
+const TURNACK_TYPEHASH = keccak256(toBytes("TurnAck(uint256 matchId,uint256 ply,bytes32 state)"));
 const RESULT_TYPEHASH = keccak256(toBytes("Result(uint256 matchId,uint8 winner)"));
 // Off-chain only: authenticates a resign request to the game server (never
 // submitted on-chain). Reuses the verifier domain like Move, distinct
@@ -91,6 +92,20 @@ export function moveDigest(matchId: bigint, ply: bigint, house: number, state: H
     encodeAbiParameters(
       [{ type: "bytes32" }, { type: "uint256" }, { type: "uint256" }, { type: "uint8" }, { type: "bytes32" }],
       [MOVE_TYPEHASH, matchId, ply, house, state],
+    ),
+  );
+  return typedDataHash(domainSeparator(VERIFIER_DOMAIN_NAME, ctx.chainId, ctx.verifier), structHash);
+}
+
+/** Digest a session key signs to ACKNOWLEDGE it is their turn at `state` / `ply`
+ *  (ReplayVerifier.ackDigest). The client signs this automatically on receiving
+ *  the opponent's turn-flipping move; it is the anti-fabrication anchor that lets
+ *  the opponent open a forfeit only against a position this player really saw. */
+export function ackDigest(matchId: bigint, ply: bigint, state: Hex, ctx: MoveContext): Hex {
+  const structHash = keccak256(
+    encodeAbiParameters(
+      [{ type: "bytes32" }, { type: "uint256" }, { type: "uint256" }, { type: "bytes32" }],
+      [TURNACK_TYPEHASH, matchId, ply, state],
     ),
   );
   return typedDataHash(domainSeparator(VERIFIER_DOMAIN_NAME, ctx.chainId, ctx.verifier), structHash);

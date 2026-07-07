@@ -2,6 +2,7 @@
 // mini-app sign against a single, parity-tested source of truth.
 export {
   moveDigest,
+  ackDigest,
   resultDigest,
   resignDigest,
   drawOfferDigest,

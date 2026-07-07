@@ -40,6 +40,8 @@ contract ReplayVerifier {
     bytes32 private constant MOVE_TYPEHASH =
         keccak256("Move(uint256 matchId,uint256 ply,uint8 house,bytes32 state)");
 
+    bytes32 private constant TURNACK_TYPEHASH = keccak256("TurnAck(uint256 matchId,uint256 ply,bytes32 state)");
+
     /// @dev Upper bound on transcript length, guarding the replay loop against
     ///      an unbounded-gas griefing submission. Repetition ends real games in
     ///      far fewer plies.
@@ -89,6 +91,19 @@ contract ReplayVerifier {
     ///      no-capture clock (which governs future termination).
     function stateHash(AwaleRules.GameState memory s) public pure returns (bytes32) {
         return keccak256(abi.encode(s.pits, s.store0, s.store1, s.turn, s.noCaptureCount));
+    }
+
+    /// @notice EIP-712 digest a player's session key signs to ACKNOWLEDGE that at
+    ///         position `state` it is ply `ply` and their turn to move.
+    /// @dev A forfeit may only be opened against a position the accused
+    ///      acknowledged (see MatchEscrow.proposeForfeit), so a claimant cannot
+    ///      fabricate "opponent to move" by signing a never-played move of their
+    ///      own — the accused never acks a state their client never received.
+    ///      The client signs this automatically upon receiving the opponent's
+    ///      turn-flipping move; `state` is stateHash(the pre-move position).
+    function ackDigest(uint256 matchId, uint256 ply, bytes32 state) public view returns (bytes32) {
+        bytes32 structHash = keccak256(abi.encode(TURNACK_TYPEHASH, matchId, ply, state));
+        return MessageHashUtils.toTypedDataHash(DOMAIN_SEPARATOR, structHash);
     }
 
     /// @notice Replay a transcript and return the resulting game state.

@@ -214,7 +214,8 @@ export const matchEscrowAbi = [
     outputs: [],
   },
   {
-    // v7 forfeit clock: prove it's the opponent's turn on a live game
+    // forfeit clock: prove it's the opponent's turn on a live game AND that the
+    // accused acknowledged that turn (ackSig) — anti-fabrication anchor
     type: "function",
     name: "proposeForfeit",
     stateMutability: "nonpayable",
@@ -232,6 +233,7 @@ export const matchEscrowAbi = [
           { name: "sigs", type: "bytes[]" },
         ],
       },
+      { name: "ackSig", type: "bytes" },
     ],
     outputs: [],
   },

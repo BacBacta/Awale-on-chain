@@ -39,6 +39,7 @@ contract GenSigVectors is Script {
                 results = string(abi.encodePacked(results, ","));
             }
             bytes32 mDigest = verifier.moveDigest(matchIds[i], plies[i], houses[i], stateRef);
+            bytes32 aDigest = verifier.ackDigest(matchIds[i], plies[i], stateRef);
             moves = string(
                 abi.encodePacked(
                     moves,
@@ -52,6 +53,8 @@ contract GenSigVectors is Script {
                     vm.toString(stateRef),
                     '","digest":"',
                     vm.toString(mDigest),
+                    '","ack":"',
+                    vm.toString(aDigest),
                     '"}'
                 )
             );

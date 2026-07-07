@@ -281,8 +281,17 @@ contract ChallengeHandler is Test {
         uint8 accusedIdx = uint8((uint256(startTurn) + PARTIAL_PLIES) % 2);
         address claimant = accusedIdx == 0 ? joiner : creator; // the OTHER player
 
+        // the accused's turn-ack over the exact forfeit position (v2 requirement)
+        AwaleRules.GameState memory st = AwaleRules.initialState();
+        st.turn = startTurn;
+        uint8[] memory all = startTurn == 0 ? movesFrom0 : movesFrom1;
+        for (uint256 i = 0; i < PARTIAL_PLIES; i++) st = AwaleRules.applyMove(st, all[i]);
+        uint256 apk = st.turn == 0 ? pk0 : pk1;
+        (uint8 av, bytes32 ar, bytes32 asig) = vm.sign(apk, verifier.ackDigest(id, PARTIAL_PLIES, verifier.stateHash(st)));
+        bytes memory ack = abi.encodePacked(ar, asig, av);
+
         vm.prank(claimant);
-        try escrow.proposeForfeit(id, t) {} catch { return; }
+        try escrow.proposeForfeit(id, t, ack) {} catch { return; }
 
         uint64 dl = escrow.getMatch(id).challengeDeadline;
         vm.warp(uint256(dl) + bound(dt, 1, 1 days));

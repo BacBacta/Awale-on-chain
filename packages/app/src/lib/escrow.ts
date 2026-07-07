@@ -252,14 +252,15 @@ export function challengeResult(
 }
 
 /** Move-clock forfeit: prove it's the OPPONENT's turn on a still-live game
- *  (`moves`/`sigs` end where they must move) and open the response window. If
- *  they never answer, {finalizeForfeit} pays you the pot. */
-export function proposeForfeit(wallet: WriteClient, p: TranscriptArgs): Promise<Hex> {
+ *  (`moves`/`sigs` end where they must move) AND supply the opponent's turn-ack
+ *  (`ackSig`, obtained via the server) that anchors the accusation, then open the
+ *  response window. If they never answer, {finalizeForfeit} pays you the pot. */
+export function proposeForfeit(wallet: WriteClient, p: TranscriptArgs & { ackSig: Hex }): Promise<Hex> {
   return wallet.writeContract({
     address: p.escrow,
     abi: matchEscrowAbi,
     functionName: "proposeForfeit",
-    args: [p.matchId, transcriptTuple(p)],
+    args: [p.matchId, transcriptTuple(p), p.ackSig],
     account: p.account,
     feeCurrency: effectiveFeeCurrency(p.feeCurrency),
   });

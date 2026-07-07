@@ -126,6 +126,7 @@ const escrowAbi = [
           { name: "sigs", type: "bytes[]" },
         ],
       },
+      { name: "ackSig", type: "bytes" },
     ],
     outputs: [],
   },
@@ -280,13 +281,14 @@ export class SettlementClient {
   }
 
   /** Forfeit clock: prove it's the opponent's turn on a live game (the prefix
-   *  ends where they must move) and open the response window. */
-  proposeForfeit(transcript: Transcript): Promise<Hex> {
+   *  ends where they must move) AND supply the accused's turn-ack (anti-fabrication
+   *  anchor) that opens the response window. */
+  proposeForfeit(transcript: Transcript, ackSig: Hex): Promise<Hex> {
     return this.wallet.writeContract({
       address: this.escrow,
       abi: escrowAbi,
       functionName: "proposeForfeit",
-      args: [transcript.matchId, this.transcriptTuple(transcript)],
+      args: [transcript.matchId, this.transcriptTuple(transcript), ackSig],
       feeCurrency: this.feeCurrency,
     });
   }

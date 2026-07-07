@@ -12,6 +12,7 @@ import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 import type { Address, Hex } from "viem";
 import {
   moveDigest,
+  ackDigest,
   resultDigest,
   resignDigest,
   drawOfferDigest,
@@ -41,6 +42,22 @@ export function signMove(
 ): Promise<Hex> {
   return privateKeyToAccount(session.privateKey).sign({
     hash: moveDigest(matchId, ply, house, stateHash(position), ctx),
+  });
+}
+
+/** Acknowledge it is our turn at `position` / `ply` — signed automatically on
+ *  receiving the opponent's turn-flipping move. The opponent needs this ack to
+ *  open a forfeit against us (anti-fabrication anchor), and we only ever sign it
+ *  for a position we actually received. */
+export function signAck(
+  session: SessionKey,
+  matchId: bigint,
+  ply: bigint,
+  position: MovePosition,
+  ctx: MoveContext,
+): Promise<Hex> {
+  return privateKeyToAccount(session.privateKey).sign({
+    hash: ackDigest(matchId, ply, stateHash(position), ctx),
   });
 }
 

@@ -405,11 +405,15 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     ///      the opponent can always {rebutForfeit} by making their next legal
     ///      move — so an abandoner's only exits are "keep playing (and lose for
     ///      real)" or "forfeit the pot". A refund is impossible while a forfeit is
-    ///      pending: {voidExpired} rejects ForfeitPending, and the keeper opens a
-    ///      forfeit on detected abandonment before the TTL. A never-started game
-    ///      (no moves) is out of scope — {verify} needs ≥1 move — and refunds via
-    ///      the TTL, which is fair (no information asymmetry before the first move).
-    function proposeForfeit(uint256 matchId, ReplayVerifier.Transcript calldata t) external {
+    ///      pending: {voidExpired} rejects ForfeitPending.
+    /// @param ackSig the ACCUSED's session-key signature over
+    ///      verifier.ackDigest(matchId, t.moves.length, stateHash(state)) — proof
+    ///      the accused acknowledged it is their turn at this exact position. This
+    ///      is the anti-fabrication anchor: a claimant cannot forge or fabricate
+    ///      it, so they cannot equivocate on their own move to invent an
+    ///      "opponent-to-move" position the opponent never saw (re-audit critical).
+    ///      A never-started game (no moves / no ack) refunds via the TTL.
+    function proposeForfeit(uint256 matchId, ReplayVerifier.Transcript calldata t, bytes calldata ackSig) external {
         Match storage m = matches[matchId];
         require(m.status == Status.Active, "MatchEscrow: not active");
         require(block.timestamp <= m.activeDeadline, "MatchEscrow: match expired");
@@ -431,6 +435,15 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         // a forfeit must sit strictly past the last answered ply, so a stale
         // claim can't be re-spammed after a rebuttal (forfeit ply tracks real progress)
         require(t.moves.length > m.lastRebuttedPly, "MatchEscrow: stale forfeit ply");
+
+        // ANTI-FABRICATION: the accused must have acknowledged it is their turn at
+        // this exact position. A claimant holds only their OWN session key, so a
+        // forked/withheld move yields a state the accused never acked — no valid
+        // ackSig — and the forfeit reverts. This is what closes the own-move
+        // equivocation theft: you cannot invent the opponent's turn.
+        address accusedSession = state.turn == 0 ? m.session0 : m.session1;
+        bytes32 ackDigest = verifier.ackDigest(matchId, t.moves.length, verifier.stateHash(state));
+        require(ECDSA.recover(ackDigest, ackSig) == accusedSession, "MatchEscrow: missing turn ack");
 
         m.forfeitPrefix = verifier.transcriptHash(matchId, m.startTurn, t.moves);
         m.forfeitPly = uint32(t.moves.length);

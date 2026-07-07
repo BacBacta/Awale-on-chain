@@ -1,5 +1,6 @@
 export {
   moveDigest,
+  ackDigest,
   resultDigest,
   recoverMoveSigner,
   stateHash,

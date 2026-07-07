@@ -3,13 +3,13 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { getAddress, type Address, type Hex } from "viem";
-import { moveDigest, resultDigest, stateHash } from "../src/eip712.js";
+import { moveDigest, ackDigest, resultDigest, stateHash } from "../src/eip712.js";
 
 interface SigVectors {
   chainId: number;
   verifier: Address;
   escrow: Address;
-  moves: { matchId: number; ply: number; house: number; state: Hex; digest: Hex }[];
+  moves: { matchId: number; ply: number; house: number; state: Hex; digest: Hex; ack: Hex }[];
   results: { matchId: number; winner: number; digest: Hex }[];
 }
 
@@ -26,6 +26,13 @@ describe("EIP-712 digest parity with the contracts", () => {
     for (const m of v.moves) {
       const got = moveDigest(BigInt(m.matchId), BigInt(m.ply), m.house, m.state, { chainId, verifier });
       expect(got.toLowerCase()).toBe(m.digest.toLowerCase());
+    }
+  });
+
+  it("ackDigest matches ReplayVerifier.ackDigest", () => {
+    for (const m of v.moves) {
+      const got = ackDigest(BigInt(m.matchId), BigInt(m.ply), m.state, { chainId, verifier });
+      expect(got.toLowerCase()).toBe(m.ack.toLowerCase());
     }
   });
 
