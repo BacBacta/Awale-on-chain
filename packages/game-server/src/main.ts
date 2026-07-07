@@ -1097,12 +1097,22 @@ const socketHandle = attachSocketIO(io, {
   // matchmaking rates from the server profile — the client's "elo" field is
   // attacker-chosen and only a fallback for players with no profile yet
   eloOf: async (address) => (await profiles.get(address))?.elo ?? null,
-  // cash quick-match is Elo-aware now (P0-2): sharks-vs-fish on a raked pot is
-  // the biggest churn risk, so beginners don't get fed to the best player.
+  // cash quick-match is Elo-aware (P0-2): sharks-vs-fish on a raked pot is the
+  // biggest churn risk, so beginners are never fed to the best player.
+  //   - windowRule "strict": BOTH players' windows must cover the gap, so a
+  //     fresh beginner is never dragged in just because a shark waited long.
+  //   - maxGap: a HARD ceiling the backstop cannot cross. Past
+  //     pairAnyoneAfterSec the gap is otherwise ignored for liquidity, which on
+  //     MONEY would pair a 1200 with a 1700. The ceiling stops that: if no
+  //     opponent within it, there is simply no match (the stake never leaves the
+  //     lobby) — a returned player beats a robbed one. ~1 tier of Elo (350).
   cashMatchmaking: {
     baseWindow: Number(process.env.CASH_BASE_WINDOW ?? "200"),
     windowGrowthPerSec: Number(process.env.CASH_WINDOW_GROWTH ?? "15"),
     pairAnyoneAfterSec: Number(process.env.CASH_PAIR_ANYONE_AFTER_SEC ?? "120"),
+    // windowRule is forced "strict" for cash in server.ts; here we add the hard
+    // ceiling the backstop can't cross (0 ⇒ no ceiling, an explicit opt-out).
+    maxGap: Number(process.env.CASH_MAX_GAP ?? "350"),
   },
   // stake-band boundaries (P0-3) are computed at this token's decimals
   stakeDecimals: Number(process.env.STAKE_DECIMALS ?? "18"),

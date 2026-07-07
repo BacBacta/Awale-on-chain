@@ -161,6 +161,27 @@ describe("Matchmaker", () => {
     });
   });
 
+  describe("maxGap ceiling (anti-churn: no shark-vs-fish on money)", () => {
+    it("the backstop can NEVER cross the hard ceiling — an unfair money match just doesn't happen", () => {
+      let clock = 0;
+      // cash-like: backstop at 120s, but a hard 350 ceiling
+      const mm = new Matchmaker({ baseWindow: 200, windowGrowthPerSec: 15, pairAnyoneAfterSec: 120, windowRule: "strict", maxGap: 350, now: () => clock });
+      mm.enqueue({ id: "novice", address: addr(1), elo: 1200 });
+      mm.enqueue({ id: "shark", address: addr(2), elo: 2000 }); // gap 800 > 350 ceiling
+      clock = 10 * 60_000; // even after 10 minutes past the backstop…
+      expect(mm.sweep()).toEqual([]); // …still no match: the beginner is protected
+    });
+
+    it("still pairs a fair gap under the ceiling once the window (or backstop) allows", () => {
+      let clock = 0;
+      const mm = new Matchmaker({ baseWindow: 200, windowGrowthPerSec: 15, pairAnyoneAfterSec: 120, windowRule: "strict", maxGap: 350, now: () => clock });
+      mm.enqueue({ id: "a", address: addr(1), elo: 1200 });
+      mm.enqueue({ id: "b", address: addr(2), elo: 1500 }); // gap 300 ≤ 350 ceiling
+      clock = 130_000; // past the backstop; within the ceiling → pairs
+      expect(mm.sweep()).toHaveLength(1);
+    });
+  });
+
   describe("windowRule strict vs lenient (P1-6: fairness of the widened window)", () => {
     // A veteran waited a long time (huge window); a FRESH player just arrived
     // (base window only). The gap fits the veteran's window but NOT the

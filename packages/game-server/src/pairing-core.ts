@@ -31,6 +31,12 @@ export interface PairingOptions {
   growth: number; // window widening per second waited
   pairAnyoneAfterSec: number; // 0 = never; else gap ignored past this wait
   windowRule: WindowRule;
+  /** Hard Elo-gap ceiling that neither the widening window NOR the
+   *  pairAnyoneAfterSec backstop may exceed. The anti-churn guard for money
+   *  play: a beginner is never fed to a shark just because the queue is thin —
+   *  better no match (the stake stays in the lobby) than an unfair one. Omit /
+   *  Infinity = no ceiling (casual, which also has a bot fallback). */
+  maxGap?: number;
 }
 
 export function waitedSec(w: Waiter, now: number): number {
@@ -44,10 +50,14 @@ export function windowOf(w: Waiter, opts: PairingOptions, now: number): number {
 /** Whether two waiters may be paired. Single source of truth. */
 export function accepts(a: Waiter, b: Waiter, opts: PairingOptions, now: number): boolean {
   if (a.address.toLowerCase() === b.address.toLowerCase()) return false; // no self-match
-  if (opts.pairAnyoneAfterSec > 0 && Math.max(waitedSec(a, now), waitedSec(b, now)) >= opts.pairAnyoneAfterSec) {
-    return true; // liquidity backstop overrides the gap
-  }
   const gap = Math.abs(a.elo - b.elo);
+  // hard ceiling first: no window and no backstop may pair beyond it — the
+  // anti-churn guard so a beginner is never fed to a shark on a raked pot
+  const ceiling = opts.maxGap ?? Infinity;
+  if (gap > ceiling) return false;
+  if (opts.pairAnyoneAfterSec > 0 && Math.max(waitedSec(a, now), waitedSec(b, now)) >= opts.pairAnyoneAfterSec) {
+    return true; // liquidity backstop overrides the widening window (but not the ceiling above)
+  }
   const wa = windowOf(a, opts, now);
   const wb = windowOf(b, opts, now);
   return opts.windowRule === "strict" ? gap <= Math.min(wa, wb) : gap <= Math.max(wa, wb);

@@ -97,12 +97,15 @@ export interface ServerDeps {
     baseWindow?: number;
     windowGrowthPerSec?: number;
     pairAnyoneAfterSec?: number;
+    /** hard Elo-gap ceiling the backstop can't cross — no shark-vs-fish on
+     *  money; if none within it, no match (stake stays in the lobby). */
+    maxGap?: number;
     /** injectable clock — test-only; defaults to Date.now in production */
     now?: () => number;
   };
   /** Skill window for the RANKED pool (P1-6) — a strict-window pool, separate
    *  from casual. Same shape as cashMatchmaking. */
-  rankedMatchmaking?: { baseWindow?: number; windowGrowthPerSec?: number; pairAnyoneAfterSec?: number; now?: () => number };
+  rankedMatchmaking?: { baseWindow?: number; windowGrowthPerSec?: number; pairAnyoneAfterSec?: number; maxGap?: number; now?: () => number };
   /** Token decimals for stake-band boundaries (P0-3). Default 18 (aUSD). */
   stakeDecimals?: number;
   /** Persist half-built cash pairs so a restart can abort them cleanly instead
@@ -239,6 +242,9 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
         windowGrowthPerSec: deps.cashMatchmaking?.windowGrowthPerSec ?? 15,
         pairAnyoneAfterSec: deps.cashMatchmaking?.pairAnyoneAfterSec ?? 120,
         windowRule: "strict", // money is zero-sum + raked — fairness first (P1-6)
+        // hard ceiling the backstop can't cross: no beginner-vs-shark on money.
+        // 0 in env ⇒ Infinity (no ceiling) for an explicit opt-out.
+        maxGap: (deps.cashMatchmaking?.maxGap ?? 350) || Infinity,
         now: deps.cashMatchmaking?.now,
       });
       cashPools.set(poolKey, pool);

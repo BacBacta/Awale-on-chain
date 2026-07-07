@@ -302,12 +302,14 @@ describe("Socket.IO transport (integration)", () => {
       expect(ra.stakeWei).toBe(STAKE);
     });
 
-    it("does NOT pair a novice with a shark inside the base window, but DOES after the liquidity backstop", async () => {
+    it("NEVER pairs a novice with a shark on money — the hard ceiling protects the beginner even past the backstop", async () => {
       let clock = 0;
+      // 800 Elo apart — beyond the default 350 cash ceiling
       const elos: Record<string, number> = { [acct0.address.toLowerCase()]: 1200, [acct1.address.toLowerCase()]: 2000 };
       const port = await start(new GameHub(), {
         eloOf: async (a) => elos[a.toLowerCase()] ?? null,
-        // growth 0 so only the backstop can bridge the 800-gap — deterministic
+        // backstop at 120s, but the default maxGap (350) caps it: a raked pot
+        // must never feed a beginner to a shark just because the queue is thin
         cashMatchmaking: { baseWindow: 200, windowGrowthPerSec: 0, pairAnyoneAfterSec: 120, now: () => clock },
       });
       const [a, b] = connectQueued(port);
@@ -324,11 +326,34 @@ describe("Socket.IO transport (integration)", () => {
       await new Promise((r) => setTimeout(r, 80));
       lastHandle.sweepQueues();
       await new Promise((r) => setTimeout(r, 50));
-      expect(matched).toBe(false); // 800 Elo apart, inside base window: never for money
+      expect(matched).toBe(false); // inside base window: no match
 
-      // wait out the liquidity backstop — now a game beats no game
+      // even long past the backstop, the 800-gap stays blocked — no unfair
+      // money match; the stakes never leave the lobby
+      clock = 10 * 60_000;
+      lastHandle.sweepQueues();
+      await new Promise((r) => setTimeout(r, 60));
+      expect(matched).toBe(false);
+    });
+
+    it("DOES pair a fair cash gap (within the ceiling) once the backstop is reached", async () => {
+      let clock = 0;
+      // 300 Elo apart — under the 350 ceiling, so the backstop may bridge it
+      const elos: Record<string, number> = { [acct0.address.toLowerCase()]: 1200, [acct1.address.toLowerCase()]: 1500 };
+      const port = await start(new GameHub(), {
+        eloOf: async (a) => elos[a.toLowerCase()] ?? null,
+        cashMatchmaking: { baseWindow: 200, windowGrowthPerSec: 0, pairAnyoneAfterSec: 120, now: () => clock },
+      });
+      const [a, b] = connectQueued(port);
+      client = a;
+      client2 = b;
+      await waitConnect(a);
+      await waitConnect(b);
+      a.emit("cash-queue", { address: acct0.address, stakeWei: STAKE, token: TOKEN });
+      b.emit("cash-queue", { address: acct1.address, stakeWei: STAKE, token: TOKEN });
       const mA = new Promise<{ role: string }>((r) => a.once("cash-matched", r));
       const mB = new Promise<{ role: string }>((r) => b.once("cash-matched", r));
+      await new Promise((r) => setTimeout(r, 80));
       clock = 120_000;
       lastHandle.sweepQueues();
       const [ra, rb] = await Promise.all([mA, mB]);

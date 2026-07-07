@@ -18,6 +18,9 @@ export interface MatchmakerOptions {
   /** "lenient" (default, casual) pairs if EITHER window covers the gap;
    *  "strict" (ranked/cash, P1-6) requires BOTH. */
   windowRule?: "strict" | "lenient";
+  /** Hard Elo-gap ceiling the window/backstop can never exceed — the anti-churn
+   *  guard for money play (no shark-vs-fish). Omit = no ceiling (casual). */
+  maxGap?: number;
   now?: () => number; // injectable clock for testing
 }
 
@@ -32,6 +35,7 @@ export class Matchmaker {
       growth: opts.windowGrowthPerSec ?? 10,
       pairAnyoneAfterSec: opts.pairAnyoneAfterSec ?? 0,
       windowRule: opts.windowRule ?? "lenient",
+      maxGap: opts.maxGap ?? Infinity,
     };
     this.now = opts.now ?? Date.now;
   }
