@@ -92,7 +92,7 @@ export default function Guide() {
       </span>
       <div className="stack" style={{ gap: 8 }}>
         <Way icon="bolt" title="Quick match" sub="Free · live vs a real player · no clock" />
-        <Way icon="versus" title="With a friend" sub="Free · share a link · play at your own pace" />
+        <Way icon="versus" title="With a friend" sub="Share a link · free, or stake real money — the seat stays reserved for your friend" />
         <Way icon="wallet" title="For money" sub={`You each stake $0.25–1 · winner takes ${WINNER_PCT}`} />
         <Way icon="play" title="Practice vs AI" sub="Free · warm up anytime · pick your level" />
         <Way icon="target" title="Daily puzzle" sub="Free · one a day · keeps your streak alive" />
@@ -115,6 +115,8 @@ export default function Guide() {
         <Point n={4}>
           Money matches are <b style={{ color: "var(--text)" }}>skill-matched</b>: you&apos;re never paired with a far
           stronger player just because the queue is thin. No fair opponent — no match, your stake stays with you.
+          Prefer your own opponent? <b style={{ color: "var(--text)" }}>Stake against a friend</b>: share the invite
+          link and the seat is locked to whoever holds it — same rules, same fee, no strangers.
         </Point>
         <Point n={5}>A draw refunds both players in full — no fee taken.</Point>
         <Point n={6}>Nobody joined your match yet? Cancel anytime — your stake comes back in full.</Point>

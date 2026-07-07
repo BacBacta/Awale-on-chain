@@ -106,6 +106,53 @@ export function joinMatch(
   });
 }
 
+// ---- friend-link stake matches (v6 invite lock) ---- //
+// The seat is reserved for whoever holds the link's secret code: the creator
+// commits keccak256(code) on-chain and the code travels only inside the invite
+// link. Without it, any lobby bot could take the friend's seat the moment the
+// match appeared on-chain — bypassing the skill matchmaking money games get.
+
+/** Fresh 32-byte invite code for a friend-stake link (crypto-random). */
+export function newInviteCode(): Hex {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return `0x${Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("")}` as Hex;
+}
+
+/** The on-chain commitment for an invite code (must match the contract:
+ *  keccak256(abi.encodePacked(code))). */
+export function inviteHashOf(code: Hex): Hex {
+  return keccak256(code);
+}
+
+export function createMatchWithInvite(
+  wallet: WriteClient,
+  p: { account: Address; escrow: Address; token: Address; stake: bigint; session: Address; inviteHash: Hex; feeCurrency?: Address },
+): Promise<Hex> {
+  return wallet.writeContract({
+    address: p.escrow,
+    abi: matchEscrowAbi,
+    functionName: "createMatchWithInvite",
+    args: [p.token, p.stake, p.session, p.inviteHash],
+    account: p.account,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
+  });
+}
+
+export function joinMatchWithCode(
+  wallet: WriteClient,
+  p: { account: Address; escrow: Address; matchId: bigint; session: Address; code: Hex; feeCurrency?: Address },
+): Promise<Hex> {
+  return wallet.writeContract({
+    address: p.escrow,
+    abi: matchEscrowAbi,
+    functionName: "joinMatchWithCode",
+    args: [p.matchId, p.session, p.code],
+    account: p.account,
+    feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
+  });
+}
+
 /** Withdraw an open match nobody has joined — the full stake comes back.
  *  Staking must feel reversible: money stuck in a lobby with no exit is the
  *  fastest way to lose a first-time player's trust. */

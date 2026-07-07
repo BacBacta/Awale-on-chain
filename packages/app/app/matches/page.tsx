@@ -7,13 +7,16 @@ import Link from "next/link";
 import { readContract } from "viem/actions";
 import type { Address } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../../src/lib/minipay.js";
-import { escrowConfig, legacyEscrows, cancelMatch, voidExpired, finalizeResult } from "../../src/lib/escrow.js";
+import { escrowConfig, legacyEscrows, cancelMatch, voidExpired, finalizeResult, approve, createMatchWithInvite, newInviteCode, inviteHashOf, parseStake } from "../../src/lib/escrow.js";
 import { readWithRetry, confirmTx } from "../../src/lib/tx.js";
 import { cachedOutcomes, scanSettled, type Outcome } from "../../src/lib/outcomes.js";
 import { listLocalMatches, statusView } from "../../src/lib/matches.js";
-import { computePayout, fmt } from "../../src/lib/money.js";
+import { computePayout, fmt, MIN_STAKE, WINNER_PCT } from "../../src/lib/money.js";
 import { humanizeError } from "../../src/lib/errors.js";
-import { matchEscrowAbi } from "../../../protocol/src/abis.js";
+import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
+import { parseEventLogs } from "viem";
+import { stakeTokens } from "../../src/lib/stakeTokens.js";
+import { recordLocalMatch } from "../../src/lib/matches.js";
 import { createSessionKey, persistSession } from "../../src/lib/session.js";
 import { asyncEnabled, createAsync, recordAsyncMatch, listAsyncMatchIds, getAsync, roleOf } from "../../src/lib/asyncClient.js";
 import { loadSession } from "../../src/lib/session.js";
@@ -255,6 +258,70 @@ export default function Matches() {
     }
   }
 
+  // Friend game WITH a stake: an on-chain match whose seat is reserved for
+  // whoever holds the link's secret code (v6 invite lock). The stranger-facing
+  // lobby never lists it; the 11% rake and every settlement rule apply exactly
+  // as in any money match. The share link carries the code — treat it like cash.
+  const [stakeOpen, setStakeOpen] = useState(false);
+  const [stakeChoice, setStakeChoice] = useState(MIN_STAKE);
+  const [stakeCreating, setStakeCreating] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [linkCopied, setLinkCopied] = useState(false);
+  async function newStakedFriendGame() {
+    const cfg = escrowConfig();
+    const token = stakeTokens()[0];
+    if (!cfg || !token || stakeCreating) return;
+    if (!wallet || !account) {
+      setError("Open in MiniPay (or connect a wallet) to stake.");
+      return;
+    }
+    setStakeCreating(true);
+    setError(null);
+    try {
+      const client = publicClient(cfg.rpcUrl, cfg.chainId);
+      const amount = parseStake(stakeChoice, token.decimals);
+      // approve exactly the stake when allowance is short (same UX as quick cash)
+      const allowance = (await readContract(client, {
+        address: token.address,
+        abi: erc20Abi,
+        functionName: "allowance",
+        args: [account, cfg.escrow],
+      })) as bigint;
+      if (allowance < amount) {
+        const ah = await approve(wallet, { account, token: token.address, spender: cfg.escrow, amount, feeCurrency: FEE_CURRENCY });
+        await confirmTx(client, ah, "Approval");
+      }
+      const session = createSessionKey();
+      const code = newInviteCode();
+      const hash = await createMatchWithInvite(wallet, {
+        account,
+        escrow: cfg.escrow,
+        token: token.address,
+        stake: amount,
+        session: session.address,
+        inviteHash: inviteHashOf(code),
+        feeCurrency: FEE_CURRENCY,
+      });
+      const receipt = await confirmTx(client, hash, "Your stake");
+      const created = parseEventLogs({ abi: matchEscrowAbi, logs: receipt.logs, eventName: "MatchCreated" });
+      const matchId = (created[0]?.args as { matchId?: bigint } | undefined)?.matchId;
+      if (matchId === undefined) throw new Error("match created but its id couldn't be read — check Your matches");
+      persistSession(matchId, session);
+      recordLocalMatch(matchId);
+      const link = `${window.location.origin}/play?match=${matchId.toString()}&code=${code}`;
+      setInviteLink(link);
+      // best effort native share; the copy button below is the fallback
+      try {
+        await navigator.share?.({ title: "Awalé — play me for money", url: link });
+      } catch {
+        /* user closed the sheet — the link card stays */
+      }
+    } catch (e) {
+      setError(humanizeError(e));
+    }
+    setStakeCreating(false);
+  }
+
   // Cancel an open money match nobody joined — the full stake comes back.
   const [cancelling, setCancelling] = useState<bigint | null>(null);
   async function cancelOpen(id: bigint, escrow: Address) {
@@ -334,6 +401,63 @@ export default function Matches() {
         <button className="btn block" onClick={newFriendGame} disabled={creating}>
           <Icon name="versus" size={17} /> {creating ? "Creating…" : "Invite a friend — free game"}
         </button>
+      )}
+
+      {/* friend game with a stake — same rake & rules as any money match; the
+          link's secret code reserves the seat so only your friend can take it */}
+      {escrowConfig() && stakeTokens().length > 0 && (
+        <div className="stack" style={{ gap: 8 }}>
+          <button className="btn secondary block" onClick={() => setStakeOpen((o) => !o)} aria-expanded={stakeOpen}>
+            <Icon name="wallet" size={17} /> Invite a friend — for money
+          </button>
+          {stakeOpen && !inviteLink && (
+            <div className="card flat stack animate-in" style={{ gap: 10, padding: "12px 14px" }}>
+              <span className="muted" style={{ fontSize: 13 }}>
+                You stake now; your friend stakes the same when they open the link. Winner takes {WINNER_PCT}.
+                Only someone with the link can take the seat.
+              </span>
+              <div className="row" style={{ gap: 8 }}>
+                {[MIN_STAKE, "0.5", "1"].map((s) => (
+                  <button
+                    key={s}
+                    className={`btn ${stakeChoice === s ? "" : "secondary"}`}
+                    style={{ flex: 1, padding: "10px 0" }}
+                    onClick={() => setStakeChoice(s)}
+                  >
+                    {s} {STAKE_SYMBOL}
+                  </button>
+                ))}
+              </div>
+              <button className="btn block" onClick={newStakedFriendGame} disabled={stakeCreating}>
+                {stakeCreating ? "Creating…" : `Stake ${stakeChoice} ${STAKE_SYMBOL} & get the link`}
+              </button>
+              <span className="faint" style={{ fontSize: 11.5 }}>
+                Nobody joins? Cancel anytime under Your money matches — full refund.
+              </span>
+            </div>
+          )}
+          {inviteLink && (
+            <div className="card stack animate-in" style={{ gap: 10, padding: "12px 14px" }}>
+              <span className="chip positive" style={{ alignSelf: "flex-start" }}>Stake locked — send the link</span>
+              <span className="muted" style={{ fontSize: 13 }}>
+                This link is the only key to the seat — share it with your friend and no one else.
+              </span>
+              <button
+                className="btn block"
+                onClick={() => {
+                  navigator.clipboard?.writeText(inviteLink).catch(() => {});
+                  setLinkCopied(true);
+                  setTimeout(() => setLinkCopied(false), 1800);
+                }}
+              >
+                <Icon name="share" size={16} /> {linkCopied ? "Copied ✓" : "Copy invite link"}
+              </button>
+              <Link className="btn secondary block" href={inviteLink.replace(window.location.origin, "")}>
+                Open the board & wait for them
+              </Link>
+            </div>
+          )}
+        </div>
       )}
 
       {openMatches.some((o) => !o.mine) && (

@@ -100,6 +100,19 @@ async function scanOpenMatchesOnChain(cfg: EscrowConfig, account?: Address, limi
         args: [id],
       })) as RawMatch;
       if (Number(m.status) !== STATUS_OPEN || m.player1 !== ZERO) continue;
+      // invite-locked friend matches are NOT public seats: only the holder of
+      // the link's code can join, so listing them would offer un-joinable rows
+      try {
+        const h = (await readContract(client, {
+          address: cfg.escrow,
+          abi: matchEscrowAbi,
+          functionName: "inviteHash",
+          args: [id],
+        })) as string;
+        if (h !== `0x${"00".repeat(32)}`) continue;
+      } catch {
+        /* pre-v6 escrow: no invite lock to filter */
+      }
       const mine = !!account && m.player0.toLowerCase() === account.toLowerCase();
       out.push({ id, stake: m.stake, token: m.token, creator: m.player0, rakeBps: Number(m.rakeBps), mine });
     } catch {

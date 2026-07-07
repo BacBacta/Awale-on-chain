@@ -86,7 +86,16 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     mapping(uint256 => Match) public matches;
     mapping(address => bool) public allowedToken; // only audited stablecoins may be staked
 
+    /// @notice Invite-locked matches: matchId => keccak256(code). A friend-link
+    ///         stake match reserves the seat for whoever holds the link's secret
+    ///         code. Without this, any address could take the seat the moment
+    ///         the match appears on-chain — friend links bypass the server's
+    ///         skill matchmaking, so an open seat is exactly where a shark bot
+    ///         would camp to farm beginners. 0 = a normal open match.
+    mapping(uint256 => bytes32) public inviteHash;
+
     event MatchCreated(uint256 indexed matchId, address indexed player0, address token, uint128 stake);
+    event MatchInviteLocked(uint256 indexed matchId);
     event MatchJoined(uint256 indexed matchId, address indexed player1, uint64 revealBlock);
     event StartFinalized(uint256 indexed matchId, uint8 startTurn);
     event MatchCancelled(uint256 indexed matchId);
@@ -136,6 +145,26 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         nonReentrant
         returns (uint256 matchId)
     {
+        matchId = _create(token, stake, session0);
+    }
+
+    /// @notice Create a stake match reserved for a FRIEND: only someone who can
+    ///         present `code` with keccak256(abi.encodePacked(code)) ==
+    ///         `inviteHash_` may take the seat (the code travels in the invite
+    ///         link, off-chain). Everything else — rake, session keys,
+    ///         settlement, cancel, TTL refunds — is identical to an open match.
+    function createMatchWithInvite(address token, uint128 stake, address session0, bytes32 inviteHash_)
+        external
+        nonReentrant
+        returns (uint256 matchId)
+    {
+        require(inviteHash_ != bytes32(0), "MatchEscrow: empty invite");
+        matchId = _create(token, stake, session0);
+        inviteHash[matchId] = inviteHash_;
+        emit MatchInviteLocked(matchId);
+    }
+
+    function _create(address token, uint128 stake, address session0) internal returns (uint256 matchId) {
         require(allowedToken[token], "MatchEscrow: token not allowed");
         require(stake > 0, "MatchEscrow: stake zero");
         // a stake floor kills dust matches whose rake rounds to ~0 yet still cost
@@ -160,7 +189,26 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     }
 
     /// @notice Join an open match, locking the matching stake and session key.
+    ///         Invite-locked matches cannot be joined here — the seat belongs to
+    ///         whoever holds the link's code ({joinMatchWithCode}).
     function joinMatch(uint256 matchId, address session1) external nonReentrant {
+        require(inviteHash[matchId] == bytes32(0), "MatchEscrow: invite only");
+        _join(matchId, session1);
+    }
+
+    /// @notice Take the reserved seat of an invite-locked match by presenting
+    ///         the link's secret code.
+    /// @dev The code is revealed on-chain at join time. On Celo's sequenced L2
+    ///      there is no public mempool to snipe it from, and after this call the
+    ///      match is Active — the hash is single-use by construction.
+    function joinMatchWithCode(uint256 matchId, address session1, bytes32 code) external nonReentrant {
+        bytes32 h = inviteHash[matchId];
+        require(h != bytes32(0), "MatchEscrow: not invite-locked");
+        require(keccak256(abi.encodePacked(code)) == h, "MatchEscrow: bad invite code");
+        _join(matchId, session1);
+    }
+
+    function _join(uint256 matchId, address session1) internal {
         Match storage m = matches[matchId];
         require(m.status == Status.Open, "MatchEscrow: not open");
         require(msg.sender != m.player0, "MatchEscrow: self-join");

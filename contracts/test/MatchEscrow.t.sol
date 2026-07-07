@@ -656,4 +656,76 @@ contract MatchEscrowTest is Test {
         vm.expectRevert();
         escrow.setOpenTtl(60);
     }
+
+    // ---------------- invite-locked friend matches (v6) ---------------- //
+
+    // The whole point: only the friend holding the link's code can take the
+    // seat — a lobby bot can neither join openly nor guess its way in.
+    function test_invite_strangerCannotJoin() public {
+        bytes32 code = keccak256("the-link-secret");
+        vm.prank(alice);
+        uint256 id = escrow.createMatchWithInvite(address(usdc), STAKE, session0, keccak256(abi.encodePacked(code)));
+
+        vm.prank(bob);
+        vm.expectRevert(bytes("MatchEscrow: invite only"));
+        escrow.joinMatch(id, session1);
+
+        vm.prank(bob);
+        vm.expectRevert(bytes("MatchEscrow: bad invite code"));
+        escrow.joinMatchWithCode(id, session1, keccak256("wrong-guess"));
+    }
+
+    function test_invite_friendWithCodeJoins_andPlaysToSettlement() public {
+        bytes32 code = keccak256("the-link-secret");
+        vm.prank(alice);
+        uint256 id = escrow.createMatchWithInvite(address(usdc), STAKE, session0, keccak256(abi.encodePacked(code)));
+
+        vm.prank(bob);
+        escrow.joinMatchWithCode(id, session1, code);
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Active));
+
+        // the rest of the lifecycle is IDENTICAL to an open match: settle with
+        // both session signatures, rake to treasury per the existing rules
+        vm.roll(block.number + uint256(escrow.START_REVEAL_DELAY()) + 1);
+        escrow.finalizeStart(id);
+        bytes32 digest = escrow.resultDigest(id, 0);
+        (uint8 v0, bytes32 r0, bytes32 s0) = vm.sign(pk0, digest);
+        (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(pk1, digest);
+        uint256 aBefore = usdc.balanceOf(alice);
+        uint256 tBefore = usdc.balanceOf(treasury);
+        escrow.settleSigned(id, 0, abi.encodePacked(r0, s0, v0), abi.encodePacked(r1, s1, v1));
+
+        uint256 pot = uint256(STAKE) * 2;
+        uint256 rake = (pot * RAKE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(alice), aBefore + pot - rake, "winner paid per existing rules");
+        assertEq(usdc.balanceOf(treasury), tBefore + rake, "11%-style rake applies to friend stakes too");
+    }
+
+    function test_invite_openMatchesUnchanged() public {
+        // a normal open match still joins exactly as before…
+        uint256 id = _createAndJoinNoFinalize();
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Active));
+        // …and joinMatchWithCode is reserved for invite-locked matches
+        vm.prank(alice);
+        uint256 id2 = escrow.createMatch(address(usdc), STAKE, session0);
+        vm.prank(bob);
+        vm.expectRevert(bytes("MatchEscrow: not invite-locked"));
+        escrow.joinMatchWithCode(id2, session1, keccak256("anything"));
+    }
+
+    function test_invite_creatorCanStillCancel() public {
+        bytes32 code = keccak256("secret");
+        vm.prank(alice);
+        uint256 id = escrow.createMatchWithInvite(address(usdc), STAKE, session0, keccak256(abi.encodePacked(code)));
+        uint256 before = usdc.balanceOf(alice);
+        vm.prank(alice);
+        escrow.cancelMatch(id);
+        assertEq(usdc.balanceOf(alice), before + STAKE, "unjoined invite match refunds in full");
+    }
+
+    function test_invite_emptyHashRejected() public {
+        vm.prank(alice);
+        vm.expectRevert(bytes("MatchEscrow: empty invite"));
+        escrow.createMatchWithInvite(address(usdc), STAKE, session0, bytes32(0));
+    }
 }

@@ -203,7 +203,7 @@ export default function Lobby() {
               <span className="row" style={{ gap: 6 }}>
                 <Icon name="versus" size={15} /> With a friend
               </span>
-              <span style={{ fontSize: 10.5, fontWeight: 500, opacity: 0.65 }}>Share a link · play anytime</span>
+              <span style={{ fontSize: 10.5, fontWeight: 500, opacity: 0.65 }}>Share a link · free or staked</span>
             </span>
           </Link>
           <button

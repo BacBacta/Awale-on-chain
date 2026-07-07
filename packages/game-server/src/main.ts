@@ -499,6 +499,14 @@ async function scanOpenMatches(): Promise<RawOpenMatch[]> {
         rakeBps: number;
       };
       if (Number(m.status) !== 1 || m.player1 !== ZERO) continue; // Open + unjoined only
+      // invite-locked friend matches (v6) are reserved seats, not public offers —
+      // listing one would show a Join button that always reverts for strangers
+      try {
+        const h = (await publicClient.readContract({ address: ESCROW, abi: matchEscrowAbi, functionName: "inviteHash", args: [id] })) as string;
+        if (h !== `0x${"00".repeat(32)}`) continue;
+      } catch {
+        /* pre-v6 escrow: nothing to filter */
+      }
       out.push({ id, stake: m.stake, token: m.token, creator: m.player0, rakeBps: Number(m.rakeBps) });
     } catch {
       /* skip an unreadable id */

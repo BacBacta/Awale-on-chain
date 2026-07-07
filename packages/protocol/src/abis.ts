@@ -54,6 +54,20 @@ export const matchEscrowAbi = [
     outputs: [{ name: "matchId", type: "uint256" }],
   },
   {
+    // v6: friend-link stake match — the seat is reserved for whoever holds the
+    // link's secret code (hash committed at create). Same lifecycle otherwise.
+    type: "function",
+    name: "createMatchWithInvite",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "token", type: "address" },
+      { name: "stake", type: "uint128" },
+      { name: "session0", type: "address" },
+      { name: "inviteHash", type: "bytes32" },
+    ],
+    outputs: [{ name: "matchId", type: "uint256" }],
+  },
+  {
     type: "function",
     name: "joinMatch",
     stateMutability: "nonpayable",
@@ -62,6 +76,25 @@ export const matchEscrowAbi = [
       { name: "session1", type: "address" },
     ],
     outputs: [],
+  },
+  {
+    type: "function",
+    name: "joinMatchWithCode",
+    stateMutability: "nonpayable",
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "session1", type: "address" },
+      { name: "code", type: "bytes32" },
+    ],
+    outputs: [],
+  },
+  {
+    // 0x0 for a normal open match; non-zero marks an invite-locked seat
+    type: "function",
+    name: "inviteHash",
+    stateMutability: "view",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [{ type: "bytes32" }],
   },
   {
     type: "function",

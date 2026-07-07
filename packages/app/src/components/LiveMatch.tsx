@@ -8,7 +8,7 @@ import { readContract } from "viem/actions";
 import type { Address, Hex } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
 import { loadSession, createSessionKey, persistSession, signMove, signResult, signResign, signDrawOffer, type SessionKey } from "../lib/session.js";
-import { escrowConfig, proposeResult, challengeResult, cancelMatch, approve, joinMatch, finalizeResult, type WriteClient } from "../lib/escrow.js";
+import { escrowConfig, proposeResult, challengeResult, cancelMatch, approve, joinMatch, joinMatchWithCode, finalizeResult, type WriteClient } from "../lib/escrow.js";
 import { humanizeError } from "../lib/errors.js";
 import { readWithRetry, confirmTx } from "../lib/tx.js";
 import { stakeTokens } from "../lib/stakeTokens.js";
@@ -80,7 +80,7 @@ export function LiveMatch({
   // A visitor who followed the invite link to an Open match isn't a player
   // YET — the link's whole point is that they can become one right here.
   // (This screen used to just say "not a player", a dead end for every guest.)
-  const [joinOffer, setJoinOffer] = useState<{ token: Address; stake: bigint; rakeBps: number } | null>(null);
+  const [joinOffer, setJoinOffer] = useState<{ token: Address; stake: bigint; rakeBps: number; inviteLocked: boolean; code: `0x${string}` | null } | null>(null);
   const [joiningNow, setJoiningNow] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   // Mobile data blinks constantly for this audience — say so the moment it
@@ -238,8 +238,22 @@ export function LiveMatch({
         if (r === null) {
           if (Number(m.status) === 1) {
             // Open match, visitor isn't the creator: this is an invitee —
-            // offer the seat instead of a dead end
-            setJoinOffer({ token: m.token, stake: m.stake, rakeBps: Number(m.rakeBps) });
+            // offer the seat instead of a dead end. Friend-stake matches are
+            // invite-locked (v6): the link's ?code= is the only key to the seat.
+            let inviteLocked = false;
+            try {
+              const h = (await readContract(client, {
+                address: cfg.escrow,
+                abi: matchEscrowAbi,
+                functionName: "inviteHash",
+                args: [matchId],
+              })) as `0x${string}`;
+              inviteLocked = h !== `0x${"00".repeat(32)}`;
+            } catch {
+              /* pre-v6 escrow: no invite lock */
+            }
+            const code = new URLSearchParams(window.location.search).get("code") as `0x${string}` | null;
+            setJoinOffer({ token: m.token, stake: m.stake, rakeBps: Number(m.rakeBps), inviteLocked, code });
           } else {
             setStatus("This match already has two players.");
           }
@@ -553,13 +567,25 @@ export function LiveMatch({
       const sk = loadSession(matchId) ?? createSessionKey();
       persistSession(matchId, sk);
       recordLocalMatch(matchId);
-      const jh = await joinMatch(wallet.current, {
-        account: myAddress.current,
-        escrow: cfg.escrow,
-        matchId,
-        session: sk.address,
-        feeCurrency: feeCurrency.current,
-      });
+      if (joinOffer.inviteLocked && !joinOffer.code) {
+        throw new Error("this seat is reserved — open the full invite link your friend sent you (it contains the key)");
+      }
+      const jh = joinOffer.inviteLocked
+        ? await joinMatchWithCode(wallet.current, {
+            account: myAddress.current,
+            escrow: cfg.escrow,
+            matchId,
+            session: sk.address,
+            code: joinOffer.code!,
+            feeCurrency: feeCurrency.current,
+          })
+        : await joinMatch(wallet.current, {
+            account: myAddress.current,
+            escrow: cfg.escrow,
+            matchId,
+            session: sk.address,
+            feeCurrency: feeCurrency.current,
+          });
       await confirmTx(client, jh, "Your stake");
       track("match_joined");
       window.location.reload();
