@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {Script} from "forge-std/Script.sol";
 import {ReplayVerifier} from "../src/ReplayVerifier.sol";
 import {MatchEscrow} from "../src/MatchEscrow.sol";
+import {AwaleRules} from "../src/AwaleRules.sol";
 
 /// @notice Emits EIP-712 digest vectors so the game server's TypeScript signing
 ///         code can be proven byte-identical to ReplayVerifier.moveDigest and
@@ -24,6 +25,12 @@ contract GenSigVectors is Script {
         uint8[3] memory houses = [uint8(0), 3, 5];
         uint8[3] memory winners = [uint8(0), 1, 2];
 
+        // move signatures bind the pre-move state hash; the vectors pin one
+        // reference position (the opening) so the off-chain signer can reproduce
+        // both stateHash and the resulting digest byte-for-byte.
+        AwaleRules.GameState memory opening = AwaleRules.initialState();
+        bytes32 stateRef = verifier.stateHash(opening);
+
         string memory moves = "";
         string memory results = "";
         for (uint256 i = 0; i < 3; i++) {
@@ -31,7 +38,7 @@ contract GenSigVectors is Script {
                 moves = string(abi.encodePacked(moves, ","));
                 results = string(abi.encodePacked(results, ","));
             }
-            bytes32 mDigest = verifier.moveDigest(matchIds[i], plies[i], houses[i]);
+            bytes32 mDigest = verifier.moveDigest(matchIds[i], plies[i], houses[i], stateRef);
             moves = string(
                 abi.encodePacked(
                     moves,
@@ -41,7 +48,9 @@ contract GenSigVectors is Script {
                     vm.toString(plies[i]),
                     ',"house":',
                     vm.toString(uint256(houses[i])),
-                    ',"digest":"',
+                    ',"state":"',
+                    vm.toString(stateRef),
+                    '","digest":"',
                     vm.toString(mDigest),
                     '"}'
                 )

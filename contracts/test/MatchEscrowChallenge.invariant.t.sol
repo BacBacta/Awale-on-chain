@@ -8,18 +8,21 @@ import {AwaleRules} from "../src/AwaleRules.sol";
 import {MockERC20} from "./mocks/MockERC20.sol";
 
 /// @dev Invariant fuzz for the DISPUTE path — the piece the lifecycle invariant
-///      suite (MatchEscrow.invariant.t.sol) deliberately leaves out. Every match
-///      here is driven to Proposed with a RANDOM (often false) winner claim, then
-///      settled one of three ways:
-///        - challengeTerminal:  full signed transcript → the CANONICAL winner is
-///          paid, whatever the proposer claimed;
-///        - challengePremature: the proposer committed to a non-terminal
-///          transcript; the challenger reproduces it → the match voids (refunds);
-///        - finalizeProposed:   window elapses unchallenged → the claim is paid.
-///      Money ghosts are delta-measured like the lifecycle suite; on top of the
-///      solvency/conservation/rake invariants, two dispute-specific flags assert
-///      that a terminal challenge NEVER pays anyone but the canonical winner and
-///      a premature claim NEVER resolves to a payout.
+///      suite (MatchEscrow.invariant.t.sol) deliberately leaves out. After the
+///      Finding-1 fix, a result is PROVEN at propose time: {proposeResult}
+///      replays the full signed transcript on-chain and can only ever set the
+///      canonical winner, and a NON-terminal (unfinished) game can never be
+///      proposed at all. So every match here is driven to Proposed with the
+///      canonical winner and then settled one of two ways:
+///        - challengeTerminal: a keeper replays the full transcript → the
+///          canonical winner is paid instantly (permissionless backstop);
+///        - finalizeProposed:  window elapses → the same canonical winner is paid.
+///      A third action, tryProposePremature, asserts the fix structurally: a
+///      non-terminal proposal ALWAYS reverts, so a losing/abandoning player can
+///      never convert an unfinished game into a payout or a self-serving void.
+///      Money ghosts are delta-measured; on top of solvency/conservation/rake,
+///      a dispute flag asserts settlement NEVER pays anyone but the canonical
+///      winner.
 ///
 ///      Transcript signing dominates runtime (~100 ECDSA signs per challenge),
 ///      so the invariant functions carry inline forge-config with reduced
@@ -40,16 +43,13 @@ contract ChallengeHandler is Test {
 
     uint256[] public ids;
     uint256 internal constant MAX_MATCHES = 24;
-    uint256 internal constant PARTIAL_PLIES = 2; // premature-claim transcript length
+    uint256 internal constant PARTIAL_PLIES = 2; // premature (non-terminal) transcript length
 
     // canonical self-play (lowest legal house each ply), precomputed per startTurn
     uint8[] internal movesFrom0;
     uint8[] internal movesFrom1;
     uint8 internal winnerFrom0;
     uint8 internal winnerFrom1;
-
-    // which commitment the proposer bound to (drives which challenge can void)
-    mapping(uint256 => bool) public committedPartial;
 
     // money ghosts (delta-measured)
     uint256 public ghostIn;
@@ -58,8 +58,8 @@ contract ChallengeHandler is Test {
 
     // dispute-specific violation flags (set AFTER a successful call, so they
     // persist — a revert inside the call would discard the whole invocation)
-    bool public badCanonicalPayout; // terminal challenge paid the wrong party
-    bool public prematureResolved; // a premature claim ended as a payout
+    bool public badCanonicalPayout; // settlement paid the wrong party
+    bool public prematureAccepted; // a NON-terminal proposal was (wrongly) accepted
 
     constructor(MatchEscrow e, ReplayVerifier v, MockERC20 t, address treasury_, address owner_) {
         escrow = e;
@@ -105,7 +105,7 @@ contract ChallengeHandler is Test {
         return ids.length;
     }
 
-    function _pickProposed(uint256 seed, bool wantPartial, bool inWindow) internal view returns (uint256) {
+    function _pickProposed(uint256 seed, bool inWindow) internal view returns (uint256) {
         uint256 n = ids.length;
         if (n == 0) return type(uint256).max;
         uint256 start = seed % n;
@@ -113,7 +113,6 @@ contract ChallengeHandler is Test {
             uint256 id = ids[(start + k) % n];
             MatchEscrow.Match memory m = escrow.getMatch(id);
             if (m.status != MatchEscrow.Status.Proposed) continue;
-            if (committedPartial[id] != wantPartial) continue;
             if (inWindow && block.timestamp > m.challengeDeadline) continue;
             return id;
         }
@@ -130,11 +129,15 @@ contract ChallengeHandler is Test {
         uint8[] memory all = startTurn == 0 ? movesFrom0 : movesFrom1;
         uint8[] memory mv = new uint8[](count);
         bytes[] memory sg = new bytes[](count);
+        // replay the position alongside so each signature binds its pre-move state
+        AwaleRules.GameState memory st = AwaleRules.initialState();
+        st.turn = startTurn;
         for (uint256 ply = 0; ply < count; ply++) {
             mv[ply] = all[ply];
-            uint256 pk = (startTurn + ply) % 2 == 0 ? pk0 : pk1;
-            (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, verifier.moveDigest(matchId, ply, all[ply]));
-            sg[ply] = abi.encodePacked(r, s, v);
+            uint256 pk = st.turn == 0 ? pk0 : pk1;
+            (uint8 v, bytes32 r, bytes32 sig) = vm.sign(pk, verifier.moveDigest(matchId, ply, all[ply], verifier.stateHash(st)));
+            sg[ply] = abi.encodePacked(r, sig, v);
+            st = AwaleRules.applyMove(st, all[ply]);
         }
         t.matchId = matchId;
         t.session0 = session0;
@@ -144,21 +147,11 @@ contract ChallengeHandler is Test {
         t.sigs = sg;
     }
 
-    // ------------------------------ actions ----------------------------- //
-
-    /// One action drives a fresh match all the way to Proposed: create, join,
-    /// fix the flip, then a player claims a RANDOM winner. `partial` decides
-    /// whether the commitment binds a premature (non-terminal) transcript or
-    /// the real terminal one.
-    function createToProposed(uint256 who, uint256 amount, uint8 claim, bool premature) external {
-        if (ids.length >= MAX_MATCHES) return;
-        address creator = players[who % 4];
-        address joiner = players[(who + 1) % 4];
-        uint128 stake = uint128(bound(amount, 1, 100_000_000));
-
+    /// Create + join + fix the flip, returning a match ready to propose.
+    function _createActive(address creator, address joiner, uint128 stake) internal returns (uint256 id) {
         uint256 eb = usdc.balanceOf(address(escrow));
         vm.prank(creator);
-        uint256 id = escrow.createMatch(address(usdc), stake, session0);
+        id = escrow.createMatch(address(usdc), stake, session0);
         vm.prank(joiner);
         escrow.joinMatch(id, session1);
         ghostIn += usdc.balanceOf(address(escrow)) - eb;
@@ -166,25 +159,56 @@ contract ChallengeHandler is Test {
 
         vm.roll(block.number + uint256(escrow.START_REVEAL_DELAY()) + 1);
         escrow.finalizeStart(id);
-        uint8 startTurn = escrow.getMatch(id).startTurn;
-
-        uint8[] memory all = startTurn == 0 ? movesFrom0 : movesFrom1;
-        uint256 count = premature ? PARTIAL_PLIES : all.length;
-        uint8[] memory mv = new uint8[](count);
-        for (uint256 i; i < count; i++) mv[i] = all[i];
-        bytes32 commitment = verifier.transcriptHash(id, startTurn, mv);
-
-        vm.prank(claim % 2 == 0 ? creator : joiner);
-        escrow.proposeResult(id, claim % 3, commitment);
-        committedPartial[id] = premature;
     }
 
-    /// Challenge with the FULL transcript: the canonical winner must be paid,
-    /// no matter what the proposer claimed and no matter the commitment kind.
+    // ------------------------------ actions ----------------------------- //
+
+    /// Drive a fresh match to Proposed by PROVING the finished game on-chain.
+    /// The proposed winner is always the canonical winner — a false claim is no
+    /// longer expressible.
+    function createToProposed(uint256 who, uint256 amount) external {
+        if (ids.length >= MAX_MATCHES) return;
+        address creator = players[who % 4];
+        address joiner = players[(who + 1) % 4];
+        uint128 stake = uint128(bound(amount, 1, 100_000_000));
+
+        uint256 id = _createActive(creator, joiner, stake);
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+
+        uint256 fullLen = startTurn == 0 ? movesFrom0.length : movesFrom1.length;
+        ReplayVerifier.Transcript memory t = _signedTranscript(id, startTurn, fullLen);
+        vm.prank(creator);
+        escrow.proposeResult(id, t);
+
+        uint8 canon = startTurn == 0 ? winnerFrom0 : winnerFrom1;
+        if (escrow.getMatch(id).proposedWinner != canon) badCanonicalPayout = true;
+    }
+
+    /// The fix, asserted structurally: proposing a NON-terminal (unfinished)
+    /// game must ALWAYS revert. If it ever succeeds, a losing/abandoning player
+    /// could steal — the flag trips the invariant.
+    function tryProposePremature(uint256 who, uint256 amount, uint256 plies) external {
+        if (ids.length >= MAX_MATCHES) return;
+        address creator = players[who % 4];
+        address joiner = players[(who + 1) % 4];
+        uint128 stake = uint128(bound(amount, 1, 100_000_000));
+
+        uint256 id = _createActive(creator, joiner, stake);
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+
+        uint256 count = bound(plies, 1, PARTIAL_PLIES + 4); // short → non-terminal
+        ReplayVerifier.Transcript memory t = _signedTranscript(id, startTurn, count);
+        vm.prank(creator);
+        try escrow.proposeResult(id, t) {
+            prematureAccepted = true; // MUST NOT happen
+        } catch {}
+        // the match stays Active and is backed by ghostIn → conservation holds
+    }
+
+    /// Challenge with the FULL transcript: a keeper (non-player) settles the
+    /// Proposed match instantly to the canonical winner.
     function challengeTerminal(uint256 seed) external {
-        // works on either commitment kind — terminal replay ignores the hash
-        uint256 id = _pickProposed(seed, (seed & 1) == 1, true);
-        if (id == type(uint256).max) id = _pickProposed(seed, (seed & 1) == 0, true);
+        uint256 id = _pickProposed(seed, true);
         if (id == type(uint256).max) return;
         MatchEscrow.Match memory m = escrow.getMatch(id);
         uint256 fullLen = m.startTurn == 0 ? movesFrom0.length : movesFrom1.length;
@@ -217,44 +241,64 @@ contract ChallengeHandler is Test {
         }
     }
 
-    /// Reproduce the proposer's own PREMATURE commitment: the match must void
-    /// (full refunds, no rake) — a premature claim can never turn into a payout.
-    function challengePremature(uint256 seed) external {
-        uint256 id = _pickProposed(seed, true, true);
+    /// Let the window lapse and pay the standing (proven) claim.
+    function finalizeProposed(uint256 seed, uint256 dt) external {
+        uint256 id = _pickProposed(seed, false);
         if (id == type(uint256).max) return;
         MatchEscrow.Match memory m = escrow.getMatch(id);
-        ReplayVerifier.Transcript memory t = _signedTranscript(id, m.startTurn, PARTIAL_PLIES);
+        vm.warp(uint256(m.challengeDeadline) + bound(dt, 1, 1 days));
 
-        uint256 p0 = usdc.balanceOf(m.player0);
-        uint256 p1 = usdc.balanceOf(m.player1);
-        uint256 eb = usdc.balanceOf(address(escrow));
-        uint256 tb = usdc.balanceOf(treasury);
-
-        vm.prank(m.player1);
-        escrow.challenge(id, t);
-
-        ghostOut += eb - usdc.balanceOf(address(escrow));
-        ghostRake += usdc.balanceOf(treasury) - tb;
-
-        if (escrow.getMatch(id).status != MatchEscrow.Status.Voided) prematureResolved = true;
-        if (usdc.balanceOf(m.player0) != p0 + m.stake) prematureResolved = true;
-        if (usdc.balanceOf(m.player1) != p1 + m.stake) prematureResolved = true;
-        if (usdc.balanceOf(treasury) != tb) prematureResolved = true; // never rake a void
-    }
-
-    /// Let the window lapse and pay the standing claim (the optimistic path).
-    function finalizeProposed(uint256 seed, uint256 dt) external {
-        uint256 id = _pickProposed(seed, (seed & 1) == 1, false);
-        if (id == type(uint256).max) id = _pickProposed(seed, (seed & 1) == 0, false);
-        if (id == type(uint256).max) return;
-        uint64 dl = escrow.getMatch(id).challengeDeadline;
-        vm.warp(uint256(dl) + bound(dt, 1, 1 days));
-
+        uint8 canon = m.startTurn == 0 ? winnerFrom0 : winnerFrom1;
+        address winnerAddr = canon == 0 ? m.player0 : m.player1;
+        uint256 wb = usdc.balanceOf(winnerAddr);
         uint256 eb = usdc.balanceOf(address(escrow));
         uint256 tb = usdc.balanceOf(treasury);
         escrow.finalize(id);
         ghostOut += eb - usdc.balanceOf(address(escrow));
         ghostRake += usdc.balanceOf(treasury) - tb;
+
+        if (canon != 2) {
+            uint256 pot = uint256(m.stake) * 2;
+            uint256 prize = pot - (pot * m.rakeBps) / escrow.BPS();
+            if (usdc.balanceOf(winnerAddr) != wb + prize) badCanonicalPayout = true;
+        }
+    }
+
+    /// Drive a fresh match into a move-clock forfeit and abandon it: the present
+    /// player claims, the window lapses, and finalizeForfeit pays them the pot.
+    /// Exercises the forfeit payout under the conservation/rake invariants.
+    function createAndForfeit(uint256 who, uint256 amount, uint256 dt) external {
+        if (ids.length >= MAX_MATCHES) return;
+        address creator = players[who % 4];
+        address joiner = players[(who + 1) % 4];
+        uint128 stake = uint128(bound(amount, 1, 100_000_000));
+
+        uint256 id = _createActive(creator, joiner, stake);
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+
+        // a short, non-terminal prefix; the accused is whoever must move next
+        ReplayVerifier.Transcript memory t = _signedTranscript(id, startTurn, PARTIAL_PLIES);
+        uint8 accusedIdx = uint8((uint256(startTurn) + PARTIAL_PLIES) % 2);
+        address claimant = accusedIdx == 0 ? joiner : creator; // the OTHER player
+
+        vm.prank(claimant);
+        try escrow.proposeForfeit(id, t) {} catch { return; }
+
+        uint64 dl = escrow.getMatch(id).challengeDeadline;
+        vm.warp(uint256(dl) + bound(dt, 1, 1 days));
+
+        uint256 cb = usdc.balanceOf(claimant);
+        uint256 eb = usdc.balanceOf(address(escrow));
+        uint256 tb = usdc.balanceOf(treasury);
+        escrow.finalizeForfeit(id); // permissionless
+        ghostOut += eb - usdc.balanceOf(address(escrow));
+        ghostRake += usdc.balanceOf(treasury) - tb;
+
+        // the claimant must receive exactly pot - rake, and the match resolves
+        uint256 pot = uint256(stake) * 2;
+        uint256 prize = pot - (pot * escrow.getMatch(id).rakeBps) / escrow.BPS();
+        if (usdc.balanceOf(claimant) != cb + prize) badCanonicalPayout = true;
+        if (escrow.getMatch(id).status != MatchEscrow.Status.Resolved) badCanonicalPayout = true;
     }
 
     function setRake(uint16 r) external {
@@ -263,8 +307,7 @@ contract ChallengeHandler is Test {
         escrow.setRake(capped);
     }
 
-    /// Stakes still owed to live matches (all of this handler's matches are
-    /// Open never — they go straight to Active/Proposed — but keep all cases).
+    /// Stakes still owed to live matches.
     function lockedObligations() external view returns (uint256 locked) {
         uint256 n = ids.length;
         for (uint256 i; i < n; i++) {
@@ -299,14 +342,14 @@ contract MatchEscrowChallengeInvariantTest is Test {
 
     /// forge-config: default.invariant.runs = 32
     /// forge-config: default.invariant.depth = 60
-    function invariant_terminalChallengePaysOnlyTheCanonicalWinner() public view {
-        assertFalse(handler.badCanonicalPayout(), "a terminal challenge paid someone else");
+    function invariant_settlementPaysOnlyTheCanonicalWinner() public view {
+        assertFalse(handler.badCanonicalPayout(), "settlement paid someone else");
     }
 
     /// forge-config: default.invariant.runs = 32
     /// forge-config: default.invariant.depth = 60
-    function invariant_prematureClaimAlwaysVoids() public view {
-        assertFalse(handler.prematureResolved(), "a premature claim escaped as a payout");
+    function invariant_nonTerminalProposalAlwaysReverts() public view {
+        assertFalse(handler.prematureAccepted(), "a non-terminal (premature) proposal was accepted");
     }
 
     /// forge-config: default.invariant.runs = 32

@@ -112,22 +112,10 @@ contract EscrowHandler is Test {
         _resolveMeasured(id, abi.encodeCall(escrow.settleSigned, (id, w, abi.encodePacked(r0, s0, v0), abi.encodePacked(r1, s1, v1))));
     }
 
-    function proposeAndMaybeFinalize(uint256 seed, uint8 winner, uint256 dt) external {
-        uint256 id = _pick(seed, MatchEscrow.Status.Active);
-        if (id == type(uint256).max) return;
-        MatchEscrow.Match memory m = escrow.getMatch(id);
-        if (m.startTurn == type(uint8).max) return; // start not fixed yet
-        uint8 w = winner % 3;
-        // prank an ACTUAL participant (proposeResult is player-gated); do the
-        // window-length read BEFORE the prank so it isn't consumed by the prank
-        uint256 window = m.challengeWindow;
-        address proposer = (seed & 1) == 0 ? m.player0 : m.player1;
-        vm.prank(proposer);
-        try escrow.proposeResult(id, w, keccak256(abi.encode(id, w, "commit"))) {} catch { return; }
-        // let the challenge window elapse, then finalize the proposed winner
-        vm.warp(block.timestamp + bound(dt, window + 1, window + 2 days));
-        _resolveMeasured(id, abi.encodeCall(escrow.finalize, (id)));
-    }
+    // NOTE: the proposeResult→finalize (dispute) path now requires a full signed
+    // terminal transcript, so it lives entirely in the dedicated challenge suite
+    // (MatchEscrowChallenge.invariant.t.sol) which builds transcripts. This
+    // lifecycle walk stays transcript-free for speed, per this file's design.
 
     function voidExpired(uint256 seed, uint256 dt) external {
         // Open/Active only — a Proposed match is deliberately NOT voidable

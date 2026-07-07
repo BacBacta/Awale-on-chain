@@ -5,10 +5,11 @@ import {Script, console2} from "forge-std/Script.sol";
 import {MatchEscrow} from "../src/MatchEscrow.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @notice Demo: a second player (P1_KEY) joins MATCH_ID and proposes player 0
-///         (the human) as the winner. Run with the challenge window set low, then
-///         call finalize() to pay the human out. Sequenced via one broadcast so
-///         nonces stay in order.
+/// @notice Demo: a second player (P1_KEY) joins MATCH_ID. Settlement is no
+///         longer an *assertion* — a winner must be proven, either by both
+///         session keys co-signing the result (settleSigned) or by proving the
+///         full signed terminal transcript on-chain (proposeResult→finalize).
+///         So this demo stops at joining; drive settlement from the game client.
 contract FullMatch is Script {
     function run() external {
         address escrowAddr = vm.envAddress("ESCROW");
@@ -28,14 +29,14 @@ contract FullMatch is Script {
         IERC20(usdm).transfer(p1, stake);
         vm.stopBroadcast();
 
-        // player1 approves, joins, and proposes player 0 (the human) as winner
+        // player1 approves and joins. A winner can no longer be asserted here:
+        // settle via settleSigned (both session keys sign the result) or prove a
+        // full terminal transcript through proposeResult→finalize.
         vm.startBroadcast(p1Pk);
         IERC20(usdm).approve(escrowAddr, stake);
         escrow.joinMatch(matchId, address(0x0000000000000000000000000000000000000002));
-        // commitment = keccak of an empty move list (script only; real client passes the actual game hash)
-        escrow.proposeResult(matchId, 0, keccak256(abi.encode(matchId, uint8(0), new uint8[](0))));
         vm.stopBroadcast();
 
-        console2.log("joined + proposed winner=player0; finalize after the window");
+        console2.log("joined; settle via settleSigned or a proven terminal transcript");
     }
 }

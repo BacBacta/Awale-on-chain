@@ -72,8 +72,12 @@ contract MatchEscrowTest is Test {
         return abi.encodePacked(r, s, v);
     }
 
-    function _signMove(uint256 pk, uint256 matchId, uint256 ply, uint8 house) internal view returns (bytes memory) {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, verifier.moveDigest(matchId, ply, house));
+    function _signMove(uint256 pk, uint256 matchId, uint256 ply, uint8 house, bytes32 st)
+        internal
+        view
+        returns (bytes memory)
+    {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(pk, verifier.moveDigest(matchId, ply, house, st));
         return abi.encodePacked(r, s, v);
     }
 
@@ -92,7 +96,7 @@ contract MatchEscrowTest is Test {
             uint8 house = _lowest(mask);
             uint256 pk = s.turn == 0 ? pk0 : pk1;
             _moves.push(house);
-            _sigs.push(_signMove(pk, matchId, ply, house));
+            _sigs.push(_signMove(pk, matchId, ply, house, verifier.stateHash(s)));
             s = AwaleRules.applyMove(s, house);
         }
         t = ReplayVerifier.Transcript({
@@ -106,6 +110,54 @@ contract MatchEscrowTest is Test {
             if (mask & (uint8(1) << b) != 0) return b;
         }
         revert("no bit");
+    }
+
+    /// @dev First `k` moves/sigs of a transcript — the forfeit prefix a rebuttal
+    ///      must extend by exactly one move.
+    function _truncate(ReplayVerifier.Transcript memory full, uint256 k)
+        internal
+        pure
+        returns (ReplayVerifier.Transcript memory t)
+    {
+        uint8[] memory mv = new uint8[](k);
+        bytes[] memory sg = new bytes[](k);
+        for (uint256 i = 0; i < k; i++) {
+            mv[i] = full.moves[i];
+            sg[i] = full.sigs[i];
+        }
+        t = ReplayVerifier.Transcript({
+            matchId: full.matchId,
+            session0: full.session0,
+            session1: full.session1,
+            startTurn: full.startTurn,
+            moves: mv,
+            sigs: sg
+        });
+    }
+
+    /// @dev Given the accused is whoever must move after `plies` moves, return the
+    ///      forfeit claimant (the other player) and the accused address.
+    function _forfeitRoles(uint8 startTurn, uint256 plies)
+        internal
+        view
+        returns (address claimant, address accused)
+    {
+        uint8 accusedIdx = uint8((uint256(startTurn) + plies) % 2);
+        accused = accusedIdx == 0 ? alice : bob;
+        claimant = accusedIdx == 0 ? bob : alice;
+    }
+
+    /// @dev A well-formed but empty Transcript, for reverts that fire before the
+    ///      transcript body is ever read (status / deadline / player / startTurn).
+    function _emptyTranscript(uint256 matchId) internal view returns (ReplayVerifier.Transcript memory t) {
+        t = ReplayVerifier.Transcript({
+            matchId: matchId,
+            session0: session0,
+            session1: session1,
+            startTurn: 0,
+            moves: new uint8[](0),
+            sigs: new bytes[](0)
+        });
     }
 
     // ------------------------------ funding ----------------------------- //
@@ -158,7 +210,7 @@ contract MatchEscrowTest is Test {
         uint256 id = _createAndJoinNoFinalize();
         vm.prank(alice);
         vm.expectRevert(bytes("MatchEscrow: start not finalized"));
-        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        escrow.proposeResult(id, _emptyTranscript(id));
     }
 
     function test_cancelMatch_refunds() public {
@@ -239,49 +291,56 @@ contract MatchEscrowTest is Test {
 
     function test_proposeThenFinalize_paysProposedWinner() public {
         uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        (ReplayVerifier.Transcript memory t, uint8 winner) = _buildFullTranscript(id, startTurn);
+        assertLt(winner, 2, "deterministic game is decisive");
+
+        // winner is PROVEN on-chain from the signed transcript, not asserted
         vm.prank(alice);
-        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        escrow.proposeResult(id, t);
+        assertEq(escrow.getMatch(id).proposedWinner, winner, "proposed winner = verifier winner");
 
         // cannot finalize before the window elapses
         vm.expectRevert(bytes("MatchEscrow: window open"));
         escrow.finalize(id);
 
         vm.warp(block.timestamp + WINDOW + 1);
-        uint256 aliceBefore = usdc.balanceOf(alice);
+        address winnerAddr = winner == 0 ? alice : bob;
+        uint256 before = usdc.balanceOf(winnerAddr);
         escrow.finalize(id);
 
         uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
-        assertEq(usdc.balanceOf(alice), aliceBefore + prize);
+        assertEq(usdc.balanceOf(winnerAddr), before + prize, "proven winner paid");
     }
 
     function test_proposeByNonPlayer_reverts() public {
         uint256 id = _createAndJoin();
         vm.prank(address(0xdead));
         vm.expectRevert(bytes("MatchEscrow: not a player"));
-        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        escrow.proposeResult(id, _emptyTranscript(id));
     }
 
     // ------------------------------ challenge --------------------------- //
 
-    function test_challenge_overturnsFalseProposal() public {
+    // A proposed result is already proven at propose time; challenge settles it
+    // immediately (skipping the window) by replaying the same terminal transcript.
+    function test_challenge_settlesProvenResultInstantly() public {
         uint256 id = _createAndJoin();
         uint8 startTurn = escrow.getMatch(id).startTurn;
-        (ReplayVerifier.Transcript memory t, uint8 trueWinner) = _buildFullTranscript(id, startTurn);
+        (ReplayVerifier.Transcript memory t, uint8 winner) = _buildFullTranscript(id, startTurn);
+        assertLt(winner, 2, "deterministic game is decisive");
 
-        // a liar proposes the *opposite* winner; commitment irrelevant (terminal path ignores it)
-        uint8 liarClaim = trueWinner == 0 ? 1 : 0;
         vm.prank(bob);
-        escrow.proposeResult(id, liarClaim, bytes32(uint256(1)));
+        escrow.proposeResult(id, t);
 
-        address trueWinnerAddr = trueWinner == 0 ? alice : bob;
-        uint256 before = usdc.balanceOf(trueWinnerAddr);
+        address winnerAddr = winner == 0 ? alice : bob;
+        uint256 before = usdc.balanceOf(winnerAddr);
 
-        // challenger must be a match player; alice is always player0
         vm.prank(alice);
         escrow.challenge(id, t);
 
         uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
-        assertEq(usdc.balanceOf(trueWinnerAddr), before + prize, "true winner paid, not the liar's claim");
+        assertEq(usdc.balanceOf(winnerAddr), before + prize, "proven winner paid");
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Resolved));
     }
 
@@ -290,7 +349,7 @@ contract MatchEscrowTest is Test {
         uint8 startTurn = escrow.getMatch(id).startTurn;
         (ReplayVerifier.Transcript memory t,) = _buildFullTranscript(id, startTurn);
         vm.prank(alice);
-        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        escrow.proposeResult(id, t);
 
         vm.warp(block.timestamp + WINDOW + 1);
         vm.expectRevert(bytes("MatchEscrow: window closed"));
@@ -302,9 +361,11 @@ contract MatchEscrowTest is Test {
         uint256 id = _createAndJoin();
         uint8 startTurn = escrow.getMatch(id).startTurn;
         (ReplayVerifier.Transcript memory t,) = _buildFullTranscript(id, startTurn);
-        t.session0 = address(0xBEEF);
         vm.prank(alice);
-        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        escrow.proposeResult(id, t);
+
+        // challenge with a transcript whose session no longer matches the match
+        t.session0 = address(0xBEEF);
         vm.expectRevert(bytes("MatchEscrow: session mismatch"));
         vm.prank(bob);
         escrow.challenge(id, t);
@@ -380,65 +441,59 @@ contract MatchEscrowTest is Test {
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Voided));
     }
 
-    // [H-01] a premature proposal (game not over) is defeated: challenge with a
-    //        valid non-terminal transcript that matches the proposer's commitment voids
-    //        the match and refunds both players.
-    function test_challenge_voidsPrematureProposal() public {
+    // [Finding-1 fix] a premature/false proposal is now impossible at the SOURCE:
+    // proposeResult replays the transcript on-chain and rejects any non-terminal
+    // (unfinished) game — a game with no winner can never be proposed for payout.
+    function test_proposeResult_revertsOnNonTerminalGame() public {
         uint256 id = _createAndJoin();
         uint8 startTurn = escrow.getMatch(id).startTurn;
 
         // a short, valid, NON-terminal transcript (a handful of opening moves)
-        ReplayVerifier.Transcript memory t = _buildPartialTranscript(id, startTurn, 6);
+        ReplayVerifier.Transcript memory partialT = _buildPartialTranscript(id, startTurn, 6);
 
-        // proposer commits to the hash of the partial transcript they witnessed
-        bytes32 commitment = verifier.transcriptHash(id, startTurn, t.moves);
-
-        // liar claims to have won a game that is still in progress
         vm.prank(alice);
-        escrow.proposeResult(id, 0, commitment);
-
-        uint256 aBefore = usdc.balanceOf(alice);
-        uint256 bBefore = usdc.balanceOf(bob);
-        // bob (the non-proposer) challenges with the same transcript — hash matches → void
-        vm.prank(bob);
-        escrow.challenge(id, t);
-
-        assertEq(usdc.balanceOf(alice), aBefore + STAKE, "alice refunded, not paid the pot");
-        assertEq(usdc.balanceOf(bob), bBefore + STAKE, "bob refunded");
-        assertEq(usdc.balanceOf(treasury), 0, "no rake");
-        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Voided));
+        vm.expectRevert(bytes("MatchEscrow: game not over"));
+        escrow.proposeResult(id, partialT);
     }
 
-    // [H-02b] partial transcript with wrong commitment is rejected
-    function test_challenge_revertTranscriptMismatch() public {
+    // [Finding-1 fix] the core exploit end-to-end: a losing/abandoning player tries
+    // to steal by claiming a win on a non-terminal game. proposeResult rejects it,
+    // and the honest outcome is a full refund of BOTH stakes via voidExpired —
+    // nobody wins an unfinished game, nobody's stake is stolen.
+    function test_finding1_abandonmentRefundsBothCannotSteal() public {
         uint256 id = _createAndJoin();
         uint8 startTurn = escrow.getMatch(id).startTurn;
+        ReplayVerifier.Transcript memory partialT = _buildPartialTranscript(id, startTurn, 4);
 
-        // short non-terminal transcript (6 moves)
-        ReplayVerifier.Transcript memory shortT = _buildPartialTranscript(id, startTurn, 6);
-
-        // proposer commits to a DIFFERENT hash (attacker scenario: wrong commitment)
-        vm.prank(alice);
-        escrow.proposeResult(id, 0, bytes32(uint256(0xDEAD)));
-
-        // loser submits the short transcript, but its hash ≠ commitment → revert
-        vm.expectRevert(bytes("MatchEscrow: transcript mismatch"));
+        // attacker (bob) abandons mid-game and tries to grab the pot
         vm.prank(bob);
-        escrow.challenge(id, shortT);
+        vm.expectRevert(bytes("MatchEscrow: game not over"));
+        escrow.proposeResult(id, partialT);
+
+        // the only path forward is a TTL refund to both players
+        uint256 aBefore = usdc.balanceOf(alice);
+        uint256 bBefore = usdc.balanceOf(bob);
+        vm.warp(block.timestamp + TTL + 1);
+        escrow.voidExpired(id);
+        assertEq(usdc.balanceOf(alice), aBefore + STAKE, "alice refunded, not robbed");
+        assertEq(usdc.balanceOf(bob), bBefore + STAKE, "bob refunded, gained nothing");
+        assertEq(usdc.balanceOf(treasury), 0, "no rake on a void");
     }
 
     // [fix2] challengeWindow snapshot — owner change after join must not affect in-flight match
     function test_challengeWindowSnapshot_unaffectedByOwnerChange() public {
         uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        (ReplayVerifier.Transcript memory t,) = _buildFullTranscript(id, startTurn);
 
         // owner doubles the challenge window after the match is created
         vm.prank(owner);
         escrow.setChallengeWindow(WINDOW * 2);
 
         // propose and measure the actual deadline stored in the match
-        vm.prank(alice);
         uint64 before = uint64(block.timestamp);
-        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        vm.prank(alice);
+        escrow.proposeResult(id, t);
         MatchEscrow.Match memory m = escrow.getMatch(id);
 
         // deadline should use the snapshotted window (WINDOW), not the new doubled one
@@ -460,24 +515,28 @@ contract MatchEscrowTest is Test {
     function test_voidExpired_revertsOnProposedMatch_finalizeIsTheRemedy() public {
         uint256 id = _createAndJoin();
 
-        // alice legitimately claims her win before the TTL expires
+        // a player proves the finished game before the TTL expires
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        (ReplayVerifier.Transcript memory t, uint8 winner) = _buildFullTranscript(id, startTurn);
+        assertLt(winner, 2, "deterministic game is decisive");
+        address winnerAddr = winner == 0 ? alice : bob;
         vm.prank(alice);
-        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        escrow.proposeResult(id, t);
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Proposed));
 
-        // TTL elapses while the match is still Proposed — bob (the loser) tries
+        // TTL elapses while the match is still Proposed — the loser tries
         // to void the claim away instead of accepting the loss
         vm.warp(block.timestamp + TTL + 1);
         vm.prank(bob);
         vm.expectRevert(bytes("MatchEscrow: not voidable"));
         escrow.voidExpired(id);
 
-        // the claim settles the intended way: finalize pays the proposed winner,
+        // the claim settles the intended way: finalize pays the proven winner,
         // permissionless, long after both the window and the TTL
-        uint256 aBefore = usdc.balanceOf(alice);
+        uint256 wBefore = usdc.balanceOf(winnerAddr);
         escrow.finalize(id);
         uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
-        assertEq(usdc.balanceOf(alice), aBefore + prize, "proposed winner paid");
+        assertEq(usdc.balanceOf(winnerAddr), wBefore + prize, "proven winner paid");
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Resolved));
     }
 
@@ -485,66 +544,56 @@ contract MatchEscrowTest is Test {
     function test_challenge_revertEmptyTranscript() public {
         uint256 id = _createAndJoin();
         uint8 startTurn = escrow.getMatch(id).startTurn;
-
+        (ReplayVerifier.Transcript memory t,) = _buildFullTranscript(id, startTurn);
         vm.prank(alice);
-        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        escrow.proposeResult(id, t);
 
-        MatchEscrow.Match memory m = escrow.getMatch(id);
-        ReplayVerifier.Transcript memory empty = ReplayVerifier.Transcript({
-            matchId: id,
-            session0: m.session0,
-            session1: m.session1,
-            startTurn: startTurn,
-            moves: new uint8[](0),
-            sigs: new bytes[](0)
-        });
+        ReplayVerifier.Transcript memory empty = _emptyTranscript(id);
+        empty.startTurn = startTurn;
         vm.expectRevert(bytes("ReplayVerifier: empty transcript"));
         vm.prank(bob);
         escrow.challenge(id, empty);
     }
 
-    // [L-04] a non-player CANNOT void via the non-terminal (griefing) path.
-    // Forcing a refund with a validly-signed partial transcript is the L-04
-    // grief — only participants may take the void branch.
-    function test_challenge_nonPlayerCannotVoid() public {
+    // [Finding-1 fix] the non-terminal "void" branch of challenge is gone. A
+    // non-terminal transcript proves nothing and reverts — there is no longer a
+    // proposer-controlled commitment that could gate (or disable) a refund.
+    function test_challenge_revertsOnNonTerminalTranscript() public {
         uint256 id = _createAndJoin();
         uint8 startTurn = escrow.getMatch(id).startTurn;
-
-        ReplayVerifier.Transcript memory t = _buildPartialTranscript(id, startTurn, 6);
-        bytes32 commitment = verifier.transcriptHash(id, startTurn, t.moves);
+        (ReplayVerifier.Transcript memory full,) = _buildFullTranscript(id, startTurn);
         vm.prank(alice);
-        escrow.proposeResult(id, 0, commitment);
+        escrow.proposeResult(id, full);
 
-        vm.expectRevert(bytes("MatchEscrow: not a player"));
-        vm.prank(address(0xdead));
-        escrow.challenge(id, t);
+        ReplayVerifier.Transcript memory partialT = _buildPartialTranscript(id, startTurn, 6);
+        vm.expectRevert(bytes("MatchEscrow: game not over"));
+        vm.prank(bob);
+        escrow.challenge(id, partialT);
     }
 
     // [backstop] a non-player (the server's keeper) CAN challenge with a
-    // TERMINAL transcript — it can only enforce the true winner, so it is
-    // permissionless. This is the anti-theft net when the honest winner is
-    // offline for the whole challenge window; a player-only gate silently
-    // disabled it and let a losing opponent's proposeResult+finalize steal
-    // the pot.
+    // TERMINAL transcript to settle instantly — permissionless, because a
+    // terminal transcript can only ever enforce the true, proven winner. This is
+    // the anti-theft net when the honest winner is offline for the whole window.
     function test_challenge_nonPlayerCanEnforceTerminalResult() public {
         uint256 id = _createAndJoin();
         uint8 startTurn = escrow.getMatch(id).startTurn;
-        (ReplayVerifier.Transcript memory t, uint8 trueWinner) = _buildFullTranscript(id, startTurn);
+        (ReplayVerifier.Transcript memory t, uint8 winner) = _buildFullTranscript(id, startTurn);
+        assertLt(winner, 2, "deterministic game is decisive");
 
-        // the loser proposes themselves as winner and would finalize the lie
-        uint8 liarClaim = trueWinner == 0 ? 1 : 0;
+        // a player proposes the (proven) result
         vm.prank(bob);
-        escrow.proposeResult(id, liarClaim, bytes32(uint256(1)));
+        escrow.proposeResult(id, t);
 
-        address trueWinnerAddr = trueWinner == 0 ? alice : bob;
-        uint256 before = usdc.balanceOf(trueWinnerAddr);
+        address winnerAddr = winner == 0 ? alice : bob;
+        uint256 before = usdc.balanceOf(winnerAddr);
 
-        // a third party (keeper) that is NOT alice/bob submits the real ending
+        // a third party (keeper) that is NOT alice/bob settles it instantly
         vm.prank(address(0xC0DE)); // keeper, not a match player
         escrow.challenge(id, t);
 
         uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
-        assertEq(usdc.balanceOf(trueWinnerAddr), before + prize, "keeper enforced the true winner");
+        assertEq(usdc.balanceOf(winnerAddr), before + prize, "keeper enforced the true winner");
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Resolved));
     }
 
@@ -554,7 +603,177 @@ contract MatchEscrowTest is Test {
         vm.warp(block.timestamp + TTL + 1);
         vm.expectRevert(bytes("MatchEscrow: match expired"));
         vm.prank(alice);
-        escrow.proposeResult(id, 0, bytes32(uint256(1)));
+        escrow.proposeResult(id, _emptyTranscript(id));
+    }
+
+    // ------------------------- forfeit clock ----------------------------- //
+
+    // Abandonment costs the pot: if the accused never answers, the present
+    // player wins the whole pot (minus rake) — losing is no longer free.
+    function test_forfeit_finalizePaysClaimantWhenAbandoned() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        uint256 N = 6;
+        ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
+        (address claimant,) = _forfeitRoles(startTurn, N);
+
+        vm.prank(claimant);
+        escrow.proposeForfeit(id, pfx);
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.ForfeitPending));
+
+        vm.expectRevert(bytes("MatchEscrow: window open"));
+        escrow.finalizeForfeit(id);
+
+        vm.warp(block.timestamp + WINDOW + 1);
+        uint256 before = usdc.balanceOf(claimant);
+        escrow.finalizeForfeit(id); // permissionless
+        uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(claimant), before + prize, "abandoner forfeits the pot to the present player");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Resolved));
+    }
+
+    // You can only accuse your OPPONENT — never claim a forfeit on your own turn.
+    function test_forfeit_cannotClaimOwnTurn() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        uint256 N = 6;
+        ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
+        (, address accused) = _forfeitRoles(startTurn, N);
+        vm.prank(accused);
+        vm.expectRevert(bytes("MatchEscrow: cannot forfeit your own turn"));
+        escrow.proposeForfeit(id, pfx);
+    }
+
+    function test_forfeit_nonPlayerCannotPropose() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, 6);
+        vm.prank(address(0xdead));
+        vm.expectRevert(bytes("MatchEscrow: not a player"));
+        escrow.proposeForfeit(id, pfx);
+    }
+
+    // A finished game has no "opponent's turn" to forfeit — use proposeResult.
+    function test_forfeit_revertsOnTerminalPrefix() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        (ReplayVerifier.Transcript memory full,) = _buildFullTranscript(id, startTurn);
+        vm.prank(alice);
+        vm.expectRevert(bytes("MatchEscrow: game over"));
+        escrow.proposeForfeit(id, full);
+    }
+
+    // Rebutting with the accused's next legal move proves presence and resumes
+    // play — no payout, the game continues. Permissionless (keeper can do it).
+    function test_forfeit_rebutResumesGame() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        uint256 N = 6;
+        ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
+        ReplayVerifier.Transcript memory reb = _buildPartialTranscript(id, startTurn, N + 1);
+        (address claimant,) = _forfeitRoles(startTurn, N);
+
+        vm.prank(claimant);
+        escrow.proposeForfeit(id, pfx);
+
+        uint256 aBefore = usdc.balanceOf(alice);
+        uint256 bBefore = usdc.balanceOf(bob);
+        vm.prank(address(0xC0DE)); // keeper, not a player
+        escrow.rebutForfeit(id, reb);
+
+        MatchEscrow.Match memory m = escrow.getMatch(id);
+        assertEq(uint8(m.status), uint8(MatchEscrow.Status.Active), "game resumes");
+        assertEq(m.lastRebuttedPly, N, "anti-replay floor raised");
+        assertEq(usdc.balanceOf(alice), aBefore, "no payout on resume");
+        assertEq(usdc.balanceOf(bob), bBefore, "no payout on resume");
+    }
+
+    // If the accused answers with the game-ENDING move, the canonical winner is
+    // paid immediately — a grief right before losing backfires.
+    function test_forfeit_rebutTerminalPaysCanonicalWinner() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        (ReplayVerifier.Transcript memory full, uint8 winner) = _buildFullTranscript(id, startTurn);
+        assertLt(winner, 2, "decisive game");
+        uint256 M = full.moves.length;
+        ReplayVerifier.Transcript memory pfx = _truncate(full, M - 1); // one move from terminal
+        (address claimant,) = _forfeitRoles(startTurn, M - 1);
+
+        vm.prank(claimant);
+        escrow.proposeForfeit(id, pfx);
+
+        address winnerAddr = winner == 0 ? alice : bob;
+        uint256 before = usdc.balanceOf(winnerAddr);
+        vm.prank(address(0xC0DE));
+        escrow.rebutForfeit(id, full);
+        uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(winnerAddr), before + prize, "terminal rebuttal pays the true winner");
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Resolved));
+    }
+
+    function test_forfeit_rebutRevertsAfterWindow() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        uint256 N = 6;
+        ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
+        ReplayVerifier.Transcript memory reb = _buildPartialTranscript(id, startTurn, N + 1);
+        (address claimant,) = _forfeitRoles(startTurn, N);
+        vm.prank(claimant);
+        escrow.proposeForfeit(id, pfx);
+        vm.warp(block.timestamp + WINDOW + 1);
+        vm.expectRevert(bytes("MatchEscrow: window closed"));
+        escrow.rebutForfeit(id, reb);
+    }
+
+    function test_forfeit_rebutWrongLength() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        uint256 N = 6;
+        ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
+        ReplayVerifier.Transcript memory tooLong = _buildPartialTranscript(id, startTurn, N + 2);
+        (address claimant,) = _forfeitRoles(startTurn, N);
+        vm.prank(claimant);
+        escrow.proposeForfeit(id, pfx);
+        vm.expectRevert(bytes("MatchEscrow: not a one-move rebuttal"));
+        escrow.rebutForfeit(id, tooLong);
+    }
+
+    // A pending forfeit can NEVER be refunded away — closes the abandon→refund
+    // escape even after the TTL.
+    function test_forfeit_blocksVoidExpiredRefund() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        uint256 N = 6;
+        ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
+        (address claimant,) = _forfeitRoles(startTurn, N);
+        vm.prank(claimant);
+        escrow.proposeForfeit(id, pfx);
+
+        vm.warp(block.timestamp + TTL + 1);
+        vm.expectRevert(bytes("MatchEscrow: not voidable"));
+        escrow.voidExpired(id);
+
+        uint256 before = usdc.balanceOf(claimant);
+        escrow.finalizeForfeit(id);
+        uint256 prize = (uint256(STAKE) * 2) - (uint256(STAKE) * 2 * RAKE_BPS) / 10_000;
+        assertEq(usdc.balanceOf(claimant), before + prize, "resolves to the claimant, never a refund");
+    }
+
+    // After a rebuttal the same (now-answered) forfeit ply cannot be re-spammed.
+    function test_forfeit_antiReplayStalePly() public {
+        uint256 id = _createAndJoin();
+        uint8 startTurn = escrow.getMatch(id).startTurn;
+        uint256 N = 6;
+        ReplayVerifier.Transcript memory pfx = _buildPartialTranscript(id, startTurn, N);
+        ReplayVerifier.Transcript memory reb = _buildPartialTranscript(id, startTurn, N + 1);
+        (address claimant,) = _forfeitRoles(startTurn, N);
+        vm.prank(claimant);
+        escrow.proposeForfeit(id, pfx);
+        escrow.rebutForfeit(id, reb); // lastRebuttedPly = N, back to Active
+
+        vm.prank(claimant);
+        vm.expectRevert(bytes("MatchEscrow: stale forfeit ply"));
+        escrow.proposeForfeit(id, pfx);
     }
 
     // ------------------------- stake floor ------------------------------- //
@@ -596,7 +815,7 @@ contract MatchEscrowTest is Test {
             uint8 house = _lowest(AwaleRules.legalMovesMask(s));
             uint256 pk = s.turn == 0 ? pk0 : pk1;
             _moves.push(house);
-            _sigs.push(_signMove(pk, matchId, ply, house));
+            _sigs.push(_signMove(pk, matchId, ply, house, verifier.stateHash(s)));
             s = AwaleRules.applyMove(s, house);
         }
         require(!s.over, "transcript unexpectedly terminal");

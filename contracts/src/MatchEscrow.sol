@@ -35,7 +35,8 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         Proposed, // a single-party result is in its challenge window
         Resolved, // paid out to a winner (or split on a draw)
         Cancelled, // open match withdrawn before anyone joined
-        Voided // refunded to both players (premature proposal or expiry)
+        Voided, // refunded to both players (premature proposal or expiry)
+        ForfeitPending // a move-clock forfeit is in its on-chain response window
     }
 
     struct Match {
@@ -53,7 +54,9 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         uint64 activeDeadline; // timestamp after which an unsettled Active match can be voided
         uint64 revealBlock; // block whose hash fixes startTurn (set at join, unknown to the joiner)
         uint64 challengeWindow; // window duration snapshotted at join (owner cannot change mid-match)
-        bytes32 transcriptCommitment; // keccak hash of the proposer's game transcript (set at proposeResult)
+        bytes32 forfeitPrefix; // committed prefix hash of a pending move-clock forfeit
+        uint32 forfeitPly; // ply the accused must answer (= length of the committed prefix)
+        uint32 lastRebuttedPly; // highest ply already answered by a rebuttal (anti-replay floor)
     }
 
     uint16 public constant MAX_RAKE_BPS = 2000; // hard cap: rake can never exceed 20%
@@ -102,6 +105,8 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     event MatchVoided(uint256 indexed matchId);
     event ResultProposed(uint256 indexed matchId, uint8 winner, uint64 challengeDeadline);
     event ResultChallenged(uint256 indexed matchId, uint8 canonicalWinner);
+    event ForfeitProposed(uint256 indexed matchId, uint8 claimant, uint32 forfeitPly, uint64 deadline);
+    event ForfeitRebutted(uint256 indexed matchId, uint32 forfeitPly);
     event MatchSettled(uint256 indexed matchId, uint8 winner, uint256 prize);
     event FeeCollected(uint256 indexed matchId, address indexed token, uint256 amount);
 
@@ -282,41 +287,55 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         _payout(matchId, m, winner);
     }
 
-    /// @notice Abandonment / refusal path: a participant claims the result and
-    ///         opens the challenge window. If the claim is false, the opponent
-    ///         overturns it with {challenge}; otherwise {finalize} pays out.
-    /// @param commitment  verifier.transcriptHash(matchId, startTurn, allMoves) — the
-    ///                    proposer binds to the specific move sequence they witnessed.
-    ///                    A challenger who disputes with a *non-terminal* transcript
-    ///                    must produce one that hashes to this exact value; submitting
-    ///                    a different (e.g., partial) transcript reverts instead of
-    ///                    voiding. This closes the partial-transcript escape attack.
-    function proposeResult(uint256 matchId, uint8 winner, bytes32 commitment) external {
+    /// @notice Refusal-to-sign path: the game FINISHED but the loser won't
+    ///         co-sign the result, so the winner submits the full signed
+    ///         transcript and the contract replays it on-chain to fix the
+    ///         canonical winner, opening the challenge window.
+    /// @dev    The winner is PROVEN, never asserted: {verify} recomputes the
+    ///         result from both session keys' per-ply signatures, so a
+    ///         participant cannot claim a win they did not earn. Critically the
+    ///         transcript MUST be terminal — a non-terminal (unfinished) game
+    ///         has no winner, so an abandoned match can never be settled to a
+    ///         payout here; it refunds both stakes through {voidExpired} after
+    ///         the TTL. This removes the prior attacker-controlled `commitment`
+    ///         that let a losing/abandoning player fake a win and steal the pot.
+    function proposeResult(uint256 matchId, ReplayVerifier.Transcript calldata t) external {
         Match storage m = matches[matchId];
         require(m.status == Status.Active, "MatchEscrow: not active");
         require(block.timestamp <= m.activeDeadline, "MatchEscrow: match expired");
         require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
-        require(winner <= DRAW, "MatchEscrow: bad winner");
-        require(commitment != bytes32(0), "MatchEscrow: zero commitment");
         // a game cannot have a result before its first move is fixed; this also
-        // guarantees {challenge}'s `t.startTurn == m.startTurn` is meaningful
+        // guarantees the transcript's `t.startTurn == m.startTurn` is meaningful
         require(m.startTurn != START_UNSET, "MatchEscrow: start not finalized");
 
-        m.proposedWinner = winner;
-        m.transcriptCommitment = commitment;
+        // the transcript must belong to exactly this match
+        require(t.matchId == matchId, "MatchEscrow: wrong match");
+        require(t.session0 == m.session0 && t.session1 == m.session1, "MatchEscrow: session mismatch");
+        require(t.startTurn == m.startTurn, "MatchEscrow: startTurn mismatch");
+
+        // replay on-chain: the winner is whatever the rules say, not what the
+        // proposer claims. A non-terminal game has no winner and cannot be
+        // proposed — abandonment is refunded via voidExpired, never paid out.
+        AwaleRules.GameState memory state = verifier.verify(t);
+        require(state.over, "MatchEscrow: game not over");
+
+        m.proposedWinner = state.winner;
         m.status = Status.Proposed;
         m.challengeDeadline = uint64(block.timestamp) + m.challengeWindow;
-        emit ResultProposed(matchId, winner, m.challengeDeadline);
+        emit ResultProposed(matchId, state.winner, m.challengeDeadline);
     }
 
-    /// @notice Overturn (or confirm) a proposed result by replaying the full
-    ///         signed transcript on-chain.
-    /// @dev Two outcomes:
-    ///        - terminal transcript: the verifier's winner is canonical and
-    ///          is paid out, ignoring the proposed winner.
-    ///        - non-terminal transcript: the game was still live, so the
-    ///          proposal was premature — but only if the transcript hashes to
-    ///          the proposer's commitment (prevents escape via partial transcript).
+    /// @notice Settle a proposed result immediately by replaying the canonical
+    ///         terminal transcript on-chain, without waiting out the window.
+    /// @dev PERMISSIONLESS by design: a terminal transcript carries both session
+    ///      keys' signatures on every move, so it can only ever *enforce the true
+    ///      result* — anyone (in practice the server's keeper) may submit it. The
+    ///      proposed winner is already proven in {proposeResult}, so this is a
+    ///      liveness convenience (skip the challenge window) and a keeper backstop,
+    ///      never a way to overturn a valid claim. There is no longer any
+    ///      "non-terminal void" branch: an unfinished game has no winner and is
+    ///      never in Proposed status — it refunds via {voidExpired}. This removes
+    ///      the proposer-controlled commitment that gated the old void defense.
     function challenge(uint256 matchId, ReplayVerifier.Transcript calldata t) external nonReentrant {
         Match storage m = matches[matchId];
         require(m.status == Status.Proposed, "MatchEscrow: not proposed");
@@ -327,37 +346,14 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         require(t.session0 == m.session0 && t.session1 == m.session1, "MatchEscrow: session mismatch");
         require(t.startTurn == m.startTurn, "MatchEscrow: startTurn mismatch");
 
+        // only a terminal transcript can settle: the verifier's winner is
+        // canonical and is paid regardless of the (already-proven) proposed
+        // winner. A non-terminal transcript proves nothing here and reverts.
         AwaleRules.GameState memory state = verifier.verify(t);
+        require(state.over, "MatchEscrow: game not over");
 
-        if (state.over) {
-            // terminal: the verifier's winner is canonical and is paid regardless
-            // of the proposer's claim. PERMISSIONLESS — a terminal transcript,
-            // carrying both session signatures, can only *enforce the true
-            // result*, so anyone may submit it. This is essential: when the
-            // honest winner is offline for the whole window, the server's keeper
-            // (never a match player) is the only actor that can refute a losing
-            // opponent's false proposeResult+finalize theft. A player-only gate
-            // here silently disabled that backstop — and audit L-04 was only ever
-            // about the void path below, where an outsider forcing a *refund* is
-            // the actual griefing vector.
-            emit ResultChallenged(matchId, state.winner);
-            _payout(matchId, m, state.winner);
-        } else {
-            // non-terminal but valid → proves the game was still live, so the
-            // proposal was premature → void (refund both). Two gates:
-            //   1. participants only — an outsider replaying a validly-signed
-            //      partial transcript to force a refund is the L-04 grief; a
-            //      third party can never trigger a void.
-            //   2. the transcript must hash to the proposer's commitment — stops
-            //      a losing challenger submitting a short prefix of the real game
-            //      to manufacture a false "game-still-live" proof (H-02).
-            require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
-            require(
-                verifier.transcriptHash(t.matchId, t.startTurn, t.moves) == m.transcriptCommitment,
-                "MatchEscrow: transcript mismatch"
-            );
-            _void(matchId, m);
-        }
+        emit ResultChallenged(matchId, state.winner);
+        _payout(matchId, m, state.winner);
     }
 
     /// @notice Pay the proposed winner once the challenge window has elapsed.
@@ -398,6 +394,100 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         _void(matchId, m);
     }
 
+    // --------------------------- forfeit clock -------------------------- //
+
+    /// @notice Move-clock forfeit: prove it is the OPPONENT's turn at a valid,
+    ///         still-live point and open an on-chain response window. If the
+    ///         opponent doesn't answer in time, they abandoned → the claimant
+    ///         wins the pot.
+    /// @dev This is the deterrent that makes abandonment cost the pot in a cash
+    ///      game. A claim can only ever accuse the opponent (never yourself), and
+    ///      the opponent can always {rebutForfeit} by making their next legal
+    ///      move — so an abandoner's only exits are "keep playing (and lose for
+    ///      real)" or "forfeit the pot". A refund is impossible while a forfeit is
+    ///      pending: {voidExpired} rejects ForfeitPending, and the keeper opens a
+    ///      forfeit on detected abandonment before the TTL. A never-started game
+    ///      (no moves) is out of scope — {verify} needs ≥1 move — and refunds via
+    ///      the TTL, which is fair (no information asymmetry before the first move).
+    function proposeForfeit(uint256 matchId, ReplayVerifier.Transcript calldata t) external {
+        Match storage m = matches[matchId];
+        require(m.status == Status.Active, "MatchEscrow: not active");
+        require(block.timestamp <= m.activeDeadline, "MatchEscrow: match expired");
+        require(m.startTurn != START_UNSET, "MatchEscrow: start not finalized");
+        require(t.matchId == matchId, "MatchEscrow: wrong match");
+        require(t.session0 == m.session0 && t.session1 == m.session1, "MatchEscrow: session mismatch");
+        require(t.startTurn == m.startTurn, "MatchEscrow: startTurn mismatch");
+
+        // replay the prefix: it must be a valid, still-live game. Because moves
+        // are session-signed AND bound to their exact position, the claimant
+        // cannot fabricate or splice the opponent's moves into a false line.
+        AwaleRules.GameState memory state = verifier.verify(t);
+        require(!state.over, "MatchEscrow: game over");
+
+        address accused = state.turn == 0 ? m.player0 : m.player1;
+        require(msg.sender == m.player0 || msg.sender == m.player1, "MatchEscrow: not a player");
+        require(msg.sender != accused, "MatchEscrow: cannot forfeit your own turn");
+
+        // a forfeit must sit strictly past the last answered ply, so a stale
+        // claim can't be re-spammed after a rebuttal (forfeit ply tracks real progress)
+        require(t.moves.length > m.lastRebuttedPly, "MatchEscrow: stale forfeit ply");
+
+        m.forfeitPrefix = verifier.transcriptHash(matchId, m.startTurn, t.moves);
+        m.forfeitPly = uint32(t.moves.length);
+        m.proposedWinner = msg.sender == m.player0 ? 0 : 1; // claimant wins if unanswered
+        m.status = Status.ForfeitPending;
+        m.challengeDeadline = uint64(block.timestamp) + m.challengeWindow;
+        emit ForfeitProposed(matchId, m.proposedWinner, m.forfeitPly, m.challengeDeadline);
+    }
+
+    /// @notice Rebut a pending forfeit by supplying the accused's next legal
+    ///         signed move — proof of presence. If that move ends the game, the
+    ///         canonical winner is paid; otherwise play resumes.
+    /// @dev PERMISSIONLESS: a valid signed move can only ever help the accused
+    ///      (prove presence / advance the game / settle to the true winner), so
+    ///      the server's keeper may submit it on an honest player's behalf.
+    function rebutForfeit(uint256 matchId, ReplayVerifier.Transcript calldata t2) external nonReentrant {
+        Match storage m = matches[matchId];
+        require(m.status == Status.ForfeitPending, "MatchEscrow: not forfeit-pending");
+        require(block.timestamp <= m.challengeDeadline, "MatchEscrow: window closed");
+        require(t2.matchId == matchId, "MatchEscrow: wrong match");
+        require(t2.session0 == m.session0 && t2.session1 == m.session1, "MatchEscrow: session mismatch");
+        require(t2.startTurn == m.startTurn, "MatchEscrow: startTurn mismatch");
+        require(t2.moves.length == uint256(m.forfeitPly) + 1, "MatchEscrow: not a one-move rebuttal");
+        // the rebuttal must extend the EXACT committed prefix by one move
+        require(
+            _prefixHash(matchId, m.startTurn, t2.moves, m.forfeitPly) == m.forfeitPrefix,
+            "MatchEscrow: prefix mismatch"
+        );
+
+        // verify() re-checks every signature (incl. the accused's new move, bound
+        // to its exact position) and reverts on any illegal move
+        AwaleRules.GameState memory state2 = verifier.verify(t2);
+        emit ForfeitRebutted(matchId, m.forfeitPly);
+        if (state2.over) {
+            // the response ended the game → pay the canonical winner
+            _payout(matchId, m, state2.winner);
+        } else {
+            // presence proven → resume play; refresh the TTL so the resumed game
+            // isn't instantly voidable, and raise the anti-replay floor
+            m.lastRebuttedPly = m.forfeitPly;
+            m.forfeitPrefix = bytes32(0);
+            m.forfeitPly = 0;
+            m.status = Status.Active;
+            m.activeDeadline = uint64(block.timestamp) + matchTtl;
+        }
+    }
+
+    /// @notice Award the pot to the claimant once the forfeit window elapses with
+    ///         no valid rebuttal — the accused abandoned. Permissionless (the
+    ///         keeper triggers it, but anyone may).
+    function finalizeForfeit(uint256 matchId) external nonReentrant {
+        Match storage m = matches[matchId];
+        require(m.status == Status.ForfeitPending, "MatchEscrow: not forfeit-pending");
+        require(block.timestamp > m.challengeDeadline, "MatchEscrow: window open");
+        _payout(matchId, m, m.proposedWinner);
+    }
+
     // ------------------------------ payout ------------------------------ //
 
     function _payout(uint256 matchId, Match storage m, uint8 winner) internal {
@@ -436,6 +526,21 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         token.safeTransfer(m.player0, stake);
         token.safeTransfer(m.player1, stake);
         emit MatchVoided(matchId);
+    }
+
+    /// @dev keccak of the first `k` moves of `moves`, matching
+    ///      {ReplayVerifier.transcriptHash}'s encoding — used to check a forfeit
+    ///      rebuttal extends exactly the committed prefix.
+    function _prefixHash(uint256 matchId, uint8 startTurn, uint8[] calldata moves, uint32 k)
+        internal
+        pure
+        returns (bytes32)
+    {
+        uint8[] memory pre = new uint8[](k);
+        for (uint256 i = 0; i < k; i++) {
+            pre[i] = moves[i];
+        }
+        return keccak256(abi.encode(matchId, startTurn, pre));
     }
 
     // ------------------------------ views ------------------------------- //

@@ -48,7 +48,7 @@ contract ReplayVerifierTest is Test {
             uint8 house = _lowest(mask);
             uint256 pk = s.turn == 0 ? pk0 : pk1;
             _moves.push(house);
-            _sigs.push(_sign(pk, verifier.moveDigest(matchId, ply, house)));
+            _sigs.push(_sign(pk, verifier.moveDigest(matchId, ply, house, verifier.stateHash(s))));
             s = AwaleRules.applyMove(s, house);
         }
 
@@ -119,16 +119,20 @@ contract ReplayVerifierTest is Test {
 
     function test_revert_tamperedSignature() public {
         (ReplayVerifier.Transcript memory t,) = _build(1, 0, 4);
-        // re-sign ply 2 over a *different* house than the one recorded
-        t.sigs[2] = _sign(pk0, verifier.moveDigest(1, 2, 5));
+        // re-sign ply 2 over a *different* house than the one recorded — the
+        // digest verify recomputes (real house + real state) won't match.
+        t.sigs[2] = _sign(pk0, verifier.moveDigest(1, 2, 5, bytes32(0)));
         vm.expectRevert(bytes("ReplayVerifier: bad move signature"));
         verifier.verify(t);
     }
 
     function test_revert_wrongSigner() public {
         (ReplayVerifier.Transcript memory t,) = _build(1, 0, 4);
-        // ply 0 belongs to player 0; sign it with player 1's key instead
-        t.sigs[0] = _sign(pk1, verifier.moveDigest(1, 0, t.moves[0]));
+        // ply 0 belongs to player 0; sign it with player 1's key instead. Use
+        // ply 0's real pre-move state (the opening) so ONLY the signer is wrong.
+        AwaleRules.GameState memory opening = AwaleRules.initialState();
+        opening.turn = 0;
+        t.sigs[0] = _sign(pk1, verifier.moveDigest(1, 0, t.moves[0], verifier.stateHash(opening)));
         vm.expectRevert(bytes("ReplayVerifier: bad move signature"));
         verifier.verify(t);
     }
@@ -142,7 +146,7 @@ contract ReplayVerifierTest is Test {
     }
 
     function test_revert_moveAfterGameOver() public {
-        (ReplayVerifier.Transcript memory t,) = _build(9, 0, 5000);
+        (ReplayVerifier.Transcript memory t, AwaleRules.GameState memory endState) = _build(9, 0, 5000);
         uint256 n = t.moves.length;
         // append one extra, correctly-signed move past the end of the game
         uint8[] memory m2 = new uint8[](n + 1);
@@ -152,9 +156,11 @@ contract ReplayVerifierTest is Test {
             s2[i] = t.sigs[i];
         }
         m2[n] = 0;
-        // whoever is "to move" after the game ends — sign with that turn's key.
-        // Either key fails the same way (game is over); use player 0's.
-        s2[n] = _sign(pk0, verifier.moveDigest(9, n, 0));
+        // sign the extra move VALIDLY (whoever is to move at the terminal state,
+        // bound to the terminal state hash) so the signature check passes and
+        // execution reaches applyMove, which reverts with "game over".
+        uint256 pk = endState.turn == 0 ? pk0 : pk1;
+        s2[n] = _sign(pk, verifier.moveDigest(9, n, 0, verifier.stateHash(endState)));
         t.moves = m2;
         t.sigs = s2;
         vm.expectRevert(bytes("AwaleRules: game over"));
@@ -185,12 +191,14 @@ contract ReplayVerifierTest is Test {
 
         delete _moves;
         delete _sigs;
+        AwaleRules.GameState memory s = AwaleRules.initialState();
+        s.turn = startTurn;
         for (uint256 ply = 0; ply < houses.length; ply++) {
             uint8 house = uint8(houses[ply]);
-            // turn strictly alternates from startTurn — applyMove always flips it
-            uint256 pk = (startTurn + ply) % 2 == 0 ? pk0 : pk1;
+            uint256 pk = s.turn == 0 ? pk0 : pk1;
             _moves.push(house);
-            _sigs.push(_sign(pk, verifier.moveDigest(42, ply, house)));
+            _sigs.push(_sign(pk, verifier.moveDigest(42, ply, house, verifier.stateHash(s))));
+            s = AwaleRules.applyMove(s, house); // applyMove never ends by repetition (verify-only)
         }
 
         ReplayVerifier.Transcript memory t;
@@ -222,12 +230,32 @@ contract ReplayVerifierTest is Test {
 
         delete _moves;
         delete _sigs;
-        for (uint256 ply = 0; ply <= n; ply++) {
-            uint8 house = ply < n ? uint8(houses[ply]) : 0; // one extra move at the end
-            uint256 pk = (startTurn + ply) % 2 == 0 ? pk0 : pk1;
+        AwaleRules.GameState memory s = AwaleRules.initialState();
+        s.turn = startTurn;
+        for (uint256 ply = 0; ply < n; ply++) {
+            uint8 house = uint8(houses[ply]);
+            uint256 pk = s.turn == 0 ? pk0 : pk1;
             _moves.push(house);
-            _sigs.push(_sign(pk, verifier.moveDigest(43, ply, house)));
+            _sigs.push(_sign(pk, verifier.moveDigest(43, ply, house, verifier.stateHash(s))));
+            s = AwaleRules.applyMove(s, house);
         }
+        // The extra ply must be signed against the SAME state verify holds at
+        // ply n — the repetition-swept, game-over position — so the signature
+        // passes and execution reaches applyMove's "game over" revert. Mirror
+        // _endByCycle's sweep (only the fields stateHash covers matter).
+        uint8 row0;
+        uint8 row1;
+        for (uint256 i = 0; i < 6; i++) {
+            row0 += s.pits[i];
+            row1 += s.pits[i + 6];
+        }
+        s.store0 += row0;
+        s.store1 += row1;
+        for (uint256 i = 0; i < 12; i++) {
+            s.pits[i] = 0;
+        }
+        _moves.push(0); // one extra move past the cycle end
+        _sigs.push(_sign(s.turn == 0 ? pk0 : pk1, verifier.moveDigest(43, n, 0, verifier.stateHash(s))));
 
         ReplayVerifier.Transcript memory t;
         t.matchId = 43;
@@ -242,10 +270,12 @@ contract ReplayVerifierTest is Test {
     }
 
     function test_moveDigest_isUniquePerInput() public view {
-        bytes32 a = verifier.moveDigest(1, 0, 0);
-        assertTrue(a != verifier.moveDigest(2, 0, 0), "matchId changes digest");
-        assertTrue(a != verifier.moveDigest(1, 1, 0), "ply changes digest");
-        assertTrue(a != verifier.moveDigest(1, 0, 1), "house changes digest");
+        bytes32 st = keccak256("state-a");
+        bytes32 a = verifier.moveDigest(1, 0, 0, st);
+        assertTrue(a != verifier.moveDigest(2, 0, 0, st), "matchId changes digest");
+        assertTrue(a != verifier.moveDigest(1, 1, 0, st), "ply changes digest");
+        assertTrue(a != verifier.moveDigest(1, 0, 1, st), "house changes digest");
+        assertTrue(a != verifier.moveDigest(1, 0, 0, keccak256("state-b")), "state changes digest");
     }
 
     function test_domainSeparator_bindsChainAndContract() public view {

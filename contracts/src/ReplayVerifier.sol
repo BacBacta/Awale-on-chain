@@ -14,7 +14,9 @@ import {AwaleRules} from "./AwaleRules.sol";
 ///      signing, so each player signs their *moves* with a per-match **session
 ///      key** — an ephemeral EVM address registered on-chain when they join the
 ///      match. A move signature is an EIP-712 typed-data signature over
-///      (matchId, ply, house) by the session key of the player to move.
+///      (matchId, ply, house, stateHash(pre-move state)) by the session key of
+///      the player to move — the state binding makes each signature unique to
+///      its exact board position.
 ///
 ///      Verification is deterministic and self-contained:
 ///        1. start from the opening position with the agreed first mover;
@@ -35,7 +37,8 @@ contract ReplayVerifier {
     bytes32 private constant DOMAIN_TYPEHASH =
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
 
-    bytes32 private constant MOVE_TYPEHASH = keccak256("Move(uint256 matchId,uint256 ply,uint8 house)");
+    bytes32 private constant MOVE_TYPEHASH =
+        keccak256("Move(uint256 matchId,uint256 ply,uint8 house,bytes32 state)");
 
     /// @dev Upper bound on transcript length, guarding the replay loop against
     ///      an unbounded-gas griefing submission. Repetition ends real games in
@@ -69,9 +72,23 @@ contract ReplayVerifier {
     }
 
     /// @notice EIP-712 digest a session key must sign to authorise one move.
-    function moveDigest(uint256 matchId, uint256 ply, uint8 house) public view returns (bytes32) {
-        bytes32 structHash = keccak256(abi.encode(MOVE_TYPEHASH, matchId, ply, house));
+    /// @param state hash of the PRE-move game state ({stateHash}). Binding the
+    ///        signature to the exact position makes each ply signature unique to
+    ///        its board: a signature cannot be replayed at a different position
+    ///        nor spliced into a fabricated line (closes ply-equivocation and
+    ///        keeps the forfeit-clock history unforkable).
+    function moveDigest(uint256 matchId, uint256 ply, uint8 house, bytes32 state) public view returns (bytes32) {
+        bytes32 structHash = keccak256(abi.encode(MOVE_TYPEHASH, matchId, ply, house, state));
         return MessageHashUtils.toTypedDataHash(DOMAIN_SEPARATOR, structHash);
+    }
+
+    /// @notice Canonical hash of the pre-move game state a move signature binds to.
+    /// @dev Must be reproduced byte-for-byte off-chain by the game engine when it
+    ///      signs a move. Covers every field that distinguishes one game moment
+    ///      from another: the full board, both stores, whose turn it is, and the
+    ///      no-capture clock (which governs future termination).
+    function stateHash(AwaleRules.GameState memory s) public pure returns (bytes32) {
+        return keccak256(abi.encode(s.pits, s.store0, s.store1, s.turn, s.noCaptureCount));
     }
 
     /// @notice Replay a transcript and return the resulting game state.
@@ -99,7 +116,8 @@ contract ReplayVerifier {
 
         for (uint256 ply = 0; ply < t.moves.length; ply++) {
             address expected = state.turn == 0 ? t.session0 : t.session1;
-            bytes32 digest = moveDigest(t.matchId, ply, t.moves[ply]);
+            // bind the signature to the exact pre-move position (anti-splice/equivocation)
+            bytes32 digest = moveDigest(t.matchId, ply, t.moves[ply], stateHash(state));
             address signer = ECDSA.recover(digest, t.sigs[ply]);
             require(signer == expected, "ReplayVerifier: bad move signature");
 
