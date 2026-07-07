@@ -4,9 +4,24 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HeroBoard } from "./HeroBoard.js";
 import { Icon } from "./Icon.js";
+import { WINNER_PCT, RACE_SHARE_PCT } from "../lib/money.js";
 
 // One-time first-run welcome. Shown until the player dismisses it (localStorage).
+// Deliberately ONE screen (multi-step carousels bleed users in a webview) — but
+// that one screen now sells the three concrete promises, numbers from money.ts:
+// free in 30s, winner paid instantly, fees flow back to players via the race.
 const KEY = "awale_welcomed";
+
+function Promise_({ icon, children }: { icon: string; children: React.ReactNode }) {
+  return (
+    <span className="row" style={{ gap: 10, alignItems: "center", width: "100%" }}>
+      <span style={{ fontSize: 17, width: 24, textAlign: "center" }}>{icon}</span>
+      <span className="muted" style={{ flex: 1, fontSize: 13, lineHeight: 1.4, textAlign: "left" }}>
+        {children}
+      </span>
+    </span>
+  );
+}
 
 export function Welcome() {
   const [show, setShow] = useState(false);
@@ -69,16 +84,30 @@ export function Welcome() {
         </div>
       </div>
 
-      <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 14, maxWidth: 300 }}>
+      <div style={{ position: "relative", display: "flex", flexDirection: "column", alignItems: "center", gap: 14, maxWidth: 320, width: "100%" }}>
         <span className="chip gold">One of the oldest games on Earth</span>
         <span className="brand" style={{ fontSize: 46, textShadow: "0 2px 20px rgba(0,0,0,0.6)" }}>
           Awalé
         </span>
         <span className="muted" style={{ textAlign: "center", lineHeight: 1.5 }}>
-          Sow seeds, capture, win the pot. Play free or for money — and every match climbs your rank.
+          Sow seeds, capture, win the pot — every match climbs your rank.
         </span>
 
-        <div className="stack" style={{ width: "100%", marginTop: 6, gap: 10 }}>
+        <div
+          className="card flat stack"
+          style={{ width: "100%", gap: 10, padding: "12px 14px", background: "rgba(255,255,255,0.04)" }}
+        >
+          <Promise_ icon="⚡">Learn in 30 seconds — free games, forever</Promise_>
+          <Promise_ icon="💰">
+            Win money: <b style={{ color: "var(--text)" }}>{WINNER_PCT} of the pot</b>, paid straight to your wallet
+          </Promise_>
+          <Promise_ icon="🏁">
+            <b style={{ color: "var(--text)" }}>{RACE_SHARE_PCT} of every fee returns to players</b> — the weekly pot
+            splits each Monday
+          </Promise_>
+        </div>
+
+        <div className="stack" style={{ width: "100%", marginTop: 2, gap: 10 }}>
           <button className="btn block" onClick={() => dismiss(() => router.push("/learn"))}>
             <Icon name="info" size={17} /> Learn to play · 30 sec
           </button>

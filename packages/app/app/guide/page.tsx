@@ -6,13 +6,15 @@
 // what the game is, the five ways to play it, what money games actually do,
 // what winning earns, and why their money is safe. Vocabulary here is the
 // vocabulary everywhere (Quick match / With a friend / For money / Weekly
-// league / Season / Rank) — if a screen disagrees with this page, the screen
-// is wrong.
+// race / Season / Rank) — if a screen disagrees with this page, the screen
+// is wrong. Every number comes from src/lib/money.ts constants, never
+// hardcoded — the old page said 45% of fees fed the race pot while the
+// running server paid 50%.
 
 import Link from "next/link";
 import { Icon, type IconName } from "../../src/components/Icon.js";
 import { TIERS as RANK_TIERS } from "../../src/lib/profile.js";
-import { WINNER_PCT, FEE_PCT } from "../../src/lib/money.js";
+import { WINNER_PCT, FEE_PCT, RACE_SHARE_PCT } from "../../src/lib/money.js";
 
 // the ladder string, built from the single source so it never drifts
 const TIERS = RANK_TIERS.map((t) => `${t.icon} ${t.name}`).join(" → ");
@@ -102,10 +104,21 @@ export default function Guide() {
       </span>
       <div className="card stack" style={{ gap: 10 }}>
         <Point n={1}>You and your opponent each put the same amount in the pot.</Point>
-        <Point n={2}>The winner takes {WINNER_PCT} of the pot. The {FEE_PCT} house fee is always shown before you stake.</Point>
-        <Point n={3}>A draw refunds both players in full — no fee taken.</Point>
-        <Point n={4}>Nobody joined your match yet? Cancel anytime — your stake comes back in full.</Point>
-        <Point n={5}>Stakes are held by a smart contract on Celo until the game settles — not by us.</Point>
+        <Point n={2}>
+          The winner takes {WINNER_PCT} of the pot, paid straight to your wallet the moment the game settles — no
+          withdrawal step. The {FEE_PCT} house fee is always shown before you stake.
+        </Point>
+        <Point n={3}>
+          And that fee works for you: <b style={{ color: "var(--text)" }}>{RACE_SHARE_PCT} of every house fee goes
+          into the Weekly race pot</b> — paid back to players every Monday. Play money games, get a share.
+        </Point>
+        <Point n={4}>
+          Money matches are <b style={{ color: "var(--text)" }}>skill-matched</b>: you&apos;re never paired with a far
+          stronger player just because the queue is thin. No fair opponent — no match, your stake stays with you.
+        </Point>
+        <Point n={5}>A draw refunds both players in full — no fee taken.</Point>
+        <Point n={6}>Nobody joined your match yet? Cancel anytime — your stake comes back in full.</Point>
+        <Point n={7}>Stakes are held by a smart contract on Celo until the game settles — not by us.</Point>
       </div>
 
       {/* what winning earns */}
@@ -125,7 +138,8 @@ export default function Guide() {
           Money games score points automatically: a win is 3 points, draws score nothing, and only your first 3 games
           against the same opponent count. Play 5 money games in a week and you&apos;re in. On Monday the pot splits in
           proportion to points — more points, bigger share — and the top 3 add a small podium bonus. Winners collect
-          with one tap in Compete. 45% of every house fee feeds that pot, so the fee partly comes back to the players.
+          with one tap in Compete. {RACE_SHARE_PCT} of every house fee feeds that pot, so the fee comes back to the
+          players who play.
         </span>
         <span className="muted" style={{ lineHeight: 1.5 }}>
           <b style={{ color: "var(--text)" }}>All-time winners.</b> The money hall of fame: net winnings across every
@@ -159,7 +173,12 @@ export default function Guide() {
           Take your time: Quick match has no clock. Only money games are timed — 25 seconds per move (miss it and you forfeit; the app never plays for you). Friend games allow days per move. If an
           opponent abandons a money game, you claim the win.
         </Point>
-        <Point n={3}>Every fee and payout is shown before you commit. No hidden costs.</Point>
+        <Point n={3}>
+          Won and closed the app? You&apos;re covered: if an opponent falsely claims your game, our server
+          automatically proves the real result on-chain — a false claim can never take your pot, even while
+          you&apos;re offline.
+        </Point>
+        <Point n={4}>Every fee and payout is shown before you commit. No hidden costs.</Point>
       </div>
 
       <Link className="btn block" href="/?play=1" style={{ marginTop: 4 }}>

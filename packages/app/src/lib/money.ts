@@ -60,3 +60,14 @@ export function stakeFloor(minStakeOnChain: bigint, decimals: number): bigint {
 export const WINNER_PCT = `${Math.round((10_000 - RAKE_BPS) / 100)}%`;
 /** e.g. "8%" — the house fee. */
 export const FEE_PCT = rakePct(RAKE_BPS);
+
+// Share of every house fee that flows into the Weekly race pot and is paid
+// back to players each Monday. MUST track the server's LEAGUE_POOL_SHARE_BPS
+// (same 5000 default) — set NEXT_PUBLIC_LEAGUE_POOL_SHARE_BPS if the server
+// share changes. "Half the fee returns to players" is a headline benefit;
+// this constant is its single source, so a guide, an expander and an
+// onboarding screen can never quote three different numbers (the old copy
+// said 45% while the running server paid 50%).
+export const RACE_SHARE_BPS = Number(process.env.NEXT_PUBLIC_LEAGUE_POOL_SHARE_BPS ?? "5000");
+/** e.g. "50%" — the slice of each fee that returns to players via the race pot. */
+export const RACE_SHARE_PCT = `${Math.round(RACE_SHARE_BPS / 100)}%`;
