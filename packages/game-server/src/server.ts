@@ -753,7 +753,10 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
         await deps.openFromChain(matchId).catch(() => {});
         m = hub.get(matchId);
       }
+      console.log(`[watch] matchId=${msg.matchId} player=${msg.player} casual=${isCasualMatch(matchId)} hasState=${!!m} turn=${m?.state.turn}`); // TEMP diag
       if (m) socket.emit("state", { matchId: msg.matchId, state: m.state, ply: m.ply, clocks: clocksOf(m), turnDeadline: turnDeadlineOf(matchId, m) });
+      // TEMP diag: the client reports what it sees on every move click (before its guards)
+      socket.on("clientdiag", (d: unknown) => console.log(`[clientdiag] ${JSON.stringify(d)}`));
       if (msg.player === 0 || msg.player === 1) socketSeats.set(socket.id, { roomId: msg.matchId, player: msg.player });
       armTurnClockIfNeeded(matchId, msg.matchId);
     });
@@ -782,6 +785,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
             return;
           }
           const state = await hub.move(matchId, msg.player, msg.house, msg.signature);
+          console.log(`[move] ok matchId=${msg.matchId} player=${msg.player} house=${msg.house} -> turn=${state.turn} over=${state.over}`); // TEMP diag
           if (state.over) {
             announceGameOver(matchId, msg.matchId, state);
           } else {
@@ -790,6 +794,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
             io.to(msg.matchId).emit("state", { matchId: msg.matchId, state, ply: mm?.ply ?? 0, clocks: mm ? clocksOf(mm) : null, turnDeadline: turnDeadlineOf(matchId, mm), repeat: mm?.repeat ?? 1 });
           }
         } catch (err) {
+          console.error(`[move] REJECT matchId=${msg.matchId} player=${msg.player} house=${msg.house}: ${(err as Error).message}`); // TEMP diag
           socket.emit("error", { message: (err as Error).message });
         }
       },

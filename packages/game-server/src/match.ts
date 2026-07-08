@@ -156,9 +156,12 @@ export class Match {
     if (player !== this.state.turn) throw new Error("not your turn");
 
     // the signature binds the exact pre-move position (this.state is pre-applyMove)
-    const digest = moveDigest(this.cfg.matchId, BigInt(this.ply), house, stateHash(this.state), this.ctx());
+    const sh = stateHash(this.state);
+    const digest = moveDigest(this.cfg.matchId, BigInt(this.ply), house, sh, this.ctx());
     const signer = await recoverAddress({ hash: digest, signature });
     if (signer.toLowerCase() !== this.cfg.sessions[player].toLowerCase()) {
+      const s0 = this.cfg.sessions[0].toLowerCase(), s1 = this.cfg.sessions[1].toLowerCase(), rec = signer.toLowerCase();
+      console.error(`[sigdiag] REJECT match=${this.cfg.matchId} player=${player} ply=${this.ply} turn=${this.state.turn} startTurn=${this.cfg.startTurn} house=${house} recovered=${rec} expected=${this.cfg.sessions[player].toLowerCase()} recovered==s0?${rec===s0} recovered==s1?${rec===s1} chainId=${this.cfg.chainId} verifier=${this.cfg.verifier} stateHash=${sh}`); // TEMP diag
       throw new Error("bad move signature");
     }
 

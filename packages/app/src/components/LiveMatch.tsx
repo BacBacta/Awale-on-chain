@@ -378,6 +378,7 @@ export function LiveMatch({
   }, [matchId, casualRole]);
 
   async function play(house: number) {
+    socket.current?.emit("clientdiag", { matchId: matchId.toString(), house, role, stateTurn: state?.turn ?? -1, over: state?.over ?? false, ply, hasSession: !!session.current, hasCtx: !!ctx.current }); // TEMP diag
     if (!state || state.over || role === null || state.turn !== role) return;
     if (!session.current || !ctx.current) return;
     const sig = await signMove(session.current, matchId, BigInt(ply), house, state, ctx.current);
