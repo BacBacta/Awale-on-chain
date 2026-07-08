@@ -55,15 +55,25 @@ relays → winner claims → keeper finalizes/rebuts).
 
 ## 3. Mainnet deploy
 
+⚠️ **Two footguns in the current `contracts/.env`** (it's set up for testnet):
+- `DEPLOY_MOCK_TOKENS=true` → the script (correctly) **refuses to deploy on mainnet**.
+  Set `DEPLOY_MOCK_TOKENS=false` for the real deploy.
+- `PRIVATE_KEY` in `.env` is a **testnet** key. Do NOT reuse it — supply the funded
+  mainnet deployer via `--account <keystore>` (preferred) or a mainnet-only `.env`.
+
+Dry-run simulation against real Celo mainnet state passed (fresh verifier +
+treasury + escrow, rake 1100, all 3 real stablecoins allowlisted, no revert).
+
 ```bash
 cd contracts
-OWNER=<mainnet-multisig-or-EOA> RAKE_BPS=1100 \
+DEPLOY_MOCK_TOKENS=false OWNER=<mainnet-multisig-or-EOA> RAKE_BPS=1100 \
 forge script script/Deploy.s.sol \
   --rpc-url celo --broadcast --verify \
-  --legacy --with-gas-price $(cast gas-price --rpc-url celo)
-# PRIVATE_KEY in contracts/.env (0x+64hex) OR pass --account <keystore>
+  --legacy --with-gas-price $(cast gas-price --rpc-url celo) \
+  --account <mainnet-deployer-keystore>
 ```
-Record the logged addresses: **ReplayVerifier**, **Treasury**, **MatchEscrow**.
+Record the logged addresses: **ReplayVerifier**, **Treasury**, **MatchEscrow**
+(the real addresses depend on the deployer's nonce; the dry-run's are placeholders).
 
 ---
 
