@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { type Socket } from "socket.io-client";
 import type { Address } from "viem";
 import { createSessionKey, persistSession } from "../lib/session.js";
-import { getProfile } from "../lib/profile.js";
 import { track } from "../lib/analytics.js";
 import { Icon } from "./Icon.js";
 
@@ -27,6 +27,9 @@ export function QuickMatch({ account, autoStart }: { account?: Address; autoStar
   const sockRef = useRef<Socket | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoFired = useRef(false);
+  // client-side navigation (not window.location) so entering a match keeps the
+  // app/socket bundle warm instead of re-bootstrapping Next.js on a full reload
+  const router = useRouter();
 
   function clearTimer() {
     if (timerRef.current) {
@@ -47,7 +50,7 @@ export function QuickMatch({ account, autoStart }: { account?: Address; autoStar
     sockRef.current?.close();
     sockRef.current = null;
     setPhase("fallback");
-    setTimeout(() => (window.location.href = "/play"), 1400);
+    setTimeout(() => router.push("/play"), 1400);
   }
 
   async function find() {
@@ -64,10 +67,11 @@ export function QuickMatch({ account, autoStart }: { account?: Address; autoStar
     // start with the max window; the server's queue-ack may shorten it
     timerRef.current = setTimeout(toBot, FALLBACK_MAX_MS);
 
-    sock.on("connect", async () => {
-      // pair on the player's real skill rating when they have one
-      const elo = account ? ((await getProfile(account))?.elo ?? 1200) : 1200;
-      sock.emit("queue", { address: account ?? session.address, elo, mode: "casual", sessionPubKey: session.address });
+    sock.on("connect", () => {
+      // the server looks up the authoritative rating (eloOf) and overrides
+      // whatever we send, so skip the extra getProfile round-trip and queue
+      // immediately — the elo here is just a fallback for brand-new sessions
+      sock.emit("queue", { address: account ?? session.address, elo: 1200, mode: "casual", sessionPubKey: session.address });
     });
     // adaptive fallback: empty pool ⇒ fall back at 6s; a candidate exists ⇒
     // keep the full 12s. Only ever SHORTENS the wait, never extends past max.
@@ -83,7 +87,7 @@ export function QuickMatch({ account, autoStart }: { account?: Address; autoStar
       persistSession(BigInt(msg.matchId), session);
       sock.close();
       const opp = msg.opponent ? `&opp=${msg.opponent}` : "";
-      window.location.href = `/play?match=${msg.matchId}&casual=1&role=${msg.role ?? 0}${opp}`;
+      router.push(`/play?match=${msg.matchId}&casual=1&role=${msg.role ?? 0}${opp}`);
     });
     sock.on("error", () => toBot());
     sock.on("connect_error", () => toBot());

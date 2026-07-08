@@ -12,6 +12,7 @@ import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { createNonceManager, jsonRpc } from "viem/nonce";
 import { GameHub } from "./hub.js";
+import { Matchmaker } from "./matchmaking.js";
 import { forfeitRebuttal } from "./match.js";
 import { attachSocketIO } from "./server.js";
 import { watchMatchJoined, watchStartFinalized, openMatchFromChain, type ChainMatch, type EventWatcher } from "./listener.js";
@@ -175,7 +176,19 @@ const publicClient = createPublicClient({
   chain: chainFor(CHAIN_ID),
   transport: rpcTransport,
 });
-const hub = new GameHub(undefined, liveMatchStore);
+// Casual matchmaker: speed over fairness (no money at stake). A WIDE base window
+// + a modest "pair anyone" backstop means two waiting humans match fast instead
+// of both timing out to the AI fallback. Env-tunable like the cash pools.
+const hub = new GameHub(
+  new Matchmaker({
+    baseWindow: Number(process.env.CASUAL_BASE_WINDOW ?? "300"),
+    windowGrowthPerSec: Number(process.env.CASUAL_WINDOW_GROWTH ?? "15"),
+    // after this wait, pair two queued humans regardless of Elo gap — beats
+    // sending both to bots. Fires before the client's 12s AI fallback.
+    pairAnyoneAfterSec: Number(process.env.CASUAL_PAIR_ANYONE_AFTER_SEC ?? "8"),
+  }),
+  liveMatchStore,
+);
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -1153,7 +1166,7 @@ void socketHandle
 // a player enqueued, so two people already waiting never matched as their
 // windows widened — a third arrival was needed. Sweep on an interval so a
 // compatible pair unsticks on its own. Same runner pattern as the keeper.
-const MATCHMAKE_SWEEP_MS = Number(process.env.MATCHMAKE_SWEEP_MS ?? "2000");
+const MATCHMAKE_SWEEP_MS = Number(process.env.MATCHMAKE_SWEEP_MS ?? "1000");
 const st = setInterval(() => socketHandle.sweepQueues(), MATCHMAKE_SWEEP_MS);
 if ("unref" in st) st.unref?.();
 

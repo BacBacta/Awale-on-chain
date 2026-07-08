@@ -154,6 +154,9 @@ export function LiveMatch({
       return;
     }
     let sock: Socket | null = null;
+    // start fetching the ~100 kB socket.io-client chunk NOW, in parallel with the
+    // wallet connect + on-chain match read below, instead of only after they finish
+    const ioLoad = import("socket.io-client");
 
     (async () => {
       let myRole: 0 | 1;
@@ -198,9 +201,12 @@ export function LiveMatch({
         const haveSession = !!loadSession(matchId);
         let m = await readMatch();
         let r = seatOf(m);
-        for (let attempt = 0; r === null && haveSession && attempt < 20; attempt++) {
+        // fast-first backoff (400ms → 3s cap) instead of a fixed 3s tick: a node
+        // that's only ~1s stale now resolves in ~1s, not 3s+, while the total
+        // budget still covers a genuinely slow sync.
+        for (let attempt = 0; r === null && haveSession && attempt < 15; attempt++) {
           setStatus("Syncing your match…");
-          await new Promise((res) => setTimeout(res, 3000));
+          await new Promise((res) => setTimeout(res, Math.min(3000, 400 * 2 ** attempt)));
           m = await readMatch();
           r = seatOf(m);
         }
@@ -279,7 +285,7 @@ export function LiveMatch({
       session.current = sk;
       ctx.current = { chainId: BigInt(cfg.chainId), verifier: cfg.verifier };
 
-      const { io } = await import("socket.io-client");
+      const { io } = await ioLoad; // already in-flight since the effect started
       sock = io(SERVER_URL, { transports: ["websocket"] });
       socket.current = sock;
       sock.on("connect", () => {
