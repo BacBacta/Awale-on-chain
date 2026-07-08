@@ -15,7 +15,7 @@ import { stakeTokens } from "../lib/stakeTokens.js";
 import { recordLocalMatch } from "../lib/matches.js";
 import { track } from "../lib/analytics.js";
 import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
-import { legalMovesMask, endKind, adjudicate, REPETITION_LIMIT, type GameState } from "../../../engine/src/awale.js";
+import { legalMovesMask, endKind, adjudicate, REPETITION_LIMIT, NO_CAPTURE_LIMIT, type GameState } from "../../../engine/src/awale.js";
 import { Board } from "./Board.js";
 import { GameOverlay } from "./GameOverlay.js";
 import { PlayerPanel } from "./PlayerPanel.js";
@@ -734,6 +734,14 @@ export function LiveMatch({
   const myScore = role === 1 ? state?.store1 : state?.store0;
   const oppScore = role === 1 ? state?.store0 : state?.store1;
 
+  // No-capture split countdown: when the game stalls (no capture for a while),
+  // the board is shared at NO_CAPTURE_LIMIT and the SEED LEADER wins (draw only
+  // if level) — NOT an automatic draw. Surface it only in the final stretch, and
+  // frame it by the current standing so it reads as "capture or it's decided",
+  // not a looming unfair draw.
+  const noCapLeft = state && !state.over ? NO_CAPTURE_LIMIT - state.noCaptureCount : Infinity;
+  const showSplitWarn = state !== null && !state.over && noCapLeft <= 12 && noCapLeft > 0 && !repWarn;
+
   // Tick 4×/s while a live game is on — drives both the per-move countdown
   // display and the auto-play trigger.
   useEffect(() => {
@@ -826,6 +834,19 @@ export function LiveMatch({
           style={{ alignSelf: "center", background: "rgba(240,180,40,0.16)", color: "var(--gold)", boxShadow: "inset 0 0 0 1px var(--gold)" }}
         >
           Repeating position — one more repeat scores the game as it stands
+        </div>
+      )}
+
+      {showSplitWarn && (
+        <div
+          className="chip animate-in"
+          style={{ alignSelf: "center", background: "rgba(240,180,40,0.16)", color: "var(--gold)", boxShadow: "inset 0 0 0 1px var(--gold)" }}
+        >
+          {(myScore ?? 0) === (oppScore ?? 0)
+            ? `No capture in a while — in ${noCapLeft} move${noCapLeft === 1 ? "" : "s"} each side keeps its own seeds. Level ${myScore ?? 0}–${oppScore ?? 0}, so a draw.`
+            : (myScore ?? 0) > (oppScore ?? 0)
+              ? `No capture in a while — in ${noCapLeft} move${noCapLeft === 1 ? "" : "s"} each side keeps its own seeds. You lead ${myScore ?? 0}–${oppScore ?? 0}, so it's yours.`
+              : `No capture in a while — in ${noCapLeft} move${noCapLeft === 1 ? "" : "s"} each side keeps its own seeds. Behind ${myScore ?? 0}–${oppScore ?? 0} — capture to turn it around.`}
         </div>
       )}
 
