@@ -742,6 +742,20 @@ export function LiveMatch({
   const noCapLeft = state && !state.over ? NO_CAPTURE_LIMIT - state.noCaptureCount : Infinity;
   const showSplitWarn = state !== null && !state.over && noCapLeft <= 12 && noCapLeft > 0 && !repWarn;
 
+  // Shared outcome clause for BOTH anti-stall warnings (no-capture split AND
+  // threefold repetition): neither end is an automatic draw — each side banks its
+  // own row and the SEED LEADER wins (draw only if level). State it by the live
+  // score so a leading player knows the game is already theirs and the trailer
+  // knows they must capture, rather than reading "it ends" as a looming null.
+  const _my = myScore ?? 0;
+  const _opp = oppScore ?? 0;
+  const stallOutcome =
+    _my === _opp
+      ? `Level ${_my}–${_opp}, so a draw.`
+      : _my > _opp
+        ? `You lead ${_my}–${_opp}, so it's yours.`
+        : `Behind ${_my}–${_opp} — capture to turn it around.`;
+
   // Tick 4×/s while a live game is on — drives both the per-move countdown
   // display and the auto-play trigger.
   useEffect(() => {
@@ -833,7 +847,7 @@ export function LiveMatch({
           className="chip animate-in"
           style={{ alignSelf: "center", background: "rgba(240,180,40,0.16)", color: "var(--gold)", boxShadow: "inset 0 0 0 1px var(--gold)" }}
         >
-          Repeating position — one more repeat scores the game as it stands
+          Repeating position — one more repeat ends the game. {stallOutcome}
         </div>
       )}
 
@@ -842,11 +856,7 @@ export function LiveMatch({
           className="chip animate-in"
           style={{ alignSelf: "center", background: "rgba(240,180,40,0.16)", color: "var(--gold)", boxShadow: "inset 0 0 0 1px var(--gold)" }}
         >
-          {(myScore ?? 0) === (oppScore ?? 0)
-            ? `No capture in a while — in ${noCapLeft} move${noCapLeft === 1 ? "" : "s"} each side keeps its own seeds. Level ${myScore ?? 0}–${oppScore ?? 0}, so a draw.`
-            : (myScore ?? 0) > (oppScore ?? 0)
-              ? `No capture in a while — in ${noCapLeft} move${noCapLeft === 1 ? "" : "s"} each side keeps its own seeds. You lead ${myScore ?? 0}–${oppScore ?? 0}, so it's yours.`
-              : `No capture in a while — in ${noCapLeft} move${noCapLeft === 1 ? "" : "s"} each side keeps its own seeds. Behind ${myScore ?? 0}–${oppScore ?? 0} — capture to turn it around.`}
+          {`No capture in a while — in ${noCapLeft} move${noCapLeft === 1 ? "" : "s"} each side keeps its own seeds. ${stallOutcome}`}
         </div>
       )}
 
