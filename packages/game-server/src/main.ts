@@ -1061,6 +1061,7 @@ async function openFromChain(matchId: bigint): Promise<void> {
         hub.restore(snap);
         tracked.add(key);
         console.log(`[hydrate] match ${key} restored from snapshot (ply ${snap.moves.length})`);
+        socketHandle.announceOpened(matchId); // push, don't wait for a re-watch
         return;
       }
     }
@@ -1098,7 +1099,9 @@ async function openFromChain(matchId: bigint): Promise<void> {
         } catch {
           /* too early, raced, already fixed, or receipt flake — loop re-reads */
         }
-        await new Promise((r) => setTimeout(r, 2000));
+        // we just saw OUR OWN receipt on this RPC — its next read has the block;
+        // 2s here was pure added dead-air on the players' empty board
+        await new Promise((r) => setTimeout(r, 500));
         continue;
       }
       openMatchFromChain(
@@ -1107,6 +1110,7 @@ async function openFromChain(matchId: bigint): Promise<void> {
         { chainId: BigInt(CHAIN_ID), verifier: VERIFIER, clockMs: BLITZ_CLOCK_MS },
       );
       console.log(`[hydrate] match ${key} rebuilt from chain (startTurn=${m.startTurn}, attempt ${attempt + 1})`);
+      socketHandle.announceOpened(matchId); // players are already in the room — deliver now
       return;
     }
     console.warn(`[hydrate] match ${key}: gave up after 20 attempts (~60s) — next watch retries`);
@@ -1546,7 +1550,12 @@ async function maybeSyncTournaments() {
 // an in-flight bracket reached by deep link — otherwise the chain is never polled.
 watchStartFinalized(
   publicClient as unknown as EventWatcher,
-  { escrow: ESCROW, ctx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER, clockMs: BLITZ_CLOCK_MS }, readMatch },
+  {
+    escrow: ESCROW,
+    ctx: { chainId: BigInt(CHAIN_ID), verifier: VERIFIER, clockMs: BLITZ_CLOCK_MS },
+    readMatch,
+    onOpened: (id) => socketHandle.announceOpened(id),
+  },
   hub,
 );
 

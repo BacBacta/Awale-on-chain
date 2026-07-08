@@ -148,6 +148,11 @@ export interface SocketHandle {
    *  an interval from main.ts so two people already in the queue match once
    *  their windows overlap, without needing a third arrival. */
   sweepQueues(): void;
+  /** Broadcast a just-opened match's state to every socket already waiting in
+   *  its room. Hydration (reveal block + finalizeStart) finishes several
+   *  seconds AFTER the players reach the board; without this push they sat on
+   *  an empty board until their next blind re-watch happened to land. */
+  announceOpened(matchId: bigint): void;
   /** Chain-reconciliation: drive the pairing handshake from on-chain events
    *  when the one-shot cash-created / cash-joined socket events were lost. */
   cashPairMatchCreated(creator: Address, matchId: bigint, token: string, stakeWei: string): void;
@@ -908,6 +913,13 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
       for (const [poolKey, pool] of cashPools) {
         for (const pairing of pool.sweep()) startCashPairing(pairing, poolKey);
       }
+    },
+    announceOpened(matchId: bigint) {
+      const m = hub.get(matchId);
+      if (!m) return;
+      const roomId = matchId.toString();
+      io.to(roomId).emit("state", { matchId: roomId, state: m.state, ply: m.ply, clocks: clocksOf(m), turnDeadline: turnDeadlineOf(matchId, m) });
+      armTurnClockIfNeeded(matchId, roomId);
     },
     async recoverCashPairs() {
       const store = deps.cashPairStore;

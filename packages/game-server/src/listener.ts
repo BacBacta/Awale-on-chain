@@ -80,7 +80,14 @@ const startFinalizedAbi = [
  */
 export function watchStartFinalized(
   client: EventWatcher,
-  opts: { escrow: Address; ctx: MatchContext; readMatch: (matchId: bigint) => Promise<ChainMatch> },
+  opts: {
+    escrow: Address;
+    ctx: MatchContext;
+    readMatch: (matchId: bigint) => Promise<ChainMatch>;
+    /** Called after the match opens in the hub — lets the server push the
+     *  fresh state to sockets already waiting in the match room. */
+    onOpened?: (matchId: bigint) => void;
+  },
   hub: GameHub,
 ): () => void {
   return client.watchContractEvent({
@@ -93,7 +100,10 @@ export function watchStartFinalized(
         if (matchId === undefined) continue;
         void opts
           .readMatch(matchId)
-          .then((m) => openMatchFromChain(hub, m, opts.ctx))
+          .then((m) => {
+            openMatchFromChain(hub, m, opts.ctx);
+            opts.onOpened?.(matchId);
+          })
           .catch(() => {
             /* hub already has it (hydration won the race) or the read gave up */
           });
