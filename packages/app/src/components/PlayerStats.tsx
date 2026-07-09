@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
+import { stakeTokens } from "../lib/stakeTokens.js";
 import { readContract } from "viem/actions";
 import { type Address } from "viem";
 import { getInjectedProvider, connect, publicClient } from "../lib/minipay.js";
@@ -28,6 +29,29 @@ interface Stats {
   net: bigint; // realised P&L on finished matches (prize-stake on wins, -stake on losses)
 }
 
+// The stats compute walks every local match on-chain (getMatch + settled logs)
+// — seconds on a slow RPC. Cache the last result so a revisit paints instantly
+// and refreshes in the background instead of blocking on a ~20s spinner. Keyed
+// with a version so a pre-token-filter cache can't repaint a stale wrong net.
+const STATS_CACHE = "awale:statscache:v2";
+function loadCachedStats(): Stats | null {
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(STATS_CACHE) : null;
+    if (!raw) return null;
+    const c = JSON.parse(raw) as Omit<Stats, "staked" | "net"> & { staked: string; net: string };
+    return { ...c, staked: BigInt(c.staked), net: BigInt(c.net) };
+  } catch {
+    return null;
+  }
+}
+function saveCachedStats(s: Stats): void {
+  try {
+    localStorage.setItem(STATS_CACHE, JSON.stringify({ ...s, staked: s.staked.toString(), net: s.net.toString() }));
+  } catch {
+    /* quota or SSR — the live compute still runs */
+  }
+}
+
 /** `hideRank` drops the rank/Elo row — used on the Profile page, whose hero
  *  card already shows it (no double rank). */
 export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
@@ -38,6 +62,8 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
   const [elo, setElo] = useState<number | null>(null);
 
   useEffect(() => {
+    const cached = loadCachedStats();
+    if (cached) setStats(cached); // instant paint from last visit; refreshed below
     const cfg = escrowConfig();
     const ids = listLocalMatches();
     if (!cfg || ids.length === 0) {
@@ -80,7 +106,12 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
       // wallet is a player. First match wins (current escrow first).
       const escrows = [cfg.escrow, ...legacyEscrows()];
       const me = address?.toLowerCase();
-      type Rec = { id: bigint; escrow: Address; m: { status: number; stake: bigint; player0: Address; player1: Address } };
+      // Only THIS deployment's stake token counts. A device that also played
+      // testnet games (a different, 18-dec token) must not fold those amounts
+      // into the record — summing them formats the net in the wrong decimals
+      // (an 18-dec value under a 6-dec config renders 10^12 off).
+      const knownTokens = new Set(stakeTokens().map((t) => t.address.toLowerCase()));
+      type Rec = { id: bigint; escrow: Address; m: { status: number; stake: bigint; token: Address; player0: Address; player1: Address } };
       const records = await withTimeout(
         Promise.all(
           ids.map(async (id): Promise<Rec | null> => {
@@ -121,6 +152,9 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
       for (const r of records) {
         if (!r) continue;
         const { id, m } = r;
+        // skip foreign-token (e.g. leftover testnet) matches entirely — they
+        // belong to a different currency and can't share this record's totals
+        if (knownTokens.size > 0 && !knownTokens.has(m.token.toLowerCase())) continue;
         const status = Number(m.status);
         s.staked += m.stake;
         if (status === STATUS.Open || status === STATUS.Active || status === STATUS.Proposed) {
@@ -143,6 +177,7 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
         }
       }
       setStats(s);
+      saveCachedStats(s);
     })().catch(() =>
       // total failure: zeros beat an infinite "Loading…" spinner
       setStats({ played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n }),
