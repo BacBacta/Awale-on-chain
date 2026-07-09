@@ -39,6 +39,7 @@ const STEPS: Step[] = [
     board: initialState(),
     target: 2,
     success: "That's a sow: every seed moves one house forward. You empty a house to fill the next ones.",
+    note: "A house holding 12+ seeds laps the whole board and skips over its own starting house.",
   },
   {
     title: "Capturing",
@@ -72,8 +73,9 @@ const STEPS: Step[] = [
   },
   {
     title: "Playing for money",
-    body: "Practice and the daily puzzle are always free. When you're ready, you and an opponent each put the same amount into the pot — say $1. The winner takes the pot, minus a small house fee shown before you start.",
+    body: "Practice and the daily puzzle are always free. In a money game, you and your opponent each stake the same amount into one pot — say $1. Win and you take the pot minus a small fee (shown before you start). A draw returns both stakes in full, with no fee.",
     success: "",
+    note: "One rule to remember: don't abandon a money game — if you quit, your opponent can claim the whole pot.",
   },
   {
     title: "Ready to play",
