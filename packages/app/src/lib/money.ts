@@ -62,12 +62,11 @@ export const WINNER_PCT = `${Math.round((10_000 - RAKE_BPS) / 100)}%`;
 export const FEE_PCT = rakePct(RAKE_BPS);
 
 // Share of every house fee that flows into the Weekly race pot and is paid
-// back to players each Monday. MUST track the server's LEAGUE_POOL_SHARE_BPS
-// (same 5000 default) — set NEXT_PUBLIC_LEAGUE_POOL_SHARE_BPS if the server
-// share changes. "Half the fee returns to players" is a headline benefit;
-// this constant is its single source, so a guide, an expander and an
-// onboarding screen can never quote three different numbers (the old copy
-// said 45% while the running server paid 50%).
-export const RACE_SHARE_BPS = Number(process.env.NEXT_PUBLIC_LEAGUE_POOL_SHARE_BPS ?? "5000");
-/** e.g. "50%" — the slice of each fee that returns to players via the race pot. */
+// back to players each Monday. MUST track the server's LEAGUE_POOL_SHARE_BPS —
+// production runs 4500 (45%) on both, so the default matches; set
+// NEXT_PUBLIC_LEAGUE_POOL_SHARE_BPS if the server share changes. This constant
+// is the single source for "almost half the fee returns to players", so a
+// guide, an expander and an onboarding screen can never quote different numbers.
+export const RACE_SHARE_BPS = Number(process.env.NEXT_PUBLIC_LEAGUE_POOL_SHARE_BPS ?? "4500");
+/** e.g. "45%" — the slice of each fee that returns to players via the race pot. */
 export const RACE_SHARE_PCT = `${Math.round(RACE_SHARE_BPS / 100)}%`;

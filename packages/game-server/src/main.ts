@@ -382,7 +382,7 @@ const asyncMatches = new AsyncMatchService(matchStore, notifier, {
 const league = new WeeklyLeague(leagueStore, {
   minGames: Number(process.env.LEAGUE_MIN_GAMES ?? "5"),
   pairCap: Number(process.env.LEAGUE_PAIR_CAP ?? "3"),
-  poolShareBps: Number(process.env.LEAGUE_POOL_SHARE_BPS ?? "5000"),
+  poolShareBps: Number(process.env.LEAGUE_POOL_SHARE_BPS ?? "4500"), // production runs 45%
   // until verified-payout is live, an unclaimed pot must not compound into a
   // sybil-worthy prize — default cap: 25 tokens, at the stake token's decimals
   // (a hardcoded 18-dec literal was ~25 trillion USDT — no cap at all)
