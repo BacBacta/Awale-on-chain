@@ -12,6 +12,9 @@ export interface BoardProps {
   onPlay?: (house: number) => void;
   /** Houses (0..5, relative to `perspective`) currently playable; [] disables input. */
   playable?: number[];
+  /** Coach's recommended house (0..5): drawn with a distinct gold pulse so a
+   *  learner knows exactly where to tap. null = no suggestion. */
+  suggest?: number | null;
   /** Cosmetic skin asset urls (wood texture + seed sprite). */
   skin?: { wood: string; seed: string };
   /** Decorative use (e.g. the home hero): no sound, no haptics. */
@@ -123,6 +126,7 @@ function Pit({
   seeds,
   prevSeeds,
   active,
+  suggested,
   captured,
   origin,
   seedAsset,
@@ -133,6 +137,7 @@ function Pit({
   seeds: number;
   prevSeeds: number;
   active: boolean;
+  suggested?: boolean;
   captured: boolean;
   origin: boolean;
   seedAsset: string;
@@ -158,6 +163,14 @@ function Pit({
       {active && (
         <circle cx={x} cy={y} r={R + 0.5} fill="none" stroke="var(--accent)" strokeWidth={3.5} filter="url(#glow)">
           <animate attributeName="opacity" values="1;0.45;1" dur="1.3s" repeatCount="indefinite" />
+        </circle>
+      )}
+      {/* coach's pick: a brighter gold ring that also breathes in size, so a
+          learner's eye goes straight to the house they should tap */}
+      {suggested && (
+        <circle cx={x} cy={y} r={R + 3} fill="none" stroke="var(--gold)" strokeWidth={4} filter="url(#glow)">
+          <animate attributeName="r" values={`${R + 3};${R + 7};${R + 3}`} dur="1.1s" repeatCount="indefinite" />
+          <animate attributeName="opacity" values="1;0.5;1" dur="1.1s" repeatCount="indefinite" />
         </circle>
       )}
       {/* seeds — 3D-rendered glossy sprites */}
@@ -187,7 +200,7 @@ function Pit({
   );
 }
 
-export function Board({ state, perspective = 0, onPlay, playable = [], skin = DEFAULT_SKIN, silent = false }: BoardProps) {
+export function Board({ state, perspective = 0, onPlay, playable = [], suggest = null, skin = DEFAULT_SKIN, silent = false }: BoardProps) {
   // `disp` is what we render; it animates toward the real `state`.
   const [disp, setDisp] = useState<GameState>(state);
   const prevDisp = usePrevious(disp);
@@ -387,6 +400,7 @@ export function Board({ state, perspective = 0, onPlay, playable = [], skin = DE
               seeds={disp.pits[idx]}
               prevSeeds={prevPits[idx]}
               active={active}
+              suggested={suggest === col && !isAnimating}
               captured={captured.includes(idx)}
               origin={origin === idx}
               seedAsset={skin.seed}

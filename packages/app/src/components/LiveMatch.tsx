@@ -749,6 +749,21 @@ export function LiveMatch({
   const myScore = role === 1 ? state?.store1 : state?.store0;
   const oppScore = role === 1 ? state?.store0 : state?.store1;
 
+  // Must-feed rule — the common "why can't I tap that house?" moment. When the
+  // opponent's row is empty, only moves that reach their side are legal, so some
+  // of your houses grey out. Surface WHY, or a newcomer just sees dead houses.
+  const mustFeed = (() => {
+    if (!myTurn || state === null || role === null) return false;
+    const oppBase = role === 0 ? 6 : 0;
+    const myBase = role === 0 ? 0 : 6;
+    let oppSum = 0;
+    for (let i = 0; i < 6; i++) oppSum += state.pits[oppBase + i];
+    if (oppSum !== 0) return false;
+    const mask = legalMovesMask(state);
+    for (let h = 0; h < 6; h++) if (state.pits[myBase + h] > 0 && !(mask & (1 << h))) return true;
+    return false;
+  })();
+
   // No-capture split countdown: when the game stalls (no capture for a while),
   // the board is shared at NO_CAPTURE_LIMIT and the SEED LEADER wins (draw only
   // if level) — NOT an automatic draw. Surface it only in the final stretch, and
@@ -910,6 +925,21 @@ export function LiveMatch({
         <button className="btn block" onClick={collectNow} disabled={collecting}>
           {collecting ? "Collecting…" : "Collect your winnings now"}
         </button>
+      )}
+
+      {state && !state.over && !chainEnded && !timedOut && (
+        <div className="faint" style={{ alignSelf: "center", fontSize: 12.5 }}>
+          🎯 First to <b style={{ color: "var(--text)" }}>25 seeds</b> wins — you {myScore ?? 0} · {displayName(oppAddr)} {oppScore ?? 0}
+        </div>
+      )}
+
+      {mustFeed && (
+        <div
+          className="chip animate-in"
+          style={{ alignSelf: "center", background: "rgba(76,229,132,0.14)", color: "var(--accent)", boxShadow: "inset 0 0 0 1px var(--accent)" }}
+        >
+          Your opponent has no seeds — you must play a move that reaches their side
+        </div>
       )}
 
       {state ? (

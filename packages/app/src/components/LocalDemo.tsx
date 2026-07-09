@@ -38,6 +38,18 @@ function legalHouses(s: GameState): number[] {
   return out;
 }
 
+/** True when the "must feed" rule is what greys out some of the player's houses:
+ *  the opponent's row is empty, so only moves that hand them seeds are legal.
+ *  Drives an in-context hint, since a beginner just sees houses they can't tap. */
+function mustFeedActive(s: GameState): boolean {
+  if (s.over || s.turn !== 0) return false;
+  const oppEmpty = s.pits.slice(6, 12).reduce((a, b) => a + b, 0) === 0;
+  if (!oppEmpty) return false;
+  const legal = new Set(legalHouses(s));
+  for (let h = 0; h < 6; h++) if (s.pits[h] > 0 && !legal.has(h)) return true;
+  return false;
+}
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const DIFFICULTIES: Difficulty[] = ["easy", "medium", "hard"];
@@ -51,6 +63,11 @@ export function LocalDemo() {
   const [busy, setBusy] = useState(false);
   const [thinking, setThinking] = useState(false);
   const [difficulty, setDifficulty] = useState<Difficulty>("medium");
+  // Coach (first practice games): suggest the strongest move + why, so a beginner
+  // learns by seeing the consequence. Fades once they've played a couple of games
+  // or dismiss it. Computed off the render path — chooseMove("hard") isn't free.
+  const [coachOn, setCoachOn] = useState(false);
+  const [coach, setCoach] = useState<{ house: number; captures: number } | null>(null);
   const [showOverlay, setShowOverlay] = useState(false);
   const [skin, setSkin] = useState<EquippedSkin | undefined>(undefined);
   const [drawDeclined, setDrawDeclined] = useState(false);
@@ -65,6 +82,12 @@ export function LocalDemo() {
 
   useEffect(() => {
     if (state.over) {
+      try {
+        const games = Number(localStorage.getItem("awale_practice_games") ?? "0");
+        localStorage.setItem("awale_practice_games", String(games + 1)); // beginner coach fades after 2
+      } catch {
+        /* ignore */
+      }
       const t = setTimeout(() => setShowOverlay(true), 600);
       // feeds the beginner quest ("play a practice game") — best-effort,
       // needs a wallet identity to credit
@@ -81,10 +104,48 @@ export function LocalDemo() {
     track("practice_start");
     try {
       localStorage.setItem("awale_played", "1"); // unlocks League/Skins in the nav
+      // beginners: gentle AI + coach on. Both fade after a couple of games so a
+      // returning player isn't nagged or sandbagged.
+      const games = Number(localStorage.getItem("awale_practice_games") ?? "0");
+      if (games < 2) setDifficulty("easy");
+      if (games < 2 && localStorage.getItem("awale_coach_off") !== "1") setCoachOn(true);
     } catch {
       /* ignore */
     }
   }, []);
+
+  // Coach pick, computed off the render path (chooseMove("hard") can take a beat).
+  useEffect(() => {
+    if (!coachOn || busy || state.over || state.turn !== 0) {
+      setCoach(null);
+      return;
+    }
+    let alive = true;
+    const id = setTimeout(() => {
+      try {
+        const house = chooseMove(state, "hard");
+        const captures = applyMove(state, house).store0 - state.store0;
+        if (alive) setCoach({ house, captures });
+      } catch {
+        if (alive) setCoach(null);
+      }
+    }, 60);
+    return () => {
+      alive = false;
+      clearTimeout(id);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ply, coachOn, busy, state.over, state.turn]);
+
+  function dismissCoach() {
+    setCoachOn(false);
+    setCoach(null);
+    try {
+      localStorage.setItem("awale_coach_off", "1");
+    } catch {
+      /* ignore */
+    }
+  }
 
   const playable = state.turn === 0 && !state.over && !busy ? legalHouses(state) : [];
   const result: 0 | 1 | 2 | null = state.over ? (state.winner as 0 | 1 | 2) : null;
@@ -209,6 +270,35 @@ export function LocalDemo() {
         </div>
       )}
 
+      {/* the goal, always in view — a beginner never has to remember "why 25?" */}
+      {!state.over && (
+        <div className="faint" style={{ alignSelf: "center", fontSize: 12.5 }}>
+          🎯 First to <b style={{ color: "var(--text)" }}>25 seeds</b> wins — you {state.store0} · AI {state.store1}
+        </div>
+      )}
+
+      {/* must-feed: the one rule that silently greys out houses */}
+      {mustFeedActive(state) && !state.over && (
+        <div className="chip animate-in" style={{ alignSelf: "center", background: "rgba(76,229,132,0.14)", color: "var(--accent)", borderColor: "var(--accent)" }}>
+          <Icon name="info" size={14} /> The AI has no seeds — you must play a move that reaches its side
+        </div>
+      )}
+
+      {/* coach: point at the strongest move and say what it does */}
+      {coach && !state.over && state.turn === 0 && !busy && (
+        <div className="chip animate-in" style={{ alignSelf: "center", gap: 8, background: "rgba(245,196,81,0.14)", color: "var(--gold)", borderColor: "var(--gold)" }}>
+          <span>
+            💡{" "}
+            {coach.captures > 0
+              ? `Tap the gold house — you'll capture ${coach.captures} seed${coach.captures > 1 ? "s" : ""}`
+              : "Tap the gold house — the strongest move here"}
+          </span>
+          <button className="btn ghost" style={{ padding: "2px 8px", fontSize: 11.5 }} onClick={dismissCoach}>
+            Got it
+          </button>
+        </div>
+      )}
+
       <div className="stack" style={{ gap: 14, marginTop: 4 }}>
         <PlayerPanel
           name={`AI · ${difficulty[0].toUpperCase() + difficulty.slice(1)}`}
@@ -216,7 +306,7 @@ export function LocalDemo() {
           active={state.turn === 1 && !state.over}
           thinking={thinking}
         />
-        <Board state={state} onPlay={play} playable={playable} skin={skin} />
+        <Board state={state} onPlay={play} playable={playable} suggest={coach?.house ?? null} skin={skin} />
         <PlayerPanel name="You" you score={state.store0} active={state.turn === 0 && !state.over} />
       </div>
       <div className="spacer" />
