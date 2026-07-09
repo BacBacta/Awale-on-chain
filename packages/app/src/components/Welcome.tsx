@@ -97,7 +97,7 @@ export function Welcome() {
           className="card flat stack"
           style={{ width: "100%", gap: 10, padding: "12px 14px", background: "rgba(255,255,255,0.04)" }}
         >
-          <Promise_ icon="⚡">Learn in 30 seconds — free games, forever</Promise_>
+          <Promise_ icon="⚡">Learn the rules in a minute — free games, forever</Promise_>
           <Promise_ icon="💰">
             Win money: <b style={{ color: "var(--text)" }}>{WINNER_PCT} of the pot</b>, paid straight to your wallet
           </Promise_>

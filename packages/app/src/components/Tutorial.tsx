@@ -23,37 +23,61 @@ interface Step {
   target?: number;
   /** Shown once the move is played. */
   success: string;
+  /** A fine-point rule callout shown under the body (optional). */
+  note?: string;
 }
 
 const STEPS: Step[] = [
   {
     title: "The goal",
-    body: "Awalé is a two-player game. Each player sows seeds around the board and tries to capture as many as possible into their store. Whoever holds the most seeds at the end wins.",
+    body: "Awalé is played with 48 seeds across 12 houses. On your turn you sow one house's seeds around the board. Bank more than half — 25 seeds — into your store and you win.",
     success: "",
   },
   {
     title: "Sowing",
-    body: "Tap the highlighted house. Its seeds are scooped up and dropped one by one into the following houses, going counter-clockwise.",
+    body: "Tap the glowing house. Its seeds are scooped up and dropped one by one into each house that follows, going counter-clockwise — right along your row, then up and around.",
     board: initialState(),
     target: 2,
-    success: "That's sowing: each seed lands in the next house. It's the heart of the game.",
+    success: "That's a sow: every seed moves one house forward. You empty a house to fill the next ones.",
   },
   {
     title: "Capturing",
-    body: "If your last seed lands in one of your opponent's houses (the top row) and brings it to 2 or 3 seeds, you capture them! Tap the highlighted house.",
+    body: "The scoring move: if your LAST seed lands in one of your opponent's houses (the top row) and leaves it on exactly 2 or 3 seeds, you scoop those into your store. Tap the glowing house.",
     // bottom row: only house 5 has a seed; opponent pit 6 has 1 → playing 5 lands in 6 making it 2 → capture
     board: makeState([0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0]),
     target: 5,
-    success: "Capture! The seeds go into your store (on the right). That's how you score.",
+    success: "Capture! Banked in your store on the right. Captures happen only on your opponent's row, only on a 2 or a 3.",
+  },
+  {
+    title: "Chain capture",
+    body: "It gets better: after a capture, if the house just BEFORE it (still on your opponent's row) also holds 2 or 3, you take that one too — and keep walking back while the run lasts. Tap the glowing house.",
+    // house 5 has 2 → sows pit6 (1→2) and pit7 (2→3); last on pit7=3 captures, walks back to pit6=2 → 5 seeds
+    board: makeState([0, 0, 0, 0, 0, 2, 1, 2, 1, 0, 0, 0]),
+    target: 5,
+    success: "Five seeds in one move — your last seed made a 3, the house before it a 2, both captured. Chains are how big swings happen.",
+    note: "The one limit: a move that would capture ALL your opponent's seeds captures nothing — you can't wipe them out in a single stroke.",
+  },
+  {
+    title: "Feed your opponent",
+    body: "If your opponent has no seeds, you MUST play a move that reaches their side and gives them some. Houses that can't do that are greyed out — here only the glowing one is legal. Tap it.",
+    // opponent row empty; house 3 (1 seed) stays on your side (illegal), house 5 (2) reaches → only legal move
+    board: makeState([0, 0, 0, 1, 0, 2, 0, 0, 0, 0, 0, 0]),
+    target: 5,
+    success: "Your opponent has seeds to play again. If NO move can feed them, the game ends and each side keeps the seeds on its own row.",
+  },
+  {
+    title: "How a game ends",
+    body: "A game ends the instant someone banks 25 seeds — they win. It also ends if the seeds just cycle with no captures, or a player can't move: each side then collects its own row, and the higher total wins (level is a draw).",
+    success: "",
   },
   {
     title: "Playing for money",
-    body: "Practice and the daily puzzle are always free. When you're ready, you and an opponent can each put the same amount into the pot — say $1. The winner takes the pot, minus a small house fee shown before you start.",
+    body: "Practice and the daily puzzle are always free. When you're ready, you and an opponent each put the same amount into the pot — say $1. The winner takes the pot, minus a small house fee shown before you start.",
     success: "",
   },
   {
     title: "Ready to play",
-    body: "That's all you need to get started. You'll pick up the finer points as you play. Have a great game!",
+    body: "You've got it: sow, capture on 2 or 3, chain, feed, race to 25. Everything else is strategy you'll sharpen every match. Have a great game!",
     success: "",
   },
 ];
@@ -103,10 +127,15 @@ export function Tutorial() {
         <div className="card stack animate-in" style={{ gap: 8 }} key={step}>
           <span className="h2">{s.title}</span>
           <span className="muted">{solved && s.success ? s.success : s.body}</span>
+          {s.note && (
+            <span className="faint" style={{ fontSize: 12.5, borderTop: "1px solid var(--line)", paddingTop: 8 }}>
+              💡 {s.note}
+            </span>
+          )}
         </div>
 
         {board ? (
-          <Board state={board} onPlay={onPlay} playable={playable} />
+          <Board state={board} onPlay={onPlay} playable={playable} suggest={playable[0] ?? null} />
         ) : (
           <div style={{ opacity: 0.55, pointerEvents: "none" }} aria-hidden>
             <Board state={initialState()} onPlay={() => {}} playable={[]} />

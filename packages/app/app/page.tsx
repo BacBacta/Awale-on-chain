@@ -276,7 +276,7 @@ export default function Lobby() {
           sub={didDaily ? `Solved · ${streak}-day streak 🔥` : streak > 0 ? `Keep your ${streak}-day streak 🔥` : "Solve one capture a day"}
         />
         {showLearnHint ? (
-          <NavRow href="/learn" icon="info" tone="gold" title="How to play" sub="New here? Learn in 30 seconds" />
+          <NavRow href="/learn" icon="info" tone="gold" title="How to play" sub="New here? Learn the rules in a minute" />
         ) : (
           <NavRow href="/play" icon="play" title="Practice vs AI" sub="Pick your level — always free" />
         )}
