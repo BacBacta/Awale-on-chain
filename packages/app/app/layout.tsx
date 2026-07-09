@@ -16,6 +16,11 @@ export const metadata: Metadata = {
   // Discover/listing + home-screen icon (MiniPay listing requires them)
   manifest: "/manifest.webmanifest",
   icons: { icon: "/icon.svg", apple: "/icon.svg" },
+  // Talent Protocol / talentapp project-ownership verification tag
+  other: {
+    "talentapp:project_verification":
+      "752849dfa6995b98e2390869978d90a693ca4172addff158af5c14031ccf9a0977fd3d266919960aee8db71e6453787e1b2ba20f8960c0892b30f4b7d25f485f",
+  },
 };
 
 export const viewport: Viewport = {
