@@ -73,7 +73,7 @@ const STEPS: Step[] = [
   },
   {
     title: "Playing for money",
-    body: "Practice and the daily puzzle are always free. In a money game, you and your opponent each stake the same amount into one pot — say $1. Win and you take the pot minus a small fee (shown before you start). A draw returns both stakes in full, with no fee.",
+    body: "Practice and the daily puzzle are always free. In a money game, you and your opponent each stake the same amount into one pot — say $1. Win and you take the pot minus a small fee (shown before you start). A draw returns both stakes in full, with no fee. And almost half of every fee flows straight back to players each week through the Weekly race.",
     success: "",
     note: "One rule to remember: don't abandon a money game — if you quit, your opponent can claim the whole pot.",
   },
