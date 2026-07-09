@@ -533,6 +533,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
       io.to(pairing.b.id).emit("matched", { matchId: id, role: 1, opponent: pairing.a.address, casual: true });
       io.to(pairing.a.id).emit("state", { matchId: id, state: m.state, ply: 0, clocks: clocksOf(m) });
       io.to(pairing.b.id).emit("state", { matchId: id, state: m.state, ply: 0, clocks: clocksOf(m) });
+      console.log(`[matched] casual match=${id} a=${pairing.a.address?.slice(0, 10)} b=${pairing.b.address?.slice(0, 10)}`); // TEMP diag
       return;
     }
 
@@ -566,6 +567,7 @@ export function attachSocketIO(io: Server, deps: ServerDeps): SocketHandle {
           elo: serverElo ?? msg.elo,
           sessionPubKey: msg.sessionPubKey,
         });
+        console.log(`[queue] addr=${msg.address?.slice(0, 10)} mode=${mode} elo=${serverElo ?? msg.elo} poolSize=${pool.queueSize} pairedNow=${!!pairing} hasSess=${!!msg.sessionPubKey}`); // TEMP diag
         if (pairing) {
           completePairing(pairing);
         } else {
