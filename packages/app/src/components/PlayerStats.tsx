@@ -27,13 +27,14 @@ interface Stats {
   inProgress: number;
   staked: bigint; // total ever staked across local matches
   net: bigint; // realised P&L on finished matches (prize-stake on wins, -stake on losses)
+  excluded: number; // matches in another currency, not folded into this token's totals
 }
 
 // The stats compute walks every local match on-chain (getMatch + settled logs)
 // — seconds on a slow RPC. Cache the last result so a revisit paints instantly
 // and refreshes in the background instead of blocking on a ~20s spinner. Keyed
 // with a version so a pre-token-filter cache can't repaint a stale wrong net.
-const STATS_CACHE = "awale:statscache:v2";
+const STATS_CACHE = "awale:statscache:v3";
 function loadCachedStats(): Stats | null {
   try {
     const raw = typeof localStorage !== "undefined" ? localStorage.getItem(STATS_CACHE) : null;
@@ -67,7 +68,7 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
     const cfg = escrowConfig();
     const ids = listLocalMatches();
     if (!cfg || ids.length === 0) {
-      setStats({ played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n });
+      setStats({ played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n, excluded: 0 });
       const p = getInjectedProvider();
       if (cfg && p)
         connect(p, cfg.chainId)
@@ -148,13 +149,17 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
         }
       }
 
-      const s: Stats = { played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n };
+      const s: Stats = { played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n, excluded: 0 };
       for (const r of records) {
         if (!r) continue;
         const { id, m } = r;
-        // skip foreign-token (e.g. leftover testnet) matches entirely — they
-        // belong to a different currency and can't share this record's totals
-        if (knownTokens.size > 0 && !knownTokens.has(m.token.toLowerCase())) continue;
+        // skip foreign-token (e.g. USDm or leftover testnet) matches — they
+        // belong to a different currency and can't share this record's totals;
+        // count them so the UI can say WHY the tallies exclude them
+        if (knownTokens.size > 0 && !knownTokens.has(m.token.toLowerCase())) {
+          s.excluded += 1;
+          continue;
+        }
         const status = Number(m.status);
         s.staked += m.stake;
         if (status === STATUS.Open || status === STATUS.Active || status === STATUS.Proposed) {
@@ -180,7 +185,7 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
       saveCachedStats(s);
     })().catch(() =>
       // total failure: zeros beat an infinite "Loading…" spinner
-      setStats({ played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n }),
+      setStats({ played: 0, won: 0, lost: 0, drawn: 0, inProgress: 0, staked: 0n, net: 0n, excluded: 0 }),
     );
   }, []);
 
@@ -269,6 +274,12 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
           {fmt(stats.net < 0n ? -stats.net : stats.net, STAKE_DECIMALS)} {STAKE_SYMBOL}
         </span>
       </div>
+
+      {stats.excluded > 0 && (
+        <span className="faint" style={{ fontSize: 11.5 }}>
+          {stats.excluded} game{stats.excluded > 1 ? "s" : ""} in another currency {stats.excluded > 1 ? "aren’t" : "isn’t"} counted here — this record is in {STAKE_SYMBOL}.
+        </span>
+      )}
     </div>
   );
 }
