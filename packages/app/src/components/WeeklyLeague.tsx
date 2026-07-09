@@ -10,7 +10,7 @@
 // feature at /league). Code/API identifiers keep the historical league name.
 
 import { useEffect, useState } from "react";
-import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
+import { stakeTokens } from "../lib/stakeTokens.js";
 import Link from "next/link";
 import type { Address } from "viem";
 import { getInjectedProvider, connect } from "../lib/minipay.js";
@@ -54,6 +54,12 @@ export function WeeklyLeague() {
   if (!data) return null;
 
   const pool = BigInt(data.poolWei);
+  // Format the pot by the token it's ACTUALLY denominated in (from the payload),
+  // never a global decimals — an amount in a token this build doesn't recognise
+  // (e.g. leftover 18-dec testnet data served under a 6-dec mainnet config) is
+  // untrusted and would render 10^12 off, so fall back to the neutral copy.
+  const potToken = data.token ? stakeTokens().find((t) => t.address.toLowerCase() === data.token!.toLowerCase()) : undefined;
+  const showPot = pool > 0n && potToken != null;
   const entered = data.me !== null && data.me.games >= data.minGames;
   const played = data.me?.games ?? 0;
 
@@ -72,10 +78,10 @@ export function WeeklyLeague() {
         </div>
 
         {/* the pot is the hero — one big number, in money-green */}
-        {pool > 0n ? (
+        {showPot ? (
           <div className="col" style={{ gap: 2 }}>
-            <span className="display" style={{ color: "var(--accent)", fontSize: 34, lineHeight: 0.95, fontVariantNumeric: "tabular-nums" }}>
-              {fmt(pool, STAKE_DECIMALS)} {STAKE_SYMBOL}
+            <span className="display" style={{ color: "var(--accent)", fontSize: 34, lineHeight: 0.95, fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" }}>
+              {fmt(pool, potToken!.decimals)} {potToken!.symbol}
             </span>
             <span className="faint">this week&apos;s pot · splits by points on Monday</span>
           </div>

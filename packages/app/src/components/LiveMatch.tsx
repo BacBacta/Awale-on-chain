@@ -38,6 +38,14 @@ function legalHouses(s: GameState): number[] {
   return out;
 }
 
+/** Casual match ids are ~77-digit randoms; on-chain ids are small sequentials.
+ *  Shorten the long ones (like a tx hash) so the header chip can't blow past
+ *  the 384px frame and pan the whole page sideways. */
+function shortMatchId(id: bigint): string {
+  const s = id.toString();
+  return s.length > 12 ? `${s.slice(0, 6)}…${s.slice(-4)}` : s;
+}
+
 interface WireTranscript {
   matchId: string;
   session0: Address;
@@ -812,7 +820,7 @@ export function LiveMatch({
               settled
             </span>
           )}
-          <span className="chip">match #{matchId.toString()}</span>
+          <span className="chip">match #{shortMatchId(matchId)}</span>
           <SoundToggle />
         </span>
       </div>
@@ -926,7 +934,7 @@ export function LiveMatch({
       ) : joinOffer ? (
         // the invite link's landing: take the empty seat right here
         <div className="card stack animate-in" style={{ gap: 12, alignItems: "center", textAlign: "center" }}>
-          <span className="chip gold">Match #{matchId.toString()}</span>
+          <span className="chip gold">Match #{shortMatchId(matchId)}</span>
           <span className="h2">You&apos;re invited to a money match</span>
           <span className="muted">
             You each stake {fmt(joinOffer.stake, STAKE_DECIMALS)} · winner takes{" "}

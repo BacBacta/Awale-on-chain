@@ -96,6 +96,9 @@ body {
   font-family: var(--font-ui), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  /* Safety net: nothing may ever scroll the page sideways. A single overwide
+     child (a long id, a mis-decimaled amount) used to let the whole app pan. */
+  overflow-x: hidden;
   /* Ambient mesh — restrained, warm; depth without the "crypto template" look. */
   background:
     radial-gradient(50% 40% at 12% -5%, rgba(76, 229, 132, 0.1) 0%, transparent 60%),
