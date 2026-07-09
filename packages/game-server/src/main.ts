@@ -7,7 +7,7 @@
 
 import { createServer } from "node:http";
 import { Server } from "socket.io";
-import { createPublicClient, createWalletClient, fallback, http, parseAbiItem, type Address, type Hex } from "viem";
+import { createPublicClient, createWalletClient, fallback, formatUnits, http, parseAbiItem, type Address, type Hex } from "viem";
 import { celo, celoSepolia, celoAlfajores } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
 import { createNonceManager, jsonRpc } from "viem/nonce";
@@ -73,6 +73,12 @@ import type { PersonhoodRegistry } from "./personhood/types.js";
 
 const RPC_URL = required("RPC_URL");
 const CHAIN_ID = Number(process.env.CHAIN_ID ?? "11142220");
+// The stake token's decimals + symbol — used for stake-band boundaries AND any
+// human-readable amount the server emits (e.g. the "you won X" push). Must match
+// the token the escrow actually holds (USDT = 6). A wrong value silently shows
+// a 10^12-off amount, or rounds a real win to "0".
+const STAKE_DECIMALS = Number(process.env.STAKE_DECIMALS ?? "18");
+const STAKE_SYMBOL = process.env.STAKE_SYMBOL ?? "";
 const ESCROW = required("ESCROW_ADDRESS") as Address;
 const VERIFIER = required("VERIFIER_ADDRESS") as Address;
 const PORT = Number(process.env.PORT ?? "8080");
@@ -378,8 +384,9 @@ const league = new WeeklyLeague(leagueStore, {
   pairCap: Number(process.env.LEAGUE_PAIR_CAP ?? "3"),
   poolShareBps: Number(process.env.LEAGUE_POOL_SHARE_BPS ?? "5000"),
   // until verified-payout is live, an unclaimed pot must not compound into a
-  // sybil-worthy prize — default cap: 25 tokens (18 decimals)
-  maxCarryWei: BigInt(process.env.LEAGUE_MAX_CARRY_WEI ?? "25000000000000000000"),
+  // sybil-worthy prize — default cap: 25 tokens, at the stake token's decimals
+  // (a hardcoded 18-dec literal was ~25 trillion USDT — no cap at all)
+  maxCarryWei: BigInt(process.env.LEAGUE_MAX_CARRY_WEI ?? String(25n * 10n ** BigInt(STAKE_DECIMALS))),
   refBonusCap: Number(process.env.LEAGUE_REF_BONUS_CAP ?? "5"),
 });
 /** League points a referrer earns when their friend settles a first cash game. */
@@ -1152,7 +1159,7 @@ const socketHandle = attachSocketIO(io, {
     maxGap: Number(process.env.CASH_MAX_GAP ?? "350"),
   },
   // stake-band boundaries (P0-3) are computed at this token's decimals
-  stakeDecimals: Number(process.env.STAKE_DECIMALS ?? "18"),
+  stakeDecimals: STAKE_DECIMALS,
   cashPairStore,
   openFromChain,
 });
@@ -1601,7 +1608,12 @@ async function onSettled(matchId: bigint, winner: number, prizeWei: bigint, at: 
     )) as { token: Address; stake: bigint; player0: Address; player1: Address; rakeBps: number };
     hub.close(matchId); // confirmed on-chain — free the room and its snapshot
     await league.recordGame([m.player0, m.player1], winner, BigInt(m.stake) * 2n, Number(m.rakeBps), m.token, at);
-  const human = (wei: bigint) => (Number(wei) / 1e18).toFixed(2).replace(/\.00$/, ""); // test token: 18 decimals
+  // format at the stake token's REAL decimals (was hardcoded /1e18 — a 6-dec
+  // USDT prize rounded to "0"); append the symbol when one is configured
+  const human = (wei: bigint) => {
+    const n = Number(formatUnits(wei, STAKE_DECIMALS)).toFixed(2).replace(/\.00$/, "");
+    return STAKE_SYMBOL ? `${n} ${STAKE_SYMBOL}` : n;
+  };
   if (winner === 2) {
     // draw: both stakes came back in full — say so, or the refund is silent
     for (const p of [m.player0, m.player1]) {

@@ -1,9 +1,20 @@
-// Single source for stake-token DISPLAY (decimals + symbol). Every screen reads
-// THESE — never its own process.env with a divergent 6/18 default — so the same
-// on-chain amount can't render 10^12× off between two tabs (it did: LiveMatch
-// defaulted 6, WeeklyLeague 18). Mainnet sets both env vars to the real token
-// (USDC 6, cUSD 18, …); the default matches the testnet aUSD (18) so an unset
-// env is still internally consistent rather than silently wrong on one screen.
+// Single source for stake-token DISPLAY (decimals + symbol) — the PRIMARY token.
+//
+// DERIVED from the stake-token registry (stakeTokens()) so it can NEVER drift
+// from the token the game actually uses. The old design read separate
+// NEXT_PUBLIC_STAKE_DECIMALS / NEXT_PUBLIC_STAKE_SYMBOL env vars, which let the
+// symbol fall back to "aUSD" while NEXT_PUBLIC_STAKE_TOKENS already said USDT —
+// so every amount in the app was labelled in the wrong currency. One registry,
+// one truth: set NEXT_PUBLIC_STAKE_TOKENS and every screen agrees.
+//
+// Multi-token screens (MatchActions, WeeklyLeague, PlayerStats) still read
+// per-token decimals from stakeTokens()/the payload directly; THESE globals are
+// only the default/primary token for the many single-token display sites.
 
-export const STAKE_DECIMALS = Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
-export const STAKE_SYMBOL = process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "aUSD";
+import { stakeTokens } from "./stakeTokens.js";
+
+const primary = stakeTokens()[0];
+
+// env fallbacks kept only for a deployment with no token registry configured
+export const STAKE_DECIMALS = primary?.decimals ?? Number(process.env.NEXT_PUBLIC_STAKE_DECIMALS ?? "18");
+export const STAKE_SYMBOL = primary?.symbol ?? process.env.NEXT_PUBLIC_STAKE_SYMBOL ?? "aUSD";
