@@ -9,12 +9,14 @@ import { track } from "../lib/analytics.js";
 import { Icon } from "./Icon.js";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
-// AI-fallback window (P2-8): adaptive on the server's queue-depth hint. When
-// the pool is empty nobody is coming soon, so fall back fast; when a human
-// candidate is already waiting, give the pairing the full window. Never exceed
-// the max, never remove the fallback (the CTA must always yield a game).
-const FALLBACK_MAX_MS = 12_000;
-const FALLBACK_EMPTY_MS = 6_000;
+// AI-fallback window (P2-8): adaptive on the server's queue-depth hint. When a
+// human candidate is already waiting, give the pairing the full window; when the
+// pool is empty, still hold ~12s — two players who tap Quick Match a few seconds
+// apart (the common case with a small base) must have time to find each other
+// before either drops to a bot. Never remove the fallback (the CTA must always
+// yield a game).
+const FALLBACK_MAX_MS = 15_000;
+const FALLBACK_EMPTY_MS = 12_000;
 
 // Casual Quick Match: queue on the server's ELO matchmaker and jump into an
 // off-chain live game on pairing. If no opponent shows up, fall back to the AI
