@@ -4,9 +4,28 @@
 // splits the rest pro-rata to points. Prizes are CREDITED, not pushed — the
 // winner collects with one tap (POST /league/claim).
 
-import type { Address, Hex } from "viem";
+import { parseUnits, type Address, type Hex } from "viem";
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
+
+/** Player-facing name of a specially-funded race. */
+export const BLITZ_LABEL = "Weekend Blitz";
+
+/**
+ * A "blitz" is a race whose pot has been provisioned well above the few cents a
+ * normal week's rake makes (via the operator seed) — i.e. a funded special
+ * event. It drives the premium home banner and the dedicated Blitz tab, and
+ * auto-clears at Monday's rollover when the pool resets. Threshold is
+ * NEXT_PUBLIC_BLITZ_MIN_USD (default $5), in the stake token's units.
+ */
+export function isBlitzActive(poolWei: string, decimals: number): boolean {
+  try {
+    const min = process.env.NEXT_PUBLIC_BLITZ_MIN_USD ?? "5";
+    return BigInt(poolWei) >= parseUnits(min as `${number}`, decimals);
+  } catch {
+    return false;
+  }
+}
 
 /** Minimal ABI for claiming a Weekly-race prize from the on-chain distributor. */
 export const weeklyPrizesAbi = [

@@ -18,6 +18,8 @@ import { WeeklyLeague } from "../../src/components/WeeklyLeague.js";
 import { Icon, type IconName } from "../../src/components/Icon.js";
 import { RankHero } from "../../src/components/RankHero.js";
 import { harvestAddress, leagueComingSoon } from "../../src/lib/league.js";
+import { getWeeklyLeague, weeklyLeagueEnabled, isBlitzActive, BLITZ_LABEL } from "../../src/lib/weeklyLeague.js";
+import { STAKE_DECIMALS } from "../../src/lib/stake.js";
 
 function Row({ href, icon, title, sub, badge }: { href: string; icon: IconName; title: string; sub: string; badge?: string }) {
   return (
@@ -55,6 +57,8 @@ function Row({ href, icon, title, sub, badge }: { href: string; icon: IconName; 
 export default function Compete() {
   const [profile, setProfile] = useState<PlayerProfile | null>(null);
   const [streak, setStreak] = useState(0);
+  const [blitz, setBlitz] = useState(false);
+  const [tab, setTab] = useState<"blitz" | "progress">("blitz");
 
   useEffect(() => {
     setStreak(streakCount());
@@ -69,8 +73,23 @@ export default function Compete() {
       .catch(() => {});
   }, []);
 
+  // is a funded special race live? drives the Blitz tab (auto-off at rollover)
+  useEffect(() => {
+    if (!weeklyLeagueEnabled()) return;
+    let alive = true;
+    getWeeklyLeague()
+      .then((s) => {
+        if (alive) setBlitz(isBlitzActive(s.poolWei, STAKE_DECIMALS));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const ranked = profile !== null && profile.gamesPlayed > 0;
   const rank = profile ? rankFor(profile.elo) : null;
+  const showBlitz = blitz && tab === "blitz";
 
   return (
     <main className="pad stack" style={{ flex: 1, gap: 14 }}>
@@ -83,7 +102,44 @@ export default function Compete() {
         )}
       </div>
 
-      {ranked && rank && profile ? (
+      {/* when a funded special race is live, a dedicated Blitz tab leads — the
+          rest of the progression dashboard moves behind the second tab */}
+      {blitz && (
+        <div className="segmented">
+          <button data-on={tab === "blitz"} onClick={() => setTab("blitz")}>
+            ⚡ Blitz
+          </button>
+          <button data-on={tab === "progress"} onClick={() => setTab("progress")}>
+            Progression
+          </button>
+        </div>
+      )}
+
+      {showBlitz ? (
+        <div id="blitz" className="stack" style={{ gap: 14 }}>
+          <div
+            className="card animate-in"
+            style={{
+              padding: "14px 16px",
+              border: "1px solid var(--gold)",
+              background: "linear-gradient(135deg, rgba(246,200,99,0.16), rgba(246,200,99,0.04) 45%, rgba(20,18,14,0.15))",
+            }}
+          >
+            <span className="row" style={{ gap: 8, alignItems: "baseline" }}>
+              <span className="chip gold" style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase" }}>
+                ⚡ {BLITZ_LABEL}
+              </span>
+            </span>
+            <span className="muted" style={{ display: "block", marginTop: 8, fontSize: 12.5 }}>
+              A special funded race, this weekend only. Play staked matches, earn points, share the pot when it ends.
+            </span>
+          </div>
+          {/* the race board itself — pot, your standing, the leaderboard */}
+          <WeeklyLeague />
+        </div>
+      ) : (
+        <>
+          {ranked && rank && profile ? (
         // my rank — the reason to come back after a loss
         <RankHero elo={profile.elo} wins={profile.gamesWon} games={profile.gamesPlayed} perfectDays={profile.perfectDays ?? 0} />
       ) : (
@@ -110,8 +166,9 @@ export default function Compete() {
       )}
 
       {/* the weekly race — the recurring money event (replaced tournaments:
-          a leaderboard works at any player count, a bracket doesn't) */}
-      <WeeklyLeague />
+          a leaderboard works at any player count, a bracket doesn't). During a
+          blitz it lives in the Blitz tab instead, so it's not shown twice. */}
+      {!blitz && <WeeklyLeague />}
 
       {/* today's quests */}
       {profile && <DailyQuests quests={profile.quests ?? []} perfectDays={profile.perfectDays ?? 0} />}
@@ -145,6 +202,8 @@ export default function Compete() {
           />
         )}
       </div>
+        </>
+      )}
 
       <div className="spacer" />
 

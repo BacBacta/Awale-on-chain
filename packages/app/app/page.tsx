@@ -17,6 +17,7 @@ import { Icon, type IconName } from "../src/components/Icon.js";
 import { HeroBoard } from "../src/components/HeroBoard.js";
 import { Welcome } from "../src/components/Welcome.js";
 import { HowItWorks } from "../src/components/HowItWorks.js";
+import { BlitzBanner } from "../src/components/BlitzBanner.js";
 import { streakCount, solvedToday } from "../src/lib/daily.js";
 import { getProfile, rankFor, captureReferrer, claimReferral } from "../src/lib/profile.js";
 import { track } from "../src/lib/analytics.js";
@@ -191,6 +192,10 @@ export default function Lobby() {
           </span>
         </div>
       </div>
+
+      {/* limited-time special: a funded Weekend Blitz race. Renders only while
+          a blitz is live (pool seeded), auto-hides at Monday's rollover. */}
+      <BlitzBanner />
 
       {/* THE decision, sized by importance: one dominant button, two smaller
           siblings. Everything below this block is habit or help — visibly
