@@ -25,12 +25,12 @@ const TOKENS = stakeTokens();
 // Micro-stakes by design: the average MiniPay transaction is ~$1 and most of
 // the target audience budgets under $10/month for betting (GeoPoll 2025) —
 // a $5 default was asking for their whole month in one game.
-const QUICK_STAKES = ["0.25", "0.5", "1"];
+const QUICK_STAKES = ["0.15", "0.25", "0.5"];
 
 type Step = "idle" | "approving" | "staking" | "done" | "error";
 
 export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; account: Address; cfg: EscrowConfig }) {
-  const [stake, setStake] = useState("0.5");
+  const [stake, setStake] = useState("0.15");
   const [joinId, setJoinId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [tx, setTx] = useState<string | null>(null);
