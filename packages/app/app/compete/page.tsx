@@ -18,8 +18,9 @@ import { WeeklyLeague } from "../../src/components/WeeklyLeague.js";
 import { Icon, type IconName } from "../../src/components/Icon.js";
 import { RankHero } from "../../src/components/RankHero.js";
 import { harvestAddress, leagueComingSoon } from "../../src/lib/league.js";
-import { getWeeklyLeague, weeklyLeagueEnabled, isBlitzActive, BLITZ_LABEL } from "../../src/lib/weeklyLeague.js";
+import { getWeeklyLeague, weeklyLeagueEnabled, isBlitzActive } from "../../src/lib/weeklyLeague.js";
 import { STAKE_DECIMALS } from "../../src/lib/stake.js";
+import { BlitzHero } from "../../src/components/BlitzHero.js";
 
 function Row({ href, icon, title, sub, badge }: { href: string; icon: IconName; title: string; sub: string; badge?: string }) {
   return (
@@ -106,7 +107,7 @@ export default function Compete() {
           rest of the progression dashboard moves behind the second tab */}
       {blitz && (
         <div className="segmented">
-          <button data-on={tab === "blitz"} onClick={() => setTab("blitz")}>
+          <button className="blitz-seg" data-on={tab === "blitz"} onClick={() => setTab("blitz")}>
             ⚡ Blitz
           </button>
           <button data-on={tab === "progress"} onClick={() => setTab("progress")}>
@@ -116,24 +117,9 @@ export default function Compete() {
       )}
 
       {showBlitz ? (
-        <div id="blitz" className="stack" style={{ gap: 14 }}>
-          <div
-            className="card animate-in"
-            style={{
-              padding: "14px 16px",
-              border: "1px solid var(--gold)",
-              background: "linear-gradient(135deg, rgba(246,200,99,0.16), rgba(246,200,99,0.04) 45%, rgba(20,18,14,0.15))",
-            }}
-          >
-            <span className="row" style={{ gap: 8, alignItems: "baseline" }}>
-              <span className="chip gold" style={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, textTransform: "uppercase" }}>
-                ⚡ {BLITZ_LABEL}
-              </span>
-            </span>
-            <span className="muted" style={{ display: "block", marginTop: 8, fontSize: 12.5 }}>
-              A special funded race, this weekend only. Play staked matches, earn points, share the pot when it ends.
-            </span>
-          </div>
+        <div className="stack" style={{ gap: 14 }}>
+          {/* the premium event hero — pot, live countdown, the door in */}
+          <BlitzHero variant="full" />
           {/* the race board itself — pot, your standing, the leaderboard */}
           <WeeklyLeague />
         </div>

@@ -678,6 +678,143 @@ body {
   pointer-events: none;
 }
 
+/* --- Weekend Blitz — the funded special event. GOLD frames the event (rare,
+       premium); the pot number itself stays money-GREEN per the color system.
+       A slowly rotating gold border, a breathing glow, a light sweep and a few
+       floating gold sparks — rich but calm, nothing strobes. --- */
+@property --blitz-a {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes blitz-rotate {
+  to {
+    --blitz-a: 360deg;
+  }
+}
+/* the animated gold frame: a conic gradient ring, 1.5px thick, rotating slowly.
+   Where @property is unsupported the ring simply holds still — still gold. */
+.blitz-frame {
+  position: relative;
+  padding: 1.5px;
+  border-radius: 21px;
+  background: conic-gradient(
+    from var(--blitz-a),
+    rgba(246, 200, 99, 0.95),
+    rgba(246, 200, 99, 0.12) 22%,
+    rgba(255, 231, 173, 0.85) 38%,
+    rgba(246, 200, 99, 0.1) 58%,
+    rgba(255, 231, 173, 0.7) 76%,
+    rgba(246, 200, 99, 0.95)
+  );
+  animation:
+    blitz-rotate 7s linear infinite,
+    blitz-halo 4.5s ease-in-out infinite;
+}
+@keyframes blitz-halo {
+  0%,
+  100% {
+    box-shadow:
+      0 10px 34px -12px rgba(246, 200, 99, 0.5),
+      0 0 0 0 rgba(246, 200, 99, 0);
+  }
+  50% {
+    box-shadow:
+      0 14px 44px -10px rgba(246, 200, 99, 0.65),
+      0 0 26px -4px rgba(246, 200, 99, 0.28);
+  }
+}
+.blitz-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 19.5px;
+  padding: 18px 16px 16px;
+  background:
+    radial-gradient(90% 90% at 85% -10%, rgba(246, 200, 99, 0.2), transparent 55%),
+    radial-gradient(70% 60% at 0% 110%, rgba(246, 200, 99, 0.1), transparent 60%),
+    radial-gradient(60% 50% at 50% 115%, rgba(76, 229, 132, 0.08), transparent 65%),
+    linear-gradient(165deg, #1d180f 0%, #14110b 45%, #0f0d09 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+/* the light sweep across the whole card — slower and fainter than a CTA's */
+.blitz-card::after {
+  content: "";
+  position: absolute;
+  top: -30%;
+  bottom: -30%;
+  left: 0;
+  width: 34%;
+  background: linear-gradient(90deg, transparent, rgba(255, 236, 190, 0.09), transparent);
+  transform: translateX(-160%) skewX(-18deg);
+  animation: sheen 6.5s var(--ease-out) infinite 1.8s;
+  pointer-events: none;
+}
+/* floating gold sparks — three tiny embers drifting up, staggered */
+.blitz-spark {
+  position: absolute;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #ffe7ad 0%, rgba(246, 200, 99, 0.85) 55%, transparent 75%);
+  filter: drop-shadow(0 0 5px rgba(246, 200, 99, 0.75));
+  animation: blitz-drift 5.2s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes blitz-drift {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateY(-13px) scale(1.25);
+    opacity: 1;
+  }
+}
+/* the pot: money-green, glowing softly like a jackpot display */
+.blitz-pot {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  text-shadow:
+    0 0 18px rgba(76, 229, 132, 0.45),
+    0 2px 26px rgba(76, 229, 132, 0.25);
+}
+/* live countdown blocks — casino-board digits, gold on dark glass */
+.blitz-timer {
+  display: inline-flex;
+  gap: 4px;
+  align-items: baseline;
+}
+.blitz-timer .unit {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 2px;
+  padding: 3px 7px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  box-shadow: inset 0 0 0 1px rgba(246, 200, 99, 0.28);
+  color: #ffe7ad;
+  font-weight: 800;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.blitz-timer .unit small {
+  font-size: 9px;
+  font-weight: 700;
+  color: rgba(255, 231, 173, 0.6);
+  text-transform: uppercase;
+}
+/* the segmented Blitz tab, gold when armed */
+.segmented button.blitz-seg[data-on="true"] {
+  color: var(--gold);
+  background: linear-gradient(180deg, rgba(246, 200, 99, 0.16), rgba(246, 200, 99, 0.06));
+  box-shadow:
+    inset 0 0 0 1px rgba(246, 200, 99, 0.45),
+    0 2px 10px -3px rgba(246, 200, 99, 0.4);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
