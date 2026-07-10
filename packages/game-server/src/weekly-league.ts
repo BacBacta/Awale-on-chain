@@ -303,6 +303,30 @@ export class WeeklyLeague {
   }
 
   /**
+   * Operator override: set the CURRENT week's prize pool to an exact amount — a
+   * provisioned / guaranteed pot (e.g. a campaign week), on top of whatever the
+   * rake also feeds in. Sets the payout token when the week has none yet, and
+   * refuses a token that contradicts games already settled this week. Returns
+   * the resulting pool. `amountWei` is in the token's base units.
+   *
+   * NOTE: this OVERWRITES any rake already accrued into the pot this week, so it
+   * is idempotent (re-running with the same amount is a no-op). To keep the pot
+   * exactly `amountWei`, run the server with LEAGUE_POOL_SHARE_BPS=0 so live
+   * games don't add to it.
+   */
+  async setPool(amountWei: bigint, token: Address, now = new Date()): Promise<{ week: string; poolWei: string; token: Address }> {
+    if (amountWei < 0n) throw new Error("amount must be >= 0");
+    const w = await this.loadOrCreate(weekKey(now));
+    if (w.token && w.token.toLowerCase() !== token.toLowerCase()) {
+      throw new Error("this week is already funded in a different token");
+    }
+    w.token = token;
+    w.poolWei = amountWei.toString();
+    await this.store.save(w);
+    return { week: w.week, poolWei: w.poolWei, token };
+  }
+
+  /**
    * Close out the previous week if the calendar has moved on: split the pool
    * across the top of the standings per PAYOUT_BPS, pay via the injected
    * callback (which returns the winners it actually managed to pay), and carry

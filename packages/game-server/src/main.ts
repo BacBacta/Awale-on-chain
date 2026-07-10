@@ -780,6 +780,20 @@ const httpServer = createServer((req, res) => {
       .catch((e) => json(400, { error: (e as Error).message }));
     return;
   }
+  // operator provisions this week's Weekly-race pot (updates the pool counter).
+  // amountWei is in the token's base units; token = the mainnet stablecoin.
+  if (req.method === "POST" && url.pathname === "/league/seed") {
+    if (!operatorAuthorized(req)) return json(403, { error: "not authorized" });
+    readJson(req)
+      .then((b) => {
+        const { amountWei, token } = b as { amountWei?: string; token?: Address };
+        if (!amountWei || !token) throw new Error("amountWei + token required");
+        return league.setPool(BigInt(amountWei), token);
+      })
+      .then((r) => json(200, { ok: true, ...r }))
+      .catch((e) => json(400, { error: (e as Error).message }));
+    return;
+  }
   if (req.method === "GET" && url.pathname === "/money-leaderboard") {
     const n = Math.min(200, Math.max(1, Number(url.searchParams.get("n") ?? "25")));
     ledger

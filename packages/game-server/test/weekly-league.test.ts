@@ -92,6 +92,33 @@ describe("WeeklyLeague.recordGame", () => {
   });
 });
 
+describe("WeeklyLeague.setPool", () => {
+  it("provisions the week's pot + token, and the snapshot reflects it", async () => {
+    const league = newLeague();
+    const FORTY = 40_000_000n; // 40 of a 6-decimal stablecoin
+    const r = await league.setPool(FORTY, TOKEN, WED);
+    expect(r.poolWei).toBe(FORTY.toString());
+    const snap = await league.snapshot(undefined, WED);
+    expect(snap.poolWei).toBe(FORTY.toString());
+    expect(snap.token).toBe(TOKEN);
+  });
+
+  it("is idempotent — re-seeding the same amount does not stack", async () => {
+    const league = newLeague();
+    await league.setPool(40n, TOKEN, WED);
+    await league.setPool(40n, TOKEN, WED);
+    const snap = await league.snapshot(undefined, WED);
+    expect(snap.poolWei).toBe("40");
+  });
+
+  it("refuses a token that contradicts games already settled this week", async () => {
+    const league = newLeague();
+    await league.recordGame([A, B], 0, POT, RAKE_BPS, TOKEN, WED); // sets week token = TOKEN
+    const OTHER: Address = "0x0000000000000000000000000000000000000999";
+    await expect(league.setPool(40n, OTHER, WED)).rejects.toThrow(/different token/);
+  });
+});
+
 describe("WeeklyLeague.rollover", () => {
   it("first boot adopts the current week without paying", async () => {
     const league = newLeague();
