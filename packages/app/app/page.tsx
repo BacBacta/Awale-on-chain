@@ -216,7 +216,7 @@ export default function Lobby() {
               <span className="row" style={{ gap: 6 }}>
                 <Icon name="wallet" size={15} /> For money
               </span>
-              <span style={{ fontSize: 10.5, fontWeight: 500, opacity: 0.65 }}>Stake $0.25–1 · winner takes {WINNER_PCT}</span>
+              <span style={{ fontSize: 10.5, fontWeight: 500, opacity: 0.65 }}>Stake $0.15–1 · winner takes {WINNER_PCT}</span>
             </span>
           </button>
         </div>

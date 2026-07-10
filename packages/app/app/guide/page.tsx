@@ -93,7 +93,7 @@ export default function Guide() {
       <div className="stack" style={{ gap: 8 }}>
         <Way icon="bolt" title="Quick match" sub="Free · live vs a real player · no clock" />
         <Way icon="versus" title="With a friend" sub="Share a link · free, or stake real money — the seat stays reserved for your friend" />
-        <Way icon="wallet" title="For money" sub={`You each stake $0.25–1 · winner takes ${WINNER_PCT}`} />
+        <Way icon="wallet" title="For money" sub={`You each stake $0.15–1 · winner takes ${WINNER_PCT}`} />
         <Way icon="play" title="Practice vs AI" sub="Free · warm up anytime · pick your level" />
         <Way icon="target" title="Daily puzzle" sub="Free · one a day · keeps your streak alive" />
       </div>
