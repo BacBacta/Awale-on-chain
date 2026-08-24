@@ -41,6 +41,56 @@ export const erc20Abi = [
   },
 ] as const;
 
+/**
+ * Version-stable slice of `getMatch`, for reading a match that may live on
+ * EITHER the current escrow or an older deployment.
+ *
+ * The Match struct grows between versions — v6 ended
+ * `…activeDeadline, revealBlock, challengeWindow, transcriptCommitment` (15
+ * fields), the commit–reveal version ends
+ * `…activeDeadline, challengeWindow, commit0, commit1, transcriptCommitment`
+ * (16). Decoding old data with the new ABI throws, because the last word is
+ * missing; the callers catch it and move on, which silently erases a player's
+ * history on the old contract — the exact failure `legacyEscrows()` exists to
+ * prevent.
+ *
+ * This tuple stops at the last field whose position is identical in every
+ * version. Solidity encodes a static struct as consecutive words, and viem
+ * decodes only as many as the ABI names, so a short tuple reads correctly
+ * against both shapes. Everything the cross-version screens actually need
+ * (status, stake, players, rake, deadlines) lives in this prefix.
+ *
+ * DO NOT extend this with fields past `activeDeadline` — that is what makes it
+ * version-proof.
+ */
+export const matchEscrowCompatAbi = [
+  {
+    type: "function",
+    name: "getMatch",
+    stateMutability: "view",
+    inputs: [{ name: "matchId", type: "uint256" }],
+    outputs: [
+      {
+        type: "tuple",
+        components: [
+          { name: "token", type: "address" },
+          { name: "stake", type: "uint128" },
+          { name: "player0", type: "address" },
+          { name: "player1", type: "address" },
+          { name: "session0", type: "address" },
+          { name: "session1", type: "address" },
+          { name: "status", type: "uint8" },
+          { name: "startTurn", type: "uint8" },
+          { name: "proposedWinner", type: "uint8" },
+          { name: "rakeBps", type: "uint16" },
+          { name: "challengeDeadline", type: "uint64" },
+          { name: "activeDeadline", type: "uint64" },
+        ],
+      },
+    ],
+  },
+] as const;
+
 export const matchEscrowAbi = [
   {
     type: "function",

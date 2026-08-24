@@ -10,7 +10,7 @@ import { listLocalMatches, STATUS } from "../lib/matches.js";
 import { fmt } from "../lib/money.js";
 import { getProfile, rankFor } from "../lib/profile.js";
 import { cachedOutcomes, scanSettled, type Outcome } from "../lib/outcomes.js";
-import { matchEscrowAbi } from "../../../protocol/src/abis.js";
+import { matchEscrowCompatAbi } from "../../../protocol/src/abis.js";
 
 
 // Outcome lookup lives in lib/outcomes.ts now: cached forever per match
@@ -86,7 +86,8 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
           ids.map(async (id): Promise<Rec | null> => {
             for (const esc of escrows) {
               try {
-                const m = (await readContract(client, { address: esc, abi: matchEscrowAbi, functionName: "getMatch", args: [id] })) as Rec["m"];
+                // compat ABI: this loop spans escrow versions whose structs differ
+                const m = (await readContract(client, { address: esc, abi: matchEscrowCompatAbi, functionName: "getMatch", args: [id] })) as Rec["m"];
                 if (Number(m.status) === 0) continue; // None on this contract — try the next
                 if (me && m.player0.toLowerCase() !== me && m.player1.toLowerCase() !== me) continue; // someone else's id here
                 return { id, escrow: esc, m };

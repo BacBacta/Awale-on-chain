@@ -14,7 +14,7 @@ import { cachedOutcomes, scanSettled, type Outcome } from "../../src/lib/outcome
 import { listLocalMatches, statusView } from "../../src/lib/matches.js";
 import { computePayout, fmt, MIN_STAKE, WINNER_PCT } from "../../src/lib/money.js";
 import { humanizeError } from "../../src/lib/errors.js";
-import { matchEscrowAbi, erc20Abi } from "../../../protocol/src/abis.js";
+import { matchEscrowAbi, matchEscrowCompatAbi, erc20Abi } from "../../../protocol/src/abis.js";
 import { parseEventLogs } from "viem";
 import { stakeTokens } from "../../src/lib/stakeTokens.js";
 import { recordLocalMatch } from "../../src/lib/matches.js";
@@ -170,8 +170,9 @@ export default function Matches() {
       ids.map(async (id): Promise<Row | null> => {
         for (const esc of escrows) {
           try {
+            // compat ABI: this loop spans escrow versions whose structs differ
             const m = (await readWithRetry(() =>
-              readContract(client, { address: esc, abi: matchEscrowAbi, functionName: "getMatch", args: [id] }),
+              readContract(client, { address: esc, abi: matchEscrowCompatAbi, functionName: "getMatch", args: [id] }),
             )) as {
               status: number;
               stake: bigint;
