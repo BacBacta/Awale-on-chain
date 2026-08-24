@@ -2,7 +2,14 @@
 // server keeps per-day counters so we can see WHERE first-time players drop
 // off (open → practice → quick match → money) instead of guessing at churn.
 
+// Posted to our OWN /api/events, not straight to the game server. That hop
+// exists to attach the visitor's country: the game server runs on Fly, whose
+// proxy reports the datacenter rather than the player, while this app runs on
+// Vercel, whose edge sets the real country header. Same-origin also means no
+// CORS preflight on a beacon.
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
+/** Same-origin relay that stamps the country before forwarding (see above). */
+const EVENTS_ENDPOINT = "/api/events";
 
 export type FunnelEvent =
   | "app_open"
@@ -28,9 +35,9 @@ export function countEvent(name: TxEvent): void {
   try {
     const body = JSON.stringify({ name });
     if (navigator.sendBeacon) {
-      navigator.sendBeacon(`${SERVER_URL}/events`, new Blob([body], { type: "application/json" }));
+      navigator.sendBeacon(EVENTS_ENDPOINT, new Blob([body], { type: "application/json" }));
     } else {
-      void fetch(`${SERVER_URL}/events`, {
+      void fetch(EVENTS_ENDPOINT, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
@@ -48,9 +55,9 @@ export function track(name: FunnelEvent): void {
   try {
     const body = JSON.stringify({ name });
     if (navigator.sendBeacon) {
-      navigator.sendBeacon(`${SERVER_URL}/events`, new Blob([body], { type: "application/json" }));
+      navigator.sendBeacon(EVENTS_ENDPOINT, new Blob([body], { type: "application/json" }));
     } else {
-      void fetch(`${SERVER_URL}/events`, {
+      void fetch(EVENTS_ENDPOINT, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body,
