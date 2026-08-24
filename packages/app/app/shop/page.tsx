@@ -221,7 +221,8 @@ export default function Shop() {
       }
       setStatus(`Buying ${s.name} (2/2)…`);
       return sendWithStaleRetry("Purchase", () =>
-        wallet.writeContract({ address: cos, abi: cosmeticsAbi, functionName: "buy", args: [BigInt(s.itemId), 1n], account, feeCurrency: fee }),
+        // `cost` is exactly what was quoted on the button — pass it as the cap
+        wallet.writeContract({ address: cos, abi: cosmeticsAbi, functionName: "buy", args: [BigInt(s.itemId), 1n, cost], account, feeCurrency: fee }),
       );
     }).then((ok) => {
       // the receipt is confirmed — the skin is provably theirs. Flip the card

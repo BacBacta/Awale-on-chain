@@ -84,7 +84,13 @@ contract Cosmetics is ERC1155, ERC2981, Ownable, ReentrancyGuard {
     // -------------------------------- sales ----------------------------- //
 
     /// @notice Buy `amount` of cosmetic `id`, paying the stablecoin to the Treasury.
-    function buy(uint256 id, uint256 amount) external nonReentrant {
+    /// @param maxCost the most the buyer will pay IN TOTAL, in the current
+    ///        currency's base units — pass back the figure {costOf} quoted. This
+    ///        binds the purchase to that quote: an owner {setItemPrice} or
+    ///        {setCurrency} landing between the quote and this call reverts the
+    ///        tx instead of silently charging the new amount against a standing
+    ///        allowance. A price CUT still settles, at the lower price.
+    function buy(uint256 id, uint256 amount, uint256 maxCost) external nonReentrant {
         Item storage item = items[id];
         require(item.exists, "Cosmetics: no item");
         require(item.priceE18 > 0, "Cosmetics: not for sale");
@@ -95,6 +101,7 @@ contract Cosmetics is ERC1155, ERC2981, Ownable, ReentrancyGuard {
         // a price that scales to nothing in a low-decimal currency must never
         // mint for free — reverting is the safe side of that truncation
         require(cost > 0, "Cosmetics: cost rounds to zero");
+        require(cost <= maxCost, "Cosmetics: cost exceeds max");
         item.minted += amount; // effects before interactions
 
         currency.safeTransferFrom(msg.sender, treasury, cost);

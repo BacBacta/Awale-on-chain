@@ -35,7 +35,7 @@ contract CosmeticsTest is Test {
 
     function test_buy_paysTreasuryAndMints() public {
         vm.prank(alice);
-        cosmetics.buy(BOARD, 3);
+        cosmetics.buy(BOARD, 3, PRICE_USDC * 3);
 
         assertEq(cosmetics.balanceOf(alice, BOARD), 3);
         assertEq(usdc.balanceOf(treasury), PRICE_USDC * 3, "proceeds to treasury");
@@ -47,7 +47,7 @@ contract CosmeticsTest is Test {
     function test_buy_revertSoldOut() public {
         vm.prank(alice);
         vm.expectRevert(bytes("Cosmetics: sold out"));
-        cosmetics.buy(BOARD, 101);
+        cosmetics.buy(BOARD, 101, type(uint256).max);
     }
 
     function test_buy_revertNotForSale() public {
@@ -55,13 +55,13 @@ contract CosmeticsTest is Test {
         cosmetics.createItem(2, 0, 0); // price 0 = not on primary sale
         vm.prank(alice);
         vm.expectRevert(bytes("Cosmetics: not for sale"));
-        cosmetics.buy(2, 1);
+        cosmetics.buy(2, 1, type(uint256).max);
     }
 
     function test_buy_revertNoItem() public {
         vm.prank(alice);
         vm.expectRevert(bytes("Cosmetics: no item"));
-        cosmetics.buy(999, 1);
+        cosmetics.buy(999, 1, type(uint256).max);
     }
 
     function test_createItem_onlyOwner() public {
@@ -114,7 +114,7 @@ contract CosmeticsTest is Test {
         vm.prank(owner);
         cosmetics.setTreasury(newTreasury);
         vm.prank(alice);
-        cosmetics.buy(BOARD, 1);
+        cosmetics.buy(BOARD, 1, PRICE_USDC);
         assertEq(usdc.balanceOf(newTreasury), PRICE_USDC);
     }
 
@@ -139,7 +139,7 @@ contract CosmeticsTest is Test {
         usdm.mint(alice, 1_000 ether);
         vm.startPrank(alice);
         usdm.approve(address(cosmetics), type(uint256).max);
-        cosmetics.buy(BOARD, 2);
+        cosmetics.buy(BOARD, 2, 10 ether);
         vm.stopPrank();
 
         assertEq(usdm.balanceOf(treasury), 10 ether, "$10 for two, in USDm units");
@@ -159,7 +159,53 @@ contract CosmeticsTest is Test {
 
         vm.prank(alice);
         vm.expectRevert(bytes("Cosmetics: cost rounds to zero"));
-        cosmetics.buy(42, 1);
+        cosmetics.buy(42, 1, type(uint256).max);
+    }
+
+    // --------------------------- price guard ----------------------------- //
+
+    /// The quote the buyer was shown is binding: an owner price raise landing
+    /// between the quote and the purchase must revert, never silently overcharge
+    /// them against the 20x allowance the shop leaves standing.
+    function test_buy_revertWhenPriceRaisedAboveQuote() public {
+        uint256 quoted = cosmetics.costOf(BOARD, 1);
+
+        vm.prank(owner);
+        cosmetics.setItemPrice(BOARD, PRICE_E18 * 2); // doubles under the buyer
+
+        vm.prank(alice);
+        vm.expectRevert(bytes("Cosmetics: cost exceeds max"));
+        cosmetics.buy(BOARD, 1, quoted);
+    }
+
+    /// A price CUT between quote and purchase must still settle — and at the
+    /// new lower price, not the stale quote.
+    function test_buy_priceCutBelowQuote_chargesTheLowerPrice() public {
+        uint256 quoted = cosmetics.costOf(BOARD, 1);
+
+        vm.prank(owner);
+        cosmetics.setItemPrice(BOARD, PRICE_E18 / 2);
+
+        vm.prank(alice);
+        cosmetics.buy(BOARD, 1, quoted);
+        assertEq(usdc.balanceOf(treasury), PRICE_USDC / 2, "charged the cut price");
+    }
+
+    /// The same guard catches a currency switch that inflates the cost
+    /// numerically (6-dec -> 18-dec is 1e12 larger), which a stale allowance on
+    /// the new token would otherwise cover.
+    function test_buy_revertWhenCurrencySwitchInflatesCost() public {
+        uint256 quoted = cosmetics.costOf(BOARD, 1); // $5 in 6-dec units
+
+        MockERC20 usdm = new MockERC20("Mento Dollar", "USDm", 18);
+        vm.prank(owner);
+        cosmetics.setCurrency(address(usdm));
+        usdm.mint(alice, 1_000 ether);
+        vm.startPrank(alice);
+        usdm.approve(address(cosmetics), type(uint256).max);
+        vm.expectRevert(bytes("Cosmetics: cost exceeds max"));
+        cosmetics.buy(BOARD, 1, quoted);
+        vm.stopPrank();
     }
 
     /// Scaling UP would be needed above 18 decimals and can overflow a large

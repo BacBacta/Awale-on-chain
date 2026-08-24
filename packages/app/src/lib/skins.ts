@@ -84,6 +84,10 @@ export const cosmeticsAbi = [
     inputs: [
       { name: "id", type: "uint256" },
       { name: "amount", type: "uint256" },
+      // the buyer's price cap: the shop passes the very cost it quoted, so an
+      // owner price change landing mid-purchase reverts instead of spending the
+      // standing 20x allowance at the new price
+      { name: "maxCost", type: "uint256" },
     ],
     outputs: [],
   },
