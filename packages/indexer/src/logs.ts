@@ -19,7 +19,6 @@ export const escrowEventsAbi = [
     inputs: [
       { name: "matchId", type: "uint256", indexed: true },
       { name: "player1", type: "address", indexed: true },
-      { name: "revealBlock", type: "uint64", indexed: false },
     ],
   },
   {

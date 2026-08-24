@@ -33,6 +33,10 @@ contract ChallengeHandler is Test {
 
     uint256 internal pk0 = 0xA11CE;
     uint256 internal pk1 = 0xB0B;
+    // first-move commit–reveal halves; fixed for determinism in tests, but a
+    // real client MUST use fresh randomness per match
+    bytes32 internal constant SECRET0 = keccak256("awale.test.secret0");
+    bytes32 internal constant SECRET1 = keccak256("awale.test.secret1");
     address internal session0;
     address internal session1;
 
@@ -158,14 +162,13 @@ contract ChallengeHandler is Test {
 
         uint256 eb = usdc.balanceOf(address(escrow));
         vm.prank(creator);
-        uint256 id = escrow.createMatch(address(usdc), stake, session0);
+        uint256 id = escrow.createMatch(address(usdc), stake, session0, keccak256(abi.encode(SECRET0)));
         vm.prank(joiner);
-        escrow.joinMatch(id, session1);
+        escrow.joinMatch(id, session1, keccak256(abi.encode(SECRET1)));
         ghostIn += usdc.balanceOf(address(escrow)) - eb;
         ids.push(id);
 
-        vm.roll(block.number + uint256(escrow.START_REVEAL_DELAY()) + 1);
-        escrow.finalizeStart(id);
+        escrow.finalizeStart(id, SECRET0, SECRET1);
         uint8 startTurn = escrow.getMatch(id).startTurn;
 
         uint8[] memory all = startTurn == 0 ? movesFrom0 : movesFrom1;

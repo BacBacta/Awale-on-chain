@@ -8,6 +8,7 @@ import { type Socket } from "socket.io-client";
 import { publicClient, effectiveFeeCurrency } from "../lib/minipay.js";
 import { createMatch, joinMatch, approve, cancelMatch, parseStake, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
 import { createSessionKey, persistSession } from "../lib/session.js";
+import { newFlipSecret, commitmentOf, persistFlipSecret, stashPendingSecret, claimPendingSecret } from "../lib/flip.js";
 import { receiptDeeplink } from "../lib/deeplinks.js";
 import { computePayout, fmt, rakePct, stakeFloor } from "../lib/money.js";
 import { humanizeError } from "../lib/errors.js";
@@ -267,6 +268,10 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   async function createOnChain(amount: bigint): Promise<bigint> {
     const client = publicClient(cfg.rpcUrl, cfg.chainId);
     const session = createSessionKey();
+    // the creator's half of the first-move flip. The id it belongs to only
+    // arrives with the receipt, so park the secret and re-key it below.
+    const flipSecret = newFlipSecret();
+    stashPendingSecret(flipSecret);
     await ensureAllowance(client, token!, amount);
     setStep("staking");
     const hash = await sendWithStaleRetry("stake", () =>
@@ -276,6 +281,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         token: token!,
         stake: amount,
         session: session.address,
+        commit: commitmentOf(flipSecret),
         feeCurrency: feeCurrency,
       }),
     );
@@ -284,6 +290,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     const matchId = (created[0]?.args as { matchId?: bigint } | undefined)?.matchId;
     if (matchId === undefined) throw new Error("match created but its id couldn't be read — check Your matches");
     persistSession(matchId, session);
+    claimPendingSecret(matchId);
     recordLocalMatch(matchId);
     setTx(hash);
     return matchId;
@@ -481,6 +488,8 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
 
       const session = createSessionKey();
+      const flipSecret = newFlipSecret();
+      stashPendingSecret(flipSecret);
       await ensureAllowance(client, token, amount);
       setStep("staking");
       const hash = await createMatch(wallet, {
@@ -489,6 +498,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         token: token,
         stake: amount,
         session: session.address,
+        commit: commitmentOf(flipSecret),
         feeCurrency: feeCurrency,
       });
       // The REAL match id comes from the receipt's MatchCreated event. It used
@@ -502,6 +512,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       const matchId = (created[0]?.args as { matchId?: bigint } | undefined)?.matchId;
       if (matchId === undefined) throw new Error("match created but its id couldn't be read — check Your matches");
       persistSession(matchId, session);
+      claimPendingSecret(matchId);
       recordLocalMatch(matchId);
 
       setTx(hash);
@@ -528,6 +539,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
 
       const session = createSessionKey();
       persistSession(matchId, session);
+      // the joiner's half — the id is already known here, so no parking needed
+      const flipSecret = newFlipSecret();
+      persistFlipSecret(matchId, flipSecret);
       recordLocalMatch(matchId);
 
       await ensureAllowance(client, m.token, m.stake);
@@ -537,6 +551,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         escrow: cfg.escrow,
         matchId,
         session: session.address,
+        commit: commitmentOf(flipSecret),
         feeCurrency: feeCurrency,
       });
       // wait until mined, then go straight into the game: the joiner fills

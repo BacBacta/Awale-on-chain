@@ -10,6 +10,10 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///         call finalize() to pay the human out. Sequenced via one broadcast so
 ///         nonces stay in order.
 contract FullMatch is Script {
+    // demo script only — a real client MUST use fresh randomness per match
+    bytes32 internal constant SECRET0 = keccak256("awale.script.secret0");
+    bytes32 internal constant SECRET1 = keccak256("awale.script.secret1");
+
     function run() external {
         address escrowAddr = vm.envAddress("ESCROW");
         address usdm = vm.envAddress("USDM");
@@ -31,7 +35,7 @@ contract FullMatch is Script {
         // player1 approves, joins, and proposes player 0 (the human) as winner
         vm.startBroadcast(p1Pk);
         IERC20(usdm).approve(escrowAddr, stake);
-        escrow.joinMatch(matchId, address(0x0000000000000000000000000000000000000002));
+        escrow.joinMatch(matchId, address(0x0000000000000000000000000000000000000002), keccak256(abi.encode(SECRET1)));
         // commitment = keccak of an empty move list (script only; real client passes the actual game hash)
         escrow.proposeResult(matchId, 0, keccak256(abi.encode(matchId, uint8(0), new uint8[](0))));
         vm.stopBroadcast();

@@ -36,21 +36,34 @@ describe("keeperActions", () => {
     expect(keeperActions(matches, now)).toEqual([]);
   });
 
-  it("finalizes the first move once the reveal block is mined", () => {
-    const matches: KeeperMatch[] = [
-      { matchId: 6n, status: EscrowStatus.Active, challengeDeadline: 0, activeDeadline: now + 1000, startTurn: 255, revealBlock: 100 },
+  it("finalizes the first move once both halves are revealed", () => {
+    const pending: KeeperMatch[] = [
+      { matchId: 6n, status: EscrowStatus.Active, challengeDeadline: 0, activeDeadline: now + 1000, startTurn: 255, flipReady: false },
     ];
-    // block not yet past revealBlock -> nothing
-    expect(keeperActions(matches, now, 100)).toEqual([]);
-    // block mined past revealBlock -> finalizeStart
-    expect(keeperActions(matches, now, 101)).toEqual([{ matchId: 6n, action: "finalizeStart" }]);
+    // a half still outstanding -> nothing to submit
+    expect(keeperActions(pending, now)).toEqual([]);
+
+    const ready: KeeperMatch[] = [{ ...pending[0], flipReady: true }];
+    expect(keeperActions(ready, now)).toEqual([{ matchId: 6n, action: "finalizeStart" }]);
+  });
+
+  // the regression against the old blockhash flip: readiness is now a property
+  // of the reveals, not of chain height, so no window can expire and no
+  // keeper delay can cost anyone their turn
+  it("does not depend on block height", () => {
+    const matches: KeeperMatch[] = [
+      { matchId: 6n, status: EscrowStatus.Active, challengeDeadline: 0, activeDeadline: now + 1000, startTurn: 255, flipReady: true },
+    ];
+    // same answer no matter how long the match has sat unrevealed
+    expect(keeperActions(matches, now)).toEqual([{ matchId: 6n, action: "finalizeStart" }]);
+    expect(keeperActions(matches, now + 86_400)).toEqual([{ matchId: 6n, action: "finalizeStart" }]);
   });
 
   it("does not finalizeStart once startTurn is fixed", () => {
     const matches: KeeperMatch[] = [
-      { matchId: 7n, status: EscrowStatus.Active, challengeDeadline: 0, activeDeadline: now + 1000, startTurn: 1, revealBlock: 100 },
+      { matchId: 7n, status: EscrowStatus.Active, challengeDeadline: 0, activeDeadline: now + 1000, startTurn: 1, flipReady: true },
     ];
-    expect(keeperActions(matches, now, 101)).toEqual([]);
+    expect(keeperActions(matches, now)).toEqual([]);
   });
 });
 

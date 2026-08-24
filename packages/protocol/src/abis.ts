@@ -50,6 +50,9 @@ export const matchEscrowAbi = [
       { name: "token", type: "address" },
       { name: "stake", type: "uint128" },
       { name: "session0", type: "address" },
+      // the creator's half of the first-move commit–reveal: keccak256 of a
+      // fresh random 32 bytes, revealed later to fix who moves first
+      { name: "commit0", type: "bytes32" },
     ],
     outputs: [{ name: "matchId", type: "uint256" }],
   },
@@ -63,6 +66,7 @@ export const matchEscrowAbi = [
       { name: "token", type: "address" },
       { name: "stake", type: "uint128" },
       { name: "session0", type: "address" },
+      { name: "commit0", type: "bytes32" },
       { name: "inviteHash", type: "bytes32" },
     ],
     outputs: [{ name: "matchId", type: "uint256" }],
@@ -74,6 +78,8 @@ export const matchEscrowAbi = [
     inputs: [
       { name: "matchId", type: "uint256" },
       { name: "session1", type: "address" },
+      // the joiner's half, chosen blind to secret0 so neither side can steer it
+      { name: "commit1", type: "bytes32" },
     ],
     outputs: [],
   },
@@ -84,6 +90,7 @@ export const matchEscrowAbi = [
     inputs: [
       { name: "matchId", type: "uint256" },
       { name: "session1", type: "address" },
+      { name: "commit1", type: "bytes32" },
       { name: "code", type: "bytes32" },
     ],
     outputs: [],
@@ -157,7 +164,10 @@ export const matchEscrowAbi = [
           { name: "rakeBps", type: "uint16" },
           { name: "challengeDeadline", type: "uint64" },
           { name: "activeDeadline", type: "uint64" },
-          { name: "revealBlock", type: "uint64" },
+          { name: "challengeWindow", type: "uint64" },
+          { name: "commit0", type: "bytes32" },
+          { name: "commit1", type: "bytes32" },
+          { name: "transcriptCommitment", type: "bytes32" },
         ],
       },
     ],
@@ -166,7 +176,11 @@ export const matchEscrowAbi = [
     type: "function",
     name: "finalizeStart",
     stateMutability: "nonpayable",
-    inputs: [{ name: "matchId", type: "uint256" }],
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "secret0", type: "bytes32" },
+      { name: "secret1", type: "bytes32" },
+    ],
     outputs: [],
   },
   {
@@ -240,7 +254,6 @@ export const matchEscrowAbi = [
     inputs: [
       { name: "matchId", type: "uint256", indexed: true },
       { name: "player1", type: "address", indexed: true },
-      { name: "revealBlock", type: "uint64", indexed: false },
     ],
   },
   {

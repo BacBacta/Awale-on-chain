@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { newFlipSecret, commitmentOf } from "./flip.js";
 import type { Address, Hex } from "viem";
 import { parseStake, createMatch, joinMatch, approve, type WriteClient } from "./escrow.js";
 
@@ -36,6 +37,8 @@ describe("parseStake", () => {
   });
 });
 
+const COMMIT = commitmentOf("0x".padEnd(66, "b") as `0x${string}`);
+
 describe("escrow writes gate feeCurrency (CIP-64)", () => {
   // Outside MiniPay (this test env: no injected provider) effectiveFeeCurrency
   // STRIPS the adapter — browser wallets reject the unknown Celo tx type. The
@@ -48,12 +51,13 @@ describe("escrow writes gate feeCurrency (CIP-64)", () => {
       token: TOKEN,
       stake: 5_000_000n,
       session: SESSION,
+      commit: COMMIT,
       feeCurrency: ADAPTER,
     });
     expect(calls[0]).toMatchObject({
       address: ESCROW,
       functionName: "createMatch",
-      args: [TOKEN, 5_000_000n, SESSION],
+      args: [TOKEN, 5_000_000n, SESSION, COMMIT],
       account: ACCOUNT,
       feeCurrency: undefined,
     });
@@ -61,19 +65,35 @@ describe("escrow writes gate feeCurrency (CIP-64)", () => {
 
   it("joinMatch builds the right request", async () => {
     const { wallet, calls } = recorder();
-    await joinMatch(wallet, { account: ACCOUNT, escrow: ESCROW, matchId: 7n, session: SESSION, feeCurrency: ADAPTER });
+    await joinMatch(wallet, { account: ACCOUNT, escrow: ESCROW, matchId: 7n, session: SESSION, commit: COMMIT, feeCurrency: ADAPTER });
     expect(calls[0]).toMatchObject({
       functionName: "joinMatch",
-      args: [7n, SESSION],
+      args: [7n, SESSION, COMMIT],
       feeCurrency: undefined,
     });
+  });
+
+  // the first-move commitment must reach the contract verbatim: a dropped or
+  // mangled commit means the player can never reveal, and the stake sits until
+  // the TTL refund
+  it("passes the flip commitment through unchanged", async () => {
+    const { wallet, calls } = recorder();
+    const secret = newFlipSecret();
+    await joinMatch(wallet, {
+      account: ACCOUNT,
+      escrow: ESCROW,
+      matchId: 7n,
+      session: SESSION,
+      commit: commitmentOf(secret),
+    });
+    expect((calls[0] as { args: readonly unknown[] }).args[2]).toBe(commitmentOf(secret));
   });
 
   it("passes the adapter through inside MiniPay", async () => {
     (globalThis as { window?: unknown }).window = { ethereum: { isMiniPay: true, request: async () => [] } };
     try {
       const { wallet, calls } = recorder();
-      await joinMatch(wallet, { account: ACCOUNT, escrow: ESCROW, matchId: 7n, session: SESSION, feeCurrency: ADAPTER });
+      await joinMatch(wallet, { account: ACCOUNT, escrow: ESCROW, matchId: 7n, session: SESSION, commit: COMMIT, feeCurrency: ADAPTER });
       expect(calls[0]).toMatchObject({ feeCurrency: ADAPTER });
     } finally {
       delete (globalThis as { window?: unknown }).window;

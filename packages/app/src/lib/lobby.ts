@@ -3,6 +3,7 @@
 // game (staked matchmaking), instead of only joining a match id a friend DM'd.
 
 import { readContract } from "viem/actions";
+import { commitmentOf, persistFlipSecret, newFlipSecret, ensureFlipSecret } from "./flip.js";
 import type { Address } from "viem";
 import { publicClient } from "./minipay.js";
 import { joinMatch, approve, type WriteClient, type EscrowConfig } from "./escrow.js";
@@ -141,9 +142,11 @@ export async function joinCashMatch(opts: {
   await approveIfNeeded(client, wallet, account, cfg, token, stake, feeCurrency);
   const session = createSessionKey();
   persistSession(matchId, session);
+  const flipSecret = newFlipSecret();
+  persistFlipSecret(matchId, flipSecret);
   recordLocalMatch(matchId);
   const jh = await sendWithStaleRetry("stake", () =>
-    joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, feeCurrency }),
+    joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, commit: commitmentOf(flipSecret), feeCurrency }),
   );
   await confirmTx(client, jh, "Your stake");
 }
@@ -221,7 +224,7 @@ export async function joinOpenMatch(opts: {
     }
   }
   const jh = await sendWithStaleRetry("stake", () =>
-    joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, feeCurrency }),
+    joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, commit: commitmentOf(ensureFlipSecret(matchId)), feeCurrency }),
   );
   // wait until the join is MINED (tolerantly): callers redirect to the match
   // screen next, and a pre-confirmation read shows the old state

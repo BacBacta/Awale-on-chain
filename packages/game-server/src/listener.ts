@@ -1,9 +1,9 @@
 // On-chain → hub glue. A match opens for play only once its first mover is
-// fixed. The first-move flip is deferred to a future block (anti-grinding), so
-// the lifecycle is two events:
+// fixed. The flip is a two-party commit–reveal settled off the wire, so the
+// lifecycle is two events:
 //
-//   MatchJoined(matchId, revealBlock)  -> both staked; trigger finalizeStart
-//                                         once revealBlock is mined
+//   MatchJoined(matchId)               -> both staked AND both committed; the
+//                                         players may now safely reveal
 //   StartFinalized(matchId, startTurn) -> the flip is fixed; open the match
 //
 // The session keys + final startTurn live in the contract, so a finalize is
@@ -56,7 +56,6 @@ const matchJoinedAbi = [
     inputs: [
       { name: "matchId", type: "uint256", indexed: true },
       { name: "player1", type: "address", indexed: true },
-      { name: "revealBlock", type: "uint64", indexed: false },
     ],
   },
 ] as const;
@@ -103,10 +102,13 @@ export function watchStartFinalized(
 }
 
 /**
- * Watch MatchJoined and fix each match's first mover by calling finalizeStart.
- * The flip was deferred to `revealBlock` at join time; `finalize` is invoked
- * once that block is mined (it reverts harmlessly if called too early, so a
- * caller may retry). Returns an unsubscribe fn.
+ * Watch MatchJoined and drive each match's first mover to being fixed.
+ *
+ * MatchJoined is the moment BOTH commitments are on chain, which is exactly
+ * when revealing becomes safe — before it, player 1 has not committed and an
+ * early secret0 would let them grind their own to choose who starts. `finalize`
+ * submits the pair once both players have revealed; it is a no-op until then,
+ * so it is safe to call eagerly and to retry. Returns an unsubscribe fn.
  */
 export function watchMatchJoined(
   client: EventWatcher,

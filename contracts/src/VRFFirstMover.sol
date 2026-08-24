@@ -19,19 +19,23 @@ interface IVRFCoordinatorV2Plus {
     function requestRandomWords(RandomWordsRequest calldata req) external returns (uint256 requestId);
 }
 
-/// @title VRFFirstMover — verifiable first-mover coin flip for Awalé matches
-/// @notice Scaffold that replaces MatchEscrow's placeholder blockhash coin flip
-///         (audit L-01/L-03: a block proposer has limited influence over the
-///         reveal-block hash) with Chainlink VRF v2.5 — a bit no participant or
-///         sequencer can bias. The keeper requests randomness for a joined
-///         match; the coordinator's callback fixes the first mover. MatchEscrow
-///         (a future v-next) reads {firstMover} instead of hashing a blockhash.
+/// @title VRFFirstMover — verifiable first-mover coin flip (UNUSED ON CELO)
+/// @notice ⚠️ NOT USED, AND NOT USABLE ON CELO MAINNET. Chainlink VRF is not
+///         deployed on Celo: Celo's own Chainlink page documents CCIP only, and
+///         Celo does not appear in Chainlink's VRF v2.5 supported-network list.
+///         Supra's dVRF lists Celo TESTNET only, with no mainnet deployment.
+///         There is, as of this writing, no production VRF on Celo mainnet — so
+///         the "fund a subscription at mainnet" plan this scaffold was written
+///         for cannot be carried out.
 ///
-/// @dev NOT YET WIRED into the deployed escrow: it needs a funded VRF
-///      subscription and the escrow's finalizeStart to call {requestFirstMover}
-///      and consume {firstMover}. Deployable + testable today against a mock
-///      coordinator; at mainnet, swap the inlined interface for the real
-///      VRFConsumerBaseV2Plus and add this contract as a subscription consumer.
+///         MatchEscrow therefore does NOT use this contract. It settles the
+///         first move with a two-party commit–reveal instead, which needs no
+///         oracle at all: each player commits keccak256(secret) in the
+///         transaction that stakes them and the flip is keccak(secret0,
+///         secret1, matchId). See MatchEscrow's commit–reveal notes.
+///
+/// @dev Kept only as a reference implementation in case a VRF service ships on
+///      Celo mainnet later. Do not deploy it expecting randomness today.
 contract VRFFirstMover is Ownable {
     IVRFCoordinatorV2Plus public immutable coordinator;
     bytes32 public keyHash; // gas lane

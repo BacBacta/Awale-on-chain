@@ -46,13 +46,14 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         address session0; // player 0's per-match session key (ephemeral address)
         address session1; // player 1's per-match session key
         Status status;
-        uint8 startTurn; // first mover (0 or 1); START_UNSET until the reveal block is mined
+        uint8 startTurn; // first mover (0 or 1); START_UNSET until both secrets are revealed
         uint8 proposedWinner; // 0, 1, or DRAW — valid while Proposed
         uint16 rakeBps; // rake snapshotted at creation (owner cannot change it mid-match)
         uint64 challengeDeadline; // timestamp the challenge window closes
         uint64 activeDeadline; // timestamp after which an unsettled Active match can be voided
-        uint64 revealBlock; // block whose hash fixes startTurn (set at join, unknown to the joiner)
         uint64 challengeWindow; // window duration snapshotted at join (owner cannot change mid-match)
+        bytes32 commit0; // keccak256(secret0) — creator's first-move commitment
+        bytes32 commit1; // keccak256(secret1) — joiner's, made blind to secret0
         bytes32 transcriptCommitment; // keccak hash of the proposer's game transcript (set at proposeResult)
     }
 
@@ -61,12 +62,32 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     uint8 internal constant DRAW = 2;
     uint64 public constant MIN_CHALLENGE_WINDOW = 5 minutes; // owner cannot set below this
 
-    // First-move randomness: the coin flip is derived from the hash of a *future*
-    // block chosen at join time, so the joiner cannot grind their address to bias
-    // it (all of prevrandao/matchId/addresses are knowable at join, a future
-    // blockhash is not). START_UNSET marks a match whose flip is not yet fixed.
+    // First-move randomness: a two-party commit–reveal. Each player commits to a
+    // secret in the transaction they already send (create / join) and the flip is
+    // keccak(secret0, secret1, matchId) — so neither side can bias it: player 0
+    // commits before player 1 exists, and player 1 commits without ever seeing
+    // secret0, so no choice of secret1 steers the result.
+    //
+    // This deliberately replaces a future-blockhash flip. On Celo (~1s blocks)
+    // the EVM's 256-block blockhash window is only ~4 minutes, and the outcome
+    // becomes publicly computable the moment the reveal block is mined but is
+    // only committed when someone calls finalizeStart. That gap let whichever
+    // player disliked the pending result stall past the window for a FREE
+    // re-roll, indefinitely, and left the flip dependent on keeper liveness.
+    // A commitment fixes the result before anyone can see it, so stalling wins
+    // nothing and no window can expire. It also removes the sequencer's
+    // influence: no block hash enters the derivation at all.
+    //
+    // Residual, accepted: whoever reveals last can refuse to reveal rather than
+    // accept an unfavourable start. That does not get them a better start — the
+    // match simply never opens and {voidExpired} refunds BOTH players after the
+    // TTL, so the aborter only locks up their own stake for the TTL and gets the
+    // status quo back. Strictly better than the free re-roll it replaces.
+    //
+    // Secrets MUST be freshly random per match. Reusing one across matches
+    // reveals it, and an opponent who knows secret0 can grind secret1.
+    // START_UNSET marks a match whose flip is not yet fixed.
     uint8 internal constant START_UNSET = type(uint8).max;
-    uint64 public constant START_REVEAL_DELAY = 1; // blocks to wait after join before finalizing
 
     ReplayVerifier public immutable verifier;
     bytes32 public immutable DOMAIN_SEPARATOR;
@@ -103,7 +124,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
 
     event MatchCreated(uint256 indexed matchId, address indexed player0, address token, uint128 stake);
     event MatchInviteLocked(uint256 indexed matchId);
-    event MatchJoined(uint256 indexed matchId, address indexed player1, uint64 revealBlock);
+    event MatchJoined(uint256 indexed matchId, address indexed player1);
     event StartFinalized(uint256 indexed matchId, uint8 startTurn);
     event MatchCancelled(uint256 indexed matchId);
     event MatchVoided(uint256 indexed matchId);
@@ -147,12 +168,14 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     // ----------------------------- funding ------------------------------ //
 
     /// @notice Create an open match, locking the creator's stake and session key.
-    function createMatch(address token, uint128 stake, address session0)
+    /// @param commit0 keccak256(abi.encode(secret0)) — the creator's half of the
+    ///        first-move flip. Must be a FRESH random 32 bytes per match.
+    function createMatch(address token, uint128 stake, address session0, bytes32 commit0)
         external
         nonReentrant
         returns (uint256 matchId)
     {
-        matchId = _create(token, stake, session0);
+        matchId = _create(token, stake, session0, commit0);
     }
 
     /// @notice Create a stake match reserved for a FRIEND: only someone who can
@@ -160,19 +183,23 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     ///         `inviteHash_` may take the seat (the code travels in the invite
     ///         link, off-chain). Everything else — rake, session keys,
     ///         settlement, cancel, TTL refunds — is identical to an open match.
-    function createMatchWithInvite(address token, uint128 stake, address session0, bytes32 inviteHash_)
+    function createMatchWithInvite(address token, uint128 stake, address session0, bytes32 commit0, bytes32 inviteHash_)
         external
         nonReentrant
         returns (uint256 matchId)
     {
         require(inviteHash_ != bytes32(0), "MatchEscrow: empty invite");
-        matchId = _create(token, stake, session0);
+        matchId = _create(token, stake, session0, commit0);
         inviteHash[matchId] = inviteHash_;
         emit MatchInviteLocked(matchId);
     }
 
-    function _create(address token, uint128 stake, address session0) internal returns (uint256 matchId) {
+    function _create(address token, uint128 stake, address session0, bytes32 commit0)
+        internal
+        returns (uint256 matchId)
+    {
         require(allowedToken[token], "MatchEscrow: token not allowed");
+        require(commit0 != bytes32(0), "MatchEscrow: empty commit");
         require(stake > 0, "MatchEscrow: stake zero");
         // a stake floor kills dust matches whose rake rounds to ~0 yet still cost
         // gas + infra to settle (negative-margin); 0 disables the floor. Read
@@ -186,6 +213,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         m.stake = stake;
         m.player0 = msg.sender;
         m.session0 = session0;
+        m.commit0 = commit0;
         m.status = Status.Open;
         m.rakeBps = rakeBps; // snapshot: a later setRake cannot change this match's terms
         // an Open table nobody joins must never lock the stake forever: past
@@ -199,9 +227,11 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     /// @notice Join an open match, locking the matching stake and session key.
     ///         Invite-locked matches cannot be joined here — the seat belongs to
     ///         whoever holds the link's code ({joinMatchWithCode}).
-    function joinMatch(uint256 matchId, address session1) external nonReentrant {
+    /// @param commit1 keccak256(abi.encode(secret1)) — the joiner's half of the
+    ///        first-move flip, chosen blind to secret0. Fresh random 32 bytes.
+    function joinMatch(uint256 matchId, address session1, bytes32 commit1) external nonReentrant {
         require(inviteHash[matchId] == bytes32(0), "MatchEscrow: invite only");
-        _join(matchId, session1);
+        _join(matchId, session1, commit1);
     }
 
     /// @notice Take the reserved seat of an invite-locked match by presenting
@@ -209,54 +239,67 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     /// @dev The code is revealed on-chain at join time. On Celo's sequenced L2
     ///      there is no public mempool to snipe it from, and after this call the
     ///      match is Active — the hash is single-use by construction.
-    function joinMatchWithCode(uint256 matchId, address session1, bytes32 code) external nonReentrant {
+    function joinMatchWithCode(uint256 matchId, address session1, bytes32 commit1, bytes32 code)
+        external
+        nonReentrant
+    {
         bytes32 h = inviteHash[matchId];
         require(h != bytes32(0), "MatchEscrow: not invite-locked");
         require(keccak256(abi.encodePacked(code)) == h, "MatchEscrow: bad invite code");
-        _join(matchId, session1);
+        _join(matchId, session1, commit1);
     }
 
-    function _join(uint256 matchId, address session1) internal {
+    function _join(uint256 matchId, address session1, bytes32 commit1) internal {
         Match storage m = matches[matchId];
         require(m.status == Status.Open, "MatchEscrow: not open");
         require(msg.sender != m.player0, "MatchEscrow: self-join");
         require(session1 != address(0) && session1 != m.session0, "MatchEscrow: bad session");
+        require(commit1 != bytes32(0), "MatchEscrow: empty commit");
+        // copying the creator's commitment would leave the joiner unable to ever
+        // reveal (they don't know secret0), deadlocking the match into a refund
+        require(commit1 != m.commit0, "MatchEscrow: duplicate commit");
 
         m.player1 = msg.sender;
         m.session1 = session1;
+        m.commit1 = commit1;
         m.status = Status.Active;
         m.activeDeadline = uint64(block.timestamp) + matchTtl;
         m.challengeWindow = challengeWindow; // snapshot: a later setChallengeWindow cannot affect this match
-        // Defer the first-move flip to a future block's hash. The joiner cannot
-        // know blockhash(revealBlock) now, so they cannot grind it; finalizeStart
-        // fixes it once that block is mined.
+        // both halves of the flip are now committed and neither is public;
+        // {finalizeStart} fixes the result as soon as the pair is revealed
         m.startTurn = START_UNSET;
-        m.revealBlock = uint64(block.number) + START_REVEAL_DELAY;
 
         IERC20(m.token).safeTransferFrom(msg.sender, address(this), m.stake);
-        emit MatchJoined(matchId, msg.sender, m.revealBlock);
+        emit MatchJoined(matchId, msg.sender);
     }
 
-    /// @notice Fix a joined match's first mover from the reveal block's hash.
-    ///         Permissionless and idempotent: callable by a keeper, either
-    ///         player, or anyone. If the reveal block has aged out of the
-    ///         256-block window before this runs, it re-rolls to a fresh future
-    ///         block so a match can never get stuck unable to start.
-    function finalizeStart(uint256 matchId) external {
+    /// @notice Fix a joined match's first mover by revealing BOTH commitments.
+    ///         Permissionless: anyone holding the pair may call — in practice
+    ///         the server, which collects a reveal from each player, but either
+    ///         player can do it themselves if the server is gone.
+    /// @dev No deadline and no expiry. The result is determined the moment both
+    ///      commitments exist (at join), so there is nothing to race and no
+    ///      window to miss; the reveal only makes it computable. Calling with a
+    ///      wrong preimage reverts rather than re-rolling, so there is no path
+    ///      that hands anybody a second draw.
+    function finalizeStart(uint256 matchId, bytes32 secret0, bytes32 secret1) external {
         Match storage m = matches[matchId];
         require(m.status == Status.Active, "MatchEscrow: not active");
         require(m.startTurn == START_UNSET, "MatchEscrow: start fixed");
-        require(block.number > m.revealBlock, "MatchEscrow: too early");
+        require(keccak256(abi.encode(secret0)) == m.commit0, "MatchEscrow: bad secret0");
+        require(keccak256(abi.encode(secret1)) == m.commit1, "MatchEscrow: bad secret1");
 
-        bytes32 bh = blockhash(m.revealBlock);
-        if (bh == bytes32(0)) {
-            // reveal block out of range (no keeper ran within 256 blocks): re-roll
-            m.revealBlock = uint64(block.number) + START_REVEAL_DELAY;
-            return;
-        }
-        uint8 start = uint8(uint256(keccak256(abi.encode(bh, matchId))) & 1);
+        // matchId is folded in so the same secret pair cannot produce a
+        // correlated result across two matches
+        uint8 start = uint8(uint256(keccak256(abi.encode(secret0, secret1, matchId))) & 1);
         m.startTurn = start;
         emit StartFinalized(matchId, start);
+    }
+
+    /// @notice The commitment to publish for `secret` — exposed so a client can
+    ///         never disagree with the contract about the hashing.
+    function commitmentOf(bytes32 secret) external pure returns (bytes32) {
+        return keccak256(abi.encode(secret));
     }
 
     /// @notice Withdraw an open match that no one has joined; refunds the creator.

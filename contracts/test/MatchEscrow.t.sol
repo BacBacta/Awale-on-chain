@@ -51,20 +51,27 @@ contract MatchEscrowTest is Test {
 
     // ------------------------------ helpers ----------------------------- //
 
-    /// @dev Create, join, and finalize the first-move flip so the match is
-    ///      ready to play. The flip is deferred to a future block (anti-grinding),
-    ///      so advance past the reveal block and fix it before returning.
+    /// @dev The two halves of the first-move commit–reveal. Fixed here only
+    ///      because a test needs determinism; real clients MUST use fresh
+    ///      randomness per match (see MatchEscrow's commit–reveal notes).
+    bytes32 internal constant SECRET0 = keccak256("awale.test.secret0");
+    bytes32 internal constant SECRET1 = keccak256("awale.test.secret1");
+
+    function _commit(bytes32 secret) internal pure returns (bytes32) {
+        return keccak256(abi.encode(secret));
+    }
+
+    /// @dev Create, join, and reveal both halves so the match is ready to play.
     function _createAndJoin() internal returns (uint256 matchId) {
         matchId = _createAndJoinNoFinalize();
-        vm.roll(block.number + uint256(escrow.START_REVEAL_DELAY()) + 1);
-        escrow.finalizeStart(matchId);
+        escrow.finalizeStart(matchId, SECRET0, SECRET1);
     }
 
     function _createAndJoinNoFinalize() internal returns (uint256 matchId) {
         vm.prank(alice);
-        matchId = escrow.createMatch(address(usdc), STAKE, session0);
+        matchId = escrow.createMatch(address(usdc), STAKE, session0, _commit(SECRET0));
         vm.prank(bob);
-        escrow.joinMatch(matchId, session1);
+        escrow.joinMatch(matchId, session1, _commit(SECRET1));
     }
 
     function _signResult(uint256 pk, uint256 matchId, uint8 winner) internal view returns (bytes memory) {
@@ -112,7 +119,7 @@ contract MatchEscrowTest is Test {
 
     function test_createMatch_locksStake() public {
         vm.prank(alice);
-        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0, _commit(SECRET0));
         assertEq(usdc.balanceOf(address(escrow)), STAKE);
         MatchEscrow.Match memory m = escrow.getMatch(id);
         assertEq(uint8(m.status), uint8(MatchEscrow.Status.Open));
@@ -126,32 +133,133 @@ contract MatchEscrowTest is Test {
         MatchEscrow.Match memory m = escrow.getMatch(id);
         assertEq(uint8(m.status), uint8(MatchEscrow.Status.Active));
         assertEq(m.player1, bob);
-        // the first-move flip is deferred to a future block, not set at join
-        assertEq(m.startTurn, type(uint8).max, "startTurn unset until finalized");
-        assertGt(m.revealBlock, block.number, "reveal block is in the future");
+        // both halves are committed at join, but neither is revealed yet
+        assertEq(m.startTurn, type(uint8).max, "startTurn unset until revealed");
+        assertEq(m.commit1, _commit(SECRET1), "joiner's commitment stored");
     }
 
     // ----------------------- first-move randomness ---------------------- //
 
     function test_finalizeStart_fixesFirstMover() public {
         uint256 id = _createAndJoinNoFinalize();
-        vm.roll(block.number + uint256(escrow.START_REVEAL_DELAY()) + 1);
-        escrow.finalizeStart(id);
+        escrow.finalizeStart(id, SECRET0, SECRET1);
         uint8 start = escrow.getMatch(id).startTurn;
         assertLt(start, 2, "startTurn fixed to 0 or 1");
     }
 
-    function test_finalizeStart_revertsBeforeRevealBlock() public {
+    /// No block needs to be mined and no window can expire: the pair is
+    /// sufficient. This is the regression against the old blockhash scheme,
+    /// where the flip depended on a 256-block window (~4 min on Celo) and a
+    /// keeper calling inside it.
+    function test_finalizeStart_needsNoBlockAdvance() public {
         uint256 id = _createAndJoinNoFinalize();
-        // still at the join block: reveal block not yet mined
-        vm.expectRevert(bytes("MatchEscrow: too early"));
-        escrow.finalizeStart(id);
+        uint256 joinedAt = block.number;
+        escrow.finalizeStart(id, SECRET0, SECRET1);
+        assertEq(block.number, joinedAt, "settled in the join block itself");
+        assertLt(escrow.getMatch(id).startTurn, 2);
+    }
+
+    /// Even a year later the same reveal still works — there is no expiry to
+    /// miss, so a match can never be stranded unstartable.
+    function test_finalizeStart_worksLongAfterTheJoin() public {
+        uint256 id = _createAndJoinNoFinalize();
+        vm.roll(block.number + 5_000_000); // far beyond any blockhash window
+        escrow.finalizeStart(id, SECRET0, SECRET1);
+        assertLt(escrow.getMatch(id).startTurn, 2);
+    }
+
+    /// A wrong preimage must REVERT, never re-roll. The old scheme's expiry
+    /// path handed the caller a fresh draw; that was the free re-roll a
+    /// stalling player could farm until the flip went their way.
+    function test_finalizeStart_revertsOnWrongSecret() public {
+        uint256 id = _createAndJoinNoFinalize();
+
+        vm.expectRevert(bytes("MatchEscrow: bad secret0"));
+        escrow.finalizeStart(id, keccak256("wrong"), SECRET1);
+
+        vm.expectRevert(bytes("MatchEscrow: bad secret1"));
+        escrow.finalizeStart(id, SECRET0, keccak256("wrong"));
+
+        // swapping the halves is also just a wrong preimage
+        vm.expectRevert(bytes("MatchEscrow: bad secret0"));
+        escrow.finalizeStart(id, SECRET1, SECRET0);
+    }
+
+    /// The result is a pure function of the committed pair and the match id, so
+    /// nobody — player, keeper or sequencer — can steer it by choosing WHEN to
+    /// reveal. Same inputs, same answer, at any height.
+    function test_finalizeStart_outcomeIndependentOfRevealTiming() public {
+        uint256 first = _createAndJoinNoFinalize();
+        escrow.finalizeStart(first, SECRET0, SECRET1);
+        uint8 immediate = escrow.getMatch(first).startTurn;
+
+        // an identical pair in another match, revealed much later
+        vm.prank(alice);
+        uint256 second = escrow.createMatch(address(usdc), STAKE, session0, _commit(SECRET0));
+        vm.prank(bob);
+        escrow.joinMatch(second, session1, _commit(SECRET1));
+        vm.roll(block.number + 1_000);
+        vm.warp(block.timestamp + 8 hours);
+        escrow.finalizeStart(second, SECRET0, SECRET1);
+
+        // the ids differ, so the two flips are independent — but each is fixed
+        // by its own committed pair, not by when anyone got around to calling
+        assertLt(immediate, 2);
+        assertLt(escrow.getMatch(second).startTurn, 2);
+        assertEq(
+            escrow.getMatch(second).startTurn,
+            uint8(uint256(keccak256(abi.encode(SECRET0, SECRET1, second))) & 1),
+            "derived purely from the committed pair and the match id"
+        );
     }
 
     function test_finalizeStart_revertsOnceFixed() public {
-        uint256 id = _createAndJoin(); // already finalized
+        uint256 id = _createAndJoin(); // already revealed
         vm.expectRevert(bytes("MatchEscrow: start fixed"));
-        escrow.finalizeStart(id);
+        escrow.finalizeStart(id, SECRET0, SECRET1);
+    }
+
+    function test_commitmentOf_matchesWhatCreateExpects() public view {
+        assertEq(escrow.commitmentOf(SECRET0), _commit(SECRET0));
+    }
+
+    function test_create_rejectsEmptyCommitment() public {
+        vm.prank(alice);
+        vm.expectRevert(bytes("MatchEscrow: empty commit"));
+        escrow.createMatch(address(usdc), STAKE, session0, bytes32(0));
+    }
+
+    function test_join_rejectsEmptyCommitment() public {
+        vm.prank(alice);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0, _commit(SECRET0));
+        vm.prank(bob);
+        vm.expectRevert(bytes("MatchEscrow: empty commit"));
+        escrow.joinMatch(id, session1, bytes32(0));
+    }
+
+    /// Copying the creator's commitment would leave the joiner unable to ever
+    /// reveal, deadlocking the stake into a TTL refund.
+    function test_join_rejectsCopiedCommitment() public {
+        vm.prank(alice);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0, _commit(SECRET0));
+        vm.prank(bob);
+        vm.expectRevert(bytes("MatchEscrow: duplicate commit"));
+        escrow.joinMatch(id, session1, _commit(SECRET0));
+    }
+
+    /// A player who dislikes the revealed start can withhold their secret, but
+    /// that only voids the match to a refund — it never yields a better start.
+    function test_unrevealedMatch_refundsBothViaTtl() public {
+        uint256 id = _createAndJoinNoFinalize();
+        uint256 aBefore = usdc.balanceOf(alice);
+        uint256 bBefore = usdc.balanceOf(bob);
+
+        vm.warp(block.timestamp + escrow.matchTtl() + 1);
+        escrow.voidExpired(id);
+
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Voided));
+        assertEq(usdc.balanceOf(alice), aBefore + STAKE, "creator refunded in full");
+        assertEq(usdc.balanceOf(bob), bBefore + STAKE, "joiner refunded in full");
     }
 
     function test_proposeResult_revertsBeforeStartFinalized() public {
@@ -163,7 +271,7 @@ contract MatchEscrowTest is Test {
 
     function test_cancelMatch_refunds() public {
         vm.prank(alice);
-        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0, _commit(SECRET0));
         uint256 before = usdc.balanceOf(alice);
         vm.prank(alice);
         escrow.cancelMatch(id);
@@ -173,17 +281,17 @@ contract MatchEscrowTest is Test {
 
     function test_revert_selfJoin() public {
         vm.prank(alice);
-        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0, _commit(SECRET0));
         vm.prank(alice);
         vm.expectRevert(bytes("MatchEscrow: self-join"));
-        escrow.joinMatch(id, session1);
+        escrow.joinMatch(id, session1, _commit(SECRET1));
     }
 
     function test_revert_joinNotOpen() public {
         uint256 id = _createAndJoin();
         vm.prank(bob);
         vm.expectRevert(bytes("MatchEscrow: not open"));
-        escrow.joinMatch(id, session1);
+        escrow.joinMatch(id, session1, _commit(SECRET1));
     }
 
     // --------------------------- settleSigned --------------------------- //
@@ -342,7 +450,7 @@ contract MatchEscrowTest is Test {
         vm.startPrank(alice);
         rando.approve(address(escrow), type(uint256).max);
         vm.expectRevert(bytes("MatchEscrow: token not allowed"));
-        escrow.createMatch(address(rando), STAKE, session0);
+        escrow.createMatch(address(rando), STAKE, session0, _commit(SECRET0));
         vm.stopPrank();
     }
 
@@ -570,11 +678,11 @@ contract MatchEscrowTest is Test {
         // below the floor reverts
         vm.prank(alice);
         vm.expectRevert(bytes("MatchEscrow: stake below floor"));
-        escrow.createMatch(address(usdc), STAKE - 1, session0);
+        escrow.createMatch(address(usdc), STAKE - 1, session0, _commit(SECRET0));
 
         // at/above the floor still works
         vm.prank(alice);
-        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0, _commit(SECRET0));
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Open));
     }
 
@@ -610,14 +718,14 @@ contract MatchEscrowTest is Test {
         // $10 of USDC clears its own floor — it is NOT measured against the
         // (numerically vastly larger) USDm floor
         vm.prank(alice);
-        uint256 id = escrow.createMatch(address(usdc), tenUsdc, session0);
+        uint256 id = escrow.createMatch(address(usdc), tenUsdc, session0, _commit(SECRET0));
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Open));
 
         // and a hair under $10 of USDm is dust against ITS floor, even though
         // that raw number dwarfs the entire USDC floor
         vm.prank(alice);
         vm.expectRevert(bytes("MatchEscrow: stake below floor"));
-        escrow.createMatch(address(usdm), tenUsdm - 1, session0);
+        escrow.createMatch(address(usdm), tenUsdm - 1, session0, _commit(SECRET0));
     }
 
     function _buildPartialTranscript(uint256 matchId, uint8 startTurn, uint256 plies)
@@ -663,7 +771,7 @@ contract MatchEscrowTest is Test {
     // an Open table nobody joins expires too — anyone can refund the creator
     function test_voidExpired_expiredOpenRefundsCreator() public {
         vm.prank(alice);
-        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0, _commit(SECRET0));
         uint256 aBefore = usdc.balanceOf(alice);
 
         vm.expectRevert(bytes("MatchEscrow: not expired"));
@@ -679,7 +787,7 @@ contract MatchEscrowTest is Test {
 
     function test_createMatch_armsOpenDeadline() public {
         vm.prank(alice);
-        uint256 id = escrow.createMatch(address(usdc), STAKE, session0);
+        uint256 id = escrow.createMatch(address(usdc), STAKE, session0, _commit(SECRET0));
         assertEq(escrow.getMatch(id).activeDeadline, uint64(block.timestamp) + escrow.openTtl());
     }
 
@@ -700,30 +808,29 @@ contract MatchEscrowTest is Test {
     function test_invite_strangerCannotJoin() public {
         bytes32 code = keccak256("the-link-secret");
         vm.prank(alice);
-        uint256 id = escrow.createMatchWithInvite(address(usdc), STAKE, session0, keccak256(abi.encodePacked(code)));
+        uint256 id = escrow.createMatchWithInvite(address(usdc), STAKE, session0, _commit(SECRET0), keccak256(abi.encodePacked(code)));
 
         vm.prank(bob);
         vm.expectRevert(bytes("MatchEscrow: invite only"));
-        escrow.joinMatch(id, session1);
+        escrow.joinMatch(id, session1, _commit(SECRET1));
 
         vm.prank(bob);
         vm.expectRevert(bytes("MatchEscrow: bad invite code"));
-        escrow.joinMatchWithCode(id, session1, keccak256("wrong-guess"));
+        escrow.joinMatchWithCode(id, session1, _commit(SECRET1), keccak256("wrong-guess"));
     }
 
     function test_invite_friendWithCodeJoins_andPlaysToSettlement() public {
         bytes32 code = keccak256("the-link-secret");
         vm.prank(alice);
-        uint256 id = escrow.createMatchWithInvite(address(usdc), STAKE, session0, keccak256(abi.encodePacked(code)));
+        uint256 id = escrow.createMatchWithInvite(address(usdc), STAKE, session0, _commit(SECRET0), keccak256(abi.encodePacked(code)));
 
         vm.prank(bob);
-        escrow.joinMatchWithCode(id, session1, code);
+        escrow.joinMatchWithCode(id, session1, _commit(SECRET1), code);
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Active));
 
         // the rest of the lifecycle is IDENTICAL to an open match: settle with
         // both session signatures, rake to treasury per the existing rules
-        vm.roll(block.number + uint256(escrow.START_REVEAL_DELAY()) + 1);
-        escrow.finalizeStart(id);
+        escrow.finalizeStart(id, SECRET0, SECRET1);
         bytes32 digest = escrow.resultDigest(id, 0);
         (uint8 v0, bytes32 r0, bytes32 s0) = vm.sign(pk0, digest);
         (uint8 v1, bytes32 r1, bytes32 s1) = vm.sign(pk1, digest);
@@ -743,16 +850,16 @@ contract MatchEscrowTest is Test {
         assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Active));
         // …and joinMatchWithCode is reserved for invite-locked matches
         vm.prank(alice);
-        uint256 id2 = escrow.createMatch(address(usdc), STAKE, session0);
+        uint256 id2 = escrow.createMatch(address(usdc), STAKE, session0, _commit(SECRET0));
         vm.prank(bob);
         vm.expectRevert(bytes("MatchEscrow: not invite-locked"));
-        escrow.joinMatchWithCode(id2, session1, keccak256("anything"));
+        escrow.joinMatchWithCode(id2, session1, _commit(SECRET1), keccak256("anything"));
     }
 
     function test_invite_creatorCanStillCancel() public {
         bytes32 code = keccak256("secret");
         vm.prank(alice);
-        uint256 id = escrow.createMatchWithInvite(address(usdc), STAKE, session0, keccak256(abi.encodePacked(code)));
+        uint256 id = escrow.createMatchWithInvite(address(usdc), STAKE, session0, _commit(SECRET0), keccak256(abi.encodePacked(code)));
         uint256 before = usdc.balanceOf(alice);
         vm.prank(alice);
         escrow.cancelMatch(id);
@@ -762,6 +869,6 @@ contract MatchEscrowTest is Test {
     function test_invite_emptyHashRejected() public {
         vm.prank(alice);
         vm.expectRevert(bytes("MatchEscrow: empty invite"));
-        escrow.createMatchWithInvite(address(usdc), STAKE, session0, bytes32(0));
+        escrow.createMatchWithInvite(address(usdc), STAKE, session0, _commit(SECRET0), bytes32(0));
     }
 }

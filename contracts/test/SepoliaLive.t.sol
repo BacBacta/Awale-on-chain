@@ -13,6 +13,11 @@ import {MockERC20} from "./mocks/MockERC20.sol";
 ///   LIVE_ESCROW=0x.. LIVE_USDM=0x.. \
 ///   forge test --match-contract SepoliaLiveTest --fork-url celo_sepolia -vv
 contract SepoliaLiveTest is Test {
+    // first-move commit–reveal halves; fixed for determinism in tests, but a
+    // real client MUST use fresh randomness per match
+    bytes32 internal constant SECRET0 = keccak256("awale.test.secret0");
+    bytes32 internal constant SECRET1 = keccak256("awale.test.secret1");
+
     uint128 internal constant STAKE = 10e18;
 
     function test_live_happyPathSettlement() public {
@@ -60,12 +65,12 @@ contract SepoliaLiveTest is Test {
 
         vm.startPrank(p0);
         usdm.approve(address(escrow), STAKE);
-        matchId = escrow.createMatch(address(usdm), STAKE, s0);
+        matchId = escrow.createMatch(address(usdm), STAKE, s0, keccak256(abi.encode(SECRET0)));
         vm.stopPrank();
 
         vm.startPrank(p1);
         usdm.approve(address(escrow), STAKE);
-        escrow.joinMatch(matchId, s1);
+        escrow.joinMatch(matchId, s1, keccak256(abi.encode(SECRET1)));
         vm.stopPrank();
     }
 

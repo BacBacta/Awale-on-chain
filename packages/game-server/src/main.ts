@@ -17,6 +17,7 @@ import { watchMatchJoined, watchStartFinalized, openMatchFromChain, type ChainMa
 import { SettlementClient } from "./chain.js";
 import { SettlementCoordinator } from "./settlement-coordinator.js";
 import { keeperActions, runKeeper, idsToRescan, EscrowStatus, type KeeperMatch } from "./keeper.js";
+import { RevealStore } from "./flip-reveal.js";
 import { AsyncMatchService } from "./async-match.js";
 import { InMemoryMatchStore, type MatchStore } from "./persistence/store.js";
 import { InMemoryLiveMatchStore } from "./store/memory.js";
@@ -120,6 +121,10 @@ const TURN_CLOCK_MS = Number(process.env.TURN_CLOCK_MS ?? "30000");
 // actions (finalize proposed results, void expired matches). Terminal matches
 // are pruned.
 const tracked = new Set<string>();
+// First-move commit–reveal halves, per match. Held in memory only: a secret
+// lost to a restart is simply re-sent by the app, which keeps its own copy,
+// and either player can always call finalizeStart themselves.
+const reveals = new RevealStore();
 // Matches the keeper can never void: voidExpired is player-gated on-chain, so
 // when the operator isn't a player the revert is DETERMINISTIC — retrying it
 // every 30s flooded the logs so hard that real signals scrolled out of the
@@ -559,6 +564,49 @@ const httpServer = createServer((req, res) => {
   if (req.method === "GET" && url.pathname === "/lobby") {
     const viewer = (url.searchParams.get("viewer") ?? undefined) as Address | undefined;
     json(200, lobby.snapshot(viewer));
+    return;
+  }
+
+  // --- first-move commit–reveal ---
+  //
+  // Each player posts the secret they committed to when they staked. The secret
+  // authenticates itself — it is accepted only if it hashes to one of the
+  // commitments the match already carries on chain — so this needs no session
+  // or signature. Reveals are refused until the match is Active, because before
+  // that player 1 has not committed and an early secret0 is exactly what a
+  // colluding joiner needs to grind their own half and pick who starts.
+  if (req.method === "POST" && url.pathname === "/match/reveal") {
+    readJson(req)
+      .then(async (b) => {
+        const { matchId, secret } = b as { matchId: string; secret: Hex };
+        if (!matchId || !secret) return json(400, { error: "matchId and secret required" });
+        const id = BigInt(matchId);
+        const m = (await publicClient.readContract({
+          address: ESCROW,
+          abi: matchEscrowAbi,
+          functionName: "getMatch",
+          args: [id],
+        })) as { status: number; commit0: Hex; commit1: Hex };
+
+        const result = reveals.submit(id, { status: Number(m.status), commit0: m.commit0, commit1: m.commit1 }, secret);
+        if (!result.ok) {
+          // not-active is a "come back in a moment", not a client error: the
+          // creator reveals as soon as they see the match fill, and may beat
+          // the node's view of the join by a block
+          return json(result.reason === "not-active" ? 409 : 400, { error: result.reason });
+        }
+
+        if (result.ready && settlement) {
+          try {
+            await settlement.finalizeStart(id, result.secret0, result.secret1);
+            reveals.forget(id); // spent — the flip is fixed on chain
+          } catch {
+            /* raced or already fixed; the keeper retries from the stored pair */
+          }
+        }
+        json(200, { revealed: true, ready: result.ready });
+      })
+      .catch(() => json(400, { error: "bad request" }));
     return;
   }
 
@@ -1092,11 +1140,17 @@ async function openFromChain(matchId: bigint): Promise<void> {
       }
       if (Number(m.startTurn) === START_UNSET) {
         if (!settlement) return;
+        const pair = reveals.pair(matchId);
+        if (!pair) {
+          // waiting on a player to reveal their half — nothing to submit yet
+          await new Promise((r) => setTimeout(r, 3000));
+          continue;
+        }
         try {
-          const hash = await settlement.finalizeStart(matchId);
+          const hash = await settlement.finalizeStart(matchId, pair.secret0, pair.secret1);
           await publicClient.waitForTransactionReceipt({ hash });
         } catch {
-          /* too early, raced, already fixed, or receipt flake — loop re-reads */
+          /* raced, already fixed, or receipt flake — loop re-reads */
         }
         await new Promise((r) => setTimeout(r, 2000));
         continue;
@@ -1171,9 +1225,9 @@ const st = setInterval(() => socketHandle.sweepQueues(), MATCHMAKE_SWEEP_MS);
 if ("unref" in st) st.unref?.();
 
 // First-move randomness lifecycle:
-//  - on MatchJoined, fix the deferred flip by calling finalizeStart (needs a
-//    signer; it reverts harmlessly if the reveal block isn't mined yet, so the
-//    keeper retries any that are missed);
+//  - on MatchJoined, both commitments are on chain, so revealing is now safe;
+//    submit the flip if both players already revealed, else the keeper picks it
+//    up as soon as they do;
 //  - on StartFinalized, open the match in the hub for play.
 if (settlement) {
   watchMatchJoined(publicClient as unknown as EventWatcher, {
@@ -1183,10 +1237,12 @@ if (settlement) {
       // a lost cash-joined socket event no longer strands the pair — the
       // chain event drives the same release
       socketHandle.cashPairMatchJoined(matchId);
+      const pair = reveals.pair(matchId);
+      if (!pair) return; // a player still owes a reveal — keeper retries later
       try {
-        await settlement!.finalizeStart(matchId);
+        await settlement!.finalizeStart(matchId, pair.secret0, pair.secret1);
       } catch {
-        /* too early or already fixed — the keeper will retry if needed */
+        /* already fixed or raced — the keeper will retry if needed */
       }
     },
   });
@@ -1275,15 +1331,10 @@ void (async () => {
 })();
 
 // Keeper loop: finalize proposed results past their challenge window, fix the
-// first move when its reveal block is mined, and void matches that expired.
+// first move once both halves of the flip are revealed, and void matches that
+// expired.
 async function keeperTick(): Promise<void> {
   if (!settlement || tracked.size === 0) return;
-  let blockNumber = 0;
-  try {
-    blockNumber = Number(await publicClient.getBlockNumber());
-  } catch {
-    /* fall back to 0 — finalizeStart simply won't be emitted this tick */
-  }
   const now = Math.floor(Date.now() / 1000);
   const matches: KeeperMatch[] = [];
   for (const idStr of tracked) {
@@ -1293,7 +1344,7 @@ async function keeperTick(): Promise<void> {
         abi: matchEscrowAbi,
         functionName: "getMatch",
         args: [BigInt(idStr)],
-      })) as { status: number; startTurn: number; proposedWinner: number; challengeDeadline: bigint; activeDeadline: bigint; revealBlock: bigint; player0: Address; player1: Address };
+      })) as { status: number; startTurn: number; proposedWinner: number; challengeDeadline: bigint; activeDeadline: bigint; player0: Address; player1: Address };
       const status = Number(m.status);
       if (status === EscrowStatus.Resolved || status === EscrowStatus.Voided || status === EscrowStatus.Cancelled) {
         tracked.delete(idStr); // terminal — stop watching
@@ -1308,14 +1359,16 @@ async function keeperTick(): Promise<void> {
         proposedWinner: Number(m.proposedWinner),
         challengeDeadline: Number(m.challengeDeadline),
         activeDeadline: Number(m.activeDeadline),
-        revealBlock: Number(m.revealBlock),
+        // no block to wait for any more: the flip is submittable the moment
+        // both players have revealed their committed halves
+        flipReady: reveals.pair(BigInt(idStr)) !== null,
       });
     } catch {
       /* transient RPC error — retry next tick */
     }
   }
   const proposedWinnerOf = new Map(matches.map((m) => [m.matchId.toString(), m.proposedWinner]));
-  const actions = keeperActions(matches, now, blockNumber).filter((a) => {
+  const actions = keeperActions(matches, now).filter((a) => {
     if (a.action === "voidExpired" && voidBlocked.has(a.matchId.toString())) return false;
     // Anti-theft guard: NEVER let the keeper finalize a proposal the hub knows
     // is false. The primary defence is the on-chain challenge the anticheat

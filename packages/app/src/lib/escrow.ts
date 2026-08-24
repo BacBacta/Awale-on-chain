@@ -80,13 +80,13 @@ export function approve(
 
 export function createMatch(
   wallet: WriteClient,
-  p: { account: Address; escrow: Address; token: Address; stake: bigint; session: Address; feeCurrency?: Address },
+  p: { account: Address; escrow: Address; token: Address; stake: bigint; session: Address; commit: Hex; feeCurrency?: Address },
 ): Promise<Hex> {
   return wallet.writeContract({
     address: p.escrow,
     abi: matchEscrowAbi,
     functionName: "createMatch",
-    args: [p.token, p.stake, p.session],
+    args: [p.token, p.stake, p.session, p.commit],
     account: p.account,
     feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });
@@ -94,13 +94,13 @@ export function createMatch(
 
 export function joinMatch(
   wallet: WriteClient,
-  p: { account: Address; escrow: Address; matchId: bigint; session: Address; feeCurrency?: Address },
+  p: { account: Address; escrow: Address; matchId: bigint; session: Address; commit: Hex; feeCurrency?: Address },
 ): Promise<Hex> {
   return wallet.writeContract({
     address: p.escrow,
     abi: matchEscrowAbi,
     functionName: "joinMatch",
-    args: [p.matchId, p.session],
+    args: [p.matchId, p.session, p.commit],
     account: p.account,
     feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });
@@ -127,13 +127,13 @@ export function inviteHashOf(code: Hex): Hex {
 
 export function createMatchWithInvite(
   wallet: WriteClient,
-  p: { account: Address; escrow: Address; token: Address; stake: bigint; session: Address; inviteHash: Hex; feeCurrency?: Address },
+  p: { account: Address; escrow: Address; token: Address; stake: bigint; session: Address; commit: Hex; inviteHash: Hex; feeCurrency?: Address },
 ): Promise<Hex> {
   return wallet.writeContract({
     address: p.escrow,
     abi: matchEscrowAbi,
     functionName: "createMatchWithInvite",
-    args: [p.token, p.stake, p.session, p.inviteHash],
+    args: [p.token, p.stake, p.session, p.commit, p.inviteHash],
     account: p.account,
     feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });
@@ -141,13 +141,13 @@ export function createMatchWithInvite(
 
 export function joinMatchWithCode(
   wallet: WriteClient,
-  p: { account: Address; escrow: Address; matchId: bigint; session: Address; code: Hex; feeCurrency?: Address },
+  p: { account: Address; escrow: Address; matchId: bigint; session: Address; commit: Hex; code: Hex; feeCurrency?: Address },
 ): Promise<Hex> {
   return wallet.writeContract({
     address: p.escrow,
     abi: matchEscrowAbi,
     functionName: "joinMatchWithCode",
-    args: [p.matchId, p.session, p.code],
+    args: [p.matchId, p.session, p.commit, p.code],
     account: p.account,
     feeCurrency: effectiveFeeCurrency(p.feeCurrency), // CIP-64 only inside MiniPay
   });

@@ -5,11 +5,28 @@ only the external service (a VRF subscription / an ODIS quota + signer) is
 plugged in at mainnet. Neither is wired into the live path yet, so testnet is
 unaffected.
 
-## 1. VRF first-mover — `contracts/src/VRFFirstMover.sol`
+## 1. VRF first-mover — `contracts/src/VRFFirstMover.sol` — **SUPERSEDED**
 
-Replaces MatchEscrow's placeholder coin flip (`finalizeStart` hashing a future
-blockhash — audit L-01/L-03: a block proposer has limited influence over that
-hash) with a Chainlink VRF v2.5 bit no participant or sequencer can bias.
+> **This scaffold cannot be activated, and is no longer the plan.** Chainlink
+> VRF is not available on Celo (Celo's Chainlink docs cover CCIP only, and Celo
+> is absent from Chainlink's VRF v2.5 supported-network list); Supra's dVRF
+> lists Celo **testnet** only. There is no production VRF on Celo mainnet, so
+> the activation steps below cannot be carried out.
+>
+> The first-move flip is instead settled by a **two-party commit–reveal** in
+> `MatchEscrow`, which needs no oracle: each player commits `keccak256(secret)`
+> in the transaction that already stakes them (create / join), and the flip is
+> `keccak(secret0, secret1, matchId)`. Neither side can steer it — player 0
+> commits before an opponent exists, and player 1 commits without seeing
+> secret0 — and there is no window to expire, so it does not depend on keeper
+> liveness the way the old blockhash flip did. The contract is the reference;
+> `packages/game-server/src/flip-reveal.ts` collects the pair.
+>
+> `VRFFirstMover.sol` is kept only as a reference implementation should a VRF
+> service ship on Celo mainnet later.
+
+The original (now historical) rationale — replacing the blockhash flip with a
+Chainlink VRF v2.5 bit no participant or sequencer can bias:
 
 - **What's done:** the full consumer — `requestFirstMover(matchId)` (requester-
   gated, one per match), `rawFulfillRandomWords` (coordinator-gated, idempotent),

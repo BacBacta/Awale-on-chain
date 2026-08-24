@@ -1,6 +1,7 @@
 "use client";
 
 import { Icon } from "../../src/components/Icon.js";
+import { newFlipSecret, commitmentOf, stashPendingSecret, claimPendingSecret } from "../../src/lib/flip.js";
 import { STAKE_DECIMALS, STAKE_SYMBOL } from "../../src/lib/stake.js";
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -293,12 +294,17 @@ export default function Matches() {
       }
       const session = createSessionKey();
       const code = newInviteCode();
+      // creator's half of the first-move flip; re-keyed once the receipt names
+      // the match (the invite code is a separate secret, for the seat lock)
+      const flipSecret = newFlipSecret();
+      stashPendingSecret(flipSecret);
       const hash = await createMatchWithInvite(wallet, {
         account,
         escrow: cfg.escrow,
         token: token.address,
         stake: amount,
         session: session.address,
+        commit: commitmentOf(flipSecret),
         inviteHash: inviteHashOf(code),
         feeCurrency: FEE_CURRENCY,
       });
@@ -307,6 +313,7 @@ export default function Matches() {
       const matchId = (created[0]?.args as { matchId?: bigint } | undefined)?.matchId;
       if (matchId === undefined) throw new Error("match created but its id couldn't be read — check Your matches");
       persistSession(matchId, session);
+      claimPendingSecret(matchId);
       recordLocalMatch(matchId);
       const link = `${window.location.origin}/play?match=${matchId.toString()}&code=${code}`;
       setInviteLink(link);

@@ -75,7 +75,11 @@ const escrowAbi = [
     type: "function",
     name: "finalizeStart",
     stateMutability: "nonpayable",
-    inputs: [{ name: "matchId", type: "uint256" }],
+    inputs: [
+      { name: "matchId", type: "uint256" },
+      { name: "secret0", type: "bytes32" },
+      { name: "secret1", type: "bytes32" },
+    ],
     outputs: [],
   },
   {
@@ -184,13 +188,15 @@ export class SettlementClient {
     });
   }
 
-  /** Fix a joined match's first mover from its reveal block's hash. */
-  finalizeStart(matchId: bigint): Promise<Hex> {
+  /** Fix a joined match's first mover by relaying both revealed secrets. The
+   *  contract recomputes the flip and rejects a wrong preimage, so this call
+   *  can only ever publish the result both players already committed to. */
+  finalizeStart(matchId: bigint, secret0: Hex, secret1: Hex): Promise<Hex> {
     return this.wallet.writeContract({
       address: this.escrow,
       abi: escrowAbi,
       functionName: "finalizeStart",
-      args: [matchId],
+      args: [matchId, secret0, secret1],
       feeCurrency: this.feeCurrency,
     });
   }

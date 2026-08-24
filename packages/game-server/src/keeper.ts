@@ -28,7 +28,10 @@ export interface KeeperMatch {
   challengeDeadline: number; // unix seconds
   activeDeadline: number; // unix seconds
   startTurn?: number; // 0/1 once fixed, START_UNSET while pending
-  revealBlock?: number; // block whose hash fixes startTurn
+  /** both first-move secrets revealed, so finalizeStart can be submitted.
+   *  There is no deadline to race any more: the flip is determined the moment
+   *  both commitments exist on chain, and revealing only makes it computable. */
+  flipReady?: boolean;
   proposedWinner?: number; // 0/1/DRAW, valid while Proposed — for the anti-theft finalize guard
 }
 
@@ -36,20 +39,17 @@ export type KeeperAction = { matchId: bigint; action: "finalize" | "voidExpired"
 
 /**
  * Decide which on-chain actions are due. Pure and deterministic.
- *  - Proposed and past its challenge window           -> finalize
- *  - Active, first move not yet fixed, reveal block mined -> finalizeStart
- *  - Active and past its TTL                           -> voidExpired
- *
- * `blockNumber` is the current chain height (for the finalizeStart check); when
- * omitted, finalizeStart is never emitted.
+ *  - Proposed and past its challenge window            -> finalize
+ *  - Active, first move not fixed, both secrets in hand -> finalizeStart
+ *  - Active and past its TTL                            -> voidExpired
  */
-export function keeperActions(matches: KeeperMatch[], now: number, blockNumber = 0): KeeperAction[] {
+export function keeperActions(matches: KeeperMatch[], now: number): KeeperAction[] {
   const out: KeeperAction[] = [];
   for (const m of matches) {
     if (m.status === EscrowStatus.Proposed && now > m.challengeDeadline) {
       out.push({ matchId: m.matchId, action: "finalize" });
     } else if (m.status === EscrowStatus.Active) {
-      if (m.startTurn === START_UNSET && m.revealBlock && blockNumber > m.revealBlock) {
+      if (m.startTurn === START_UNSET && m.flipReady) {
         out.push({ matchId: m.matchId, action: "finalizeStart" });
       } else if (m.activeDeadline > 0 && now > m.activeDeadline) {
         out.push({ matchId: m.matchId, action: "voidExpired" });
@@ -87,13 +87,23 @@ export async function runKeeper(
   client: SettlementClient,
   actions: KeeperAction[],
   onError?: (a: KeeperAction, err: unknown) => void,
+  /** Both revealed first-move secrets for a match, or null if not both in yet.
+   *  A finalizeStart with no pair is skipped rather than sent: the contract
+   *  would reject a wrong preimage anyway, and a wasted tx costs real gas. */
+  flipSecrets?: (matchId: bigint) => { secret0: Hex; secret1: Hex } | null,
 ): Promise<Hex[]> {
   const hashes: Hex[] = [];
   for (const a of actions) {
     try {
-      if (a.action === "finalize") hashes.push(await client.finalize(a.matchId));
-      else if (a.action === "finalizeStart") hashes.push(await client.finalizeStart(a.matchId));
-      else hashes.push(await client.voidExpired(a.matchId));
+      if (a.action === "finalize") {
+        hashes.push(await client.finalize(a.matchId));
+      } else if (a.action === "finalizeStart") {
+        const pair = flipSecrets?.(a.matchId);
+        if (!pair) continue; // not both halves revealed yet — nothing to submit
+        hashes.push(await client.finalizeStart(a.matchId, pair.secret0, pair.secret1));
+      } else {
+        hashes.push(await client.voidExpired(a.matchId));
+      }
     } catch (err) {
       onError?.(a, err);
     }

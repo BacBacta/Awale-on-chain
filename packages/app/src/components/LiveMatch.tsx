@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { newFlipSecret, commitmentOf, persistFlipSecret, revealFlipSecret } from "../lib/flip.js";
 import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
 import Link from "next/link";
 import { type Socket } from "socket.io-client";
@@ -145,6 +146,35 @@ export function LiveMatch({
   const myAddress = useRef<Address | null>(null);
   const feeCurrency = useRef<Address | undefined>(undefined);
   const roleRef = useRef<0 | 1 | null>(null);
+
+  // Reveal this player's half of the first-move flip.
+  //
+  // The server refuses any reveal until BOTH stakes — and therefore both
+  // commitments — are on chain, since handing it secret0 while the seat is
+  // still open would give a colluding joiner the one input they need to grind
+  // their own half and choose who starts. The creator lands here first, so it
+  // retries with backoff until the opponent has joined.
+  //
+  // Best-effort on purpose: if this never lands, either player can still call
+  // finalizeStart themselves, and a match that stays unrevealed refunds both
+  // stakes at the TTL rather than opening on a flip someone could have steered.
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let delay = 2000;
+    const attempt = (): void => {
+      void revealFlipSecret(matchId).then((ok) => {
+        if (ok || cancelled) return;
+        delay = Math.min(delay * 2, 30_000); // an opponent may be a while coming
+        timer = setTimeout(attempt, delay);
+      });
+    };
+    attempt();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [matchId]);
 
   useEffect(() => {
     const cfg = escrowConfig();
@@ -570,12 +600,16 @@ export function LiveMatch({
       if (joinOffer.inviteLocked && !joinOffer.code) {
         throw new Error("this seat is reserved — open the full invite link your friend sent you (it contains the key)");
       }
+      // the joiner's half of the first-move flip, committed with the stake
+      const flipSecret = newFlipSecret();
+      persistFlipSecret(matchId, flipSecret);
       const jh = joinOffer.inviteLocked
         ? await joinMatchWithCode(wallet.current, {
             account: myAddress.current,
             escrow: cfg.escrow,
             matchId,
             session: sk.address,
+            commit: commitmentOf(flipSecret),
             code: joinOffer.code!,
             feeCurrency: feeCurrency.current,
           })
@@ -584,6 +618,7 @@ export function LiveMatch({
             escrow: cfg.escrow,
             matchId,
             session: sk.address,
+            commit: commitmentOf(flipSecret),
             feeCurrency: feeCurrency.current,
           });
       await confirmTx(client, jh, "Your stake");

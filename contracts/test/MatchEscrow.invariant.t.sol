@@ -28,6 +28,10 @@ contract EscrowHandler is Test {
 
     uint256 internal pk0 = 0xA11CE;
     uint256 internal pk1 = 0xB0B;
+    // first-move commit–reveal halves; fixed for determinism in tests, but a
+    // real client MUST use fresh randomness per match
+    bytes32 internal constant SECRET0 = keccak256("awale.test.secret0");
+    bytes32 internal constant SECRET1 = keccak256("awale.test.secret1");
     address internal session0;
     address internal session1;
 
@@ -84,7 +88,7 @@ contract EscrowHandler is Test {
         uint128 stake = uint128(bound(amount, 1, 100_000_000)); // up to 100 USDC
         uint256 eb = usdc.balanceOf(address(escrow));
         vm.prank(p);
-        uint256 id = escrow.createMatch(address(usdc), stake, session0);
+        uint256 id = escrow.createMatch(address(usdc), stake, session0, keccak256(abi.encode(SECRET0)));
         ids.push(id);
         ghostIn += usdc.balanceOf(address(escrow)) - eb;
     }
@@ -96,11 +100,11 @@ contract EscrowHandler is Test {
         if (joiner == escrow.getMatch(id).player0) joiner = players[(who + 1) % 4];
         uint256 eb = usdc.balanceOf(address(escrow));
         vm.prank(joiner);
-        escrow.joinMatch(id, session1);
+        escrow.joinMatch(id, session1, keccak256(abi.encode(SECRET1)));
         ghostIn += usdc.balanceOf(address(escrow)) - eb;
-        // fix the first-move flip so the propose/finalize path is reachable
-        vm.roll(block.number + uint256(escrow.START_REVEAL_DELAY()) + 1);
-        try escrow.finalizeStart(id) {} catch {}
+        // reveal both halves so the propose/finalize path is reachable — no
+        // block advance needed, the pair alone fixes the flip
+        try escrow.finalizeStart(id, SECRET0, SECRET1) {} catch {}
     }
 
     function settleSigned(uint256 seed, uint8 winner) external {
