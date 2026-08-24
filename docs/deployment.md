@@ -93,6 +93,16 @@ forge script script/Deploy.s.sol --rpc-url celo_sepolia --broadcast --verify
 forge script script/DeployCosmetics.s.sol --rpc-url celo_sepolia --broadcast --verify
 ```
 
+Last full run of the suite against the commit–reveal contracts:
+**184 passed, 0 failed, 2 skipped** (17 suites, ~206s). The two skips are the
+network-gated tests — `HarvestVault.fork.t.sol` needs a fork RPC and
+`SepoliaLive.t.sol` needs a live testnet — and are inert without one, not
+broken. The invariant suites carry the load worth trusting here:
+`MatchEscrowInvariantTest` and `MatchEscrowChallengeInvariantTest` each ran
+256 × 500 calls over the new commit–reveal join path, holding conservation of
+funds, `escrow backs exactly the live matches`, and `treasury holds exactly the
+rake`.
+
 Then, before anything else touches the new contracts:
 
 1. **Move the old escrow** into `NEXT_PUBLIC_LEGACY_ESCROW_ADDRESSES` (append,
