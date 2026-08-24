@@ -22,7 +22,13 @@ export async function confirmTx(client: Client, hash: Hex, label: string): Promi
     try {
       const r = await getTransactionReceipt(client, { hash });
       if (r) {
-        if (r.status === "reverted") throw new Error(`${label} was rejected by the network — nothing was taken.`);
+        if (r.status === "reverted") {
+          // the submission succeeded but the chain rejected it — without this
+          // the public failed-tx rate would read ~0% by construction, since
+          // sendWithStaleRetry only ever sees submission errors
+          countEvent("tx_failed");
+          throw new Error(`${label} was rejected by the network — nothing was taken.`);
+        }
         return r;
       }
     } catch (e) {

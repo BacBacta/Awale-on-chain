@@ -211,7 +211,12 @@ export default function Shop() {
       const held = (await readWithRetry(() =>
         readContract(client, { address: currency, abi: erc20Abi, functionName: "balanceOf", args: [account] }),
       )) as bigint;
-      if (held < cost) {
+      // Only trust this comparison when the currency's decimals were actually
+      // read. On the fallback, `cost` can be off by 1e12 against a 6-dec
+      // currency, which would bounce every funded buyer to Deposit. Letting the
+      // purchase proceed costs a network fee in the genuinely-broke case; a
+      // false "add money" wall costs the sale every time.
+      if (currencyDecimals !== null && held < cost) {
         // inside MiniPay this navigates to Deposit and the throw never renders;
         // outside it, the message is the fallback the user actually needs
         openDeposit();

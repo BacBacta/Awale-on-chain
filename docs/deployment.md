@@ -77,6 +77,14 @@ compatible with the current app and must be replaced together:
 `HarvestVault` are unchanged, but `script/Deploy.s.sol` redeploys the verifier
 and treasury alongside the escrow — that is fine and keeps the set consistent.
 
+**Previously minted skins do not survive the Cosmetics redeploy.** Ownership is
+`balanceOf` on the ERC-1155 itself, and unlike the escrow the shop has no
+legacy-address read path — so after a redeploy every skin a player bought reads
+as unowned and is offered for sale again. Before redeploying Cosmetics, either
+snapshot the holders of each item id from the old contract and `ownerMint` them
+on the new one, or accept the reset knowingly. On testnet with a mock currency
+this is noise; on mainnet it is charging someone twice.
+
 **In-flight matches on the old escrow cannot migrate.** Their stakes live in the
 old contract, whose settlement paths still work. Let them drain (or void them
 past their TTL) before pointing the app at the new address, and keep the old

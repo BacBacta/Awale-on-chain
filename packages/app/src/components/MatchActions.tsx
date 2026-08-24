@@ -8,7 +8,7 @@ import { type Socket } from "socket.io-client";
 import { publicClient, effectiveFeeCurrency } from "../lib/minipay.js";
 import { createMatch, joinMatch, approve, cancelMatch, parseStake, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
 import { createSessionKey, persistSession } from "../lib/session.js";
-import { newFlipSecret, commitmentOf, persistFlipSecret, stashPendingSecret, claimPendingSecret } from "../lib/flip.js";
+import { newFlipSecret, commitmentOf, ensureFlipSecret, stashPendingSecret, claimPendingSecret } from "../lib/flip.js";
 import { receiptDeeplink, openDeposit } from "../lib/deeplinks.js";
 import { computePayout, fmt, rakePct, stakeFloor } from "../lib/money.js";
 import { humanizeError } from "../lib/errors.js";
@@ -95,12 +95,21 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     readWithRetry(() => readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "rakeBps" }))
       .then((rake) => setRakeBps(Number(rake)))
       .catch(() => setRakeBps(null));
-    Promise.all(
+    // allSettled, not all: a single rate-limited read used to zero the floor
+    // for EVERY token, letting the user pay a network fee for a stake the
+    // contract then rejects with "stake below floor"
+    Promise.allSettled(
       TOKENS.map((t) =>
         readWithRetry(() => readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "minStake", args: [t.address] })),
       ),
     )
-      .then((floors) => setMinStakes(floors as bigint[]))
+      .then((floors) =>
+        // a failed read KEEPS the last known floor rather than falling back to
+        // 0 — zero means "no floor", which is the very state this guards
+        setMinStakes((prev) =>
+          floors.map((f, i) => (f.status === "fulfilled" ? (f.value as bigint) : (prev[i] ?? 0n))),
+        ),
+      )
       .catch(() => {
         /* floor preview is best-effort; the client floor still applies */
       });
@@ -546,9 +555,9 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
 
       const session = createSessionKey();
       persistSession(matchId, session);
-      // the joiner's half — the id is already known here, so no parking needed
-      const flipSecret = newFlipSecret();
-      persistFlipSecret(matchId, flipSecret);
+      // the joiner's half — the id is already known, so no parking needed.
+      // ensureFlipSecret so a retried join re-commits the SAME secret.
+      const flipSecret = ensureFlipSecret(matchId);
       recordLocalMatch(matchId);
 
       await ensureAllowance(client, m.token, m.stake);

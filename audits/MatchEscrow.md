@@ -30,10 +30,10 @@ is the only contract here that custodies funds, so it carries the real risk.
 | M-04 | `proposeResult` callable after `activeDeadline` — locks out `voidExpired` | Medium | **Resolved** |
 | L-01 | First-mover randomness is joiner-grindable via `block.prevrandao` | Low | **Resolved** |
 | L-02 | Privileged owner is a trust assumption | Low | Acknowledged |
-| L-03 | Reveal-block proposer retains limited influence over the coin flip | Low | Acknowledged |
+| L-03 | Reveal-block proposer retains limited influence over the coin flip | Low | **Resolved** (commit–reveal; no block hash in the derivation) |
 | L-04 | `challenge` has no caller restriction — third-party griefing | Low | **Resolved** |
 | I-01 | `block.timestamp` used for window comparisons | Informational | By design |
-| I-02 | Reveal block can age out of the 256-block `blockhash` window | Informational | By design (auto re-roll) |
+| I-02 | Reveal block can age out of the 256-block `blockhash` window | Informational | **Obsolete** (no reveal block exists) |
 
 ---
 
@@ -179,16 +179,36 @@ wallets could simulate the result for each candidate address off-chain and submi
 from whichever one wins the coin flip, biasing who moves first to their advantage
 at zero cost.
 
-**Resolution.** The flip is now deferred to a *future* block chosen at join time
-(`revealBlock = block.number + START_REVEAL_DELAY`). `joinMatch` no longer computes
-`startTurn` — it only schedules the reveal. The permissionless `finalizeStart`
-fixes `startTurn = keccak256(blockhash(revealBlock), matchId) & 1` once that block
-is mined. Because `blockhash(revealBlock)` does not exist at join time, the joiner
-has nothing to grind: every candidate address would face the same unknown future
-hash. `proposeResult` now requires `startTurn != START_UNSET`, so a game cannot be
-settled before its flip is fixed. Covered by `test_finalizeStart_fixesFirstMover`,
-`test_finalizeStart_revertsBeforeRevealBlock`, `test_finalizeStart_revertsOnceFixed`,
+**Resolution (superseded — see below).** The first fix deferred the flip to a
+*future* block chosen at join time (`revealBlock`), which removed the grind but
+left the outcome publicly computable the moment that block was mined while only
+being committed when someone called `finalizeStart`. On Celo's ~1s blocks the
+256-block `blockhash` window is only ~4 minutes, so a player who disliked the
+pending result could stall past it for a free re-roll, repeatedly.
+
+**Current resolution.** The flip is a two-party **commit–reveal**. Each player
+commits `keccak256(abi.encode(secret))` in the transaction that already stakes
+them — `commit0` in `createMatch`, `commit1` in `joinMatch` — and
+`finalizeStart(matchId, secret0, secret1)` derives
+`keccak256(secret0, secret1, matchId) & 1`. Player 0 commits before an opponent
+exists and player 1 commits without ever seeing `secret0`, so neither can steer
+it; no block hash enters the derivation, so the sequencer cannot either; and a
+wrong preimage reverts rather than re-rolling, so no path grants a second draw.
+There is no window to miss and no keeper deadline. `proposeResult` still requires
+`startTurn != START_UNSET`. Covered by `test_finalizeStart_fixesFirstMover`,
+`test_finalizeStart_needsNoBlockAdvance`, `test_finalizeStart_worksLongAfterTheJoin`,
+`test_finalizeStart_revertsOnWrongSecret`,
+`test_finalizeStart_outcomeIndependentOfRevealTiming`,
+`test_finalizeStart_revertsOnceFixed`, `test_join_rejectsCopiedCommitment`,
+`test_unrevealedMatch_refundsBothViaTtl`,
 `test_proposeResult_revertsBeforeStartFinalized`.
+
+**New residual (liveness, not fairness).** Because a match that never starts has
+no forfeit path, a joiner who withholds their secret forces a `voidExpired`
+refund at the TTL and ties up the creator's stake until then. They cannot see
+the outcome first — no player ever receives the other's secret — so this buys a
+stall, never a better start, and costs the griefer the same TTL on their own
+stake.
 
 ### [L-04] `challenge` has no caller restriction — third-party griefing — **Open**
 
@@ -257,7 +277,12 @@ TTL, and the token allowlist. None of these can seize an existing match's funds
 role is trusted. **Mitigation (architecture §13):** deploy ownership behind a
 timelock + multisig before mainnet.
 
-### [L-03] Reveal-block proposer retains limited influence over the coin flip — *acknowledged*
+### [L-03] Reveal-block proposer retains limited influence over the coin flip — **Resolved**
+
+> **Resolved by the commit–reveal change (see L-01).** No block hash enters the
+> derivation any more, so neither a proposer nor Celo's sequencer has any
+> influence over the flip. The analysis below describes the superseded design
+> and is kept for the record.
 
 `finalizeStart` fixes `startTurn` from `blockhash(revealBlock)`, i.e. the block
 immediately after `joinMatch` (`START_REVEAL_DELAY = 1`). Unlike the joiner (who
@@ -290,7 +315,12 @@ The challenge window (~10 min) and match TTL (~1 day) compare against
 `block.timestamp`. Validator timestamp drift (seconds) is negligible relative to
 these durations. Flagged by Slither; accepted.
 
-### [I-02] Reveal block can age out of the 256-block `blockhash` window — *by design*
+### [I-02] Reveal block can age out of the 256-block `blockhash` window — **Obsolete**
+
+> **No reveal block exists any more** (see L-01). The flip is fixed by revealing
+> two committed secrets, which never expire, so this cannot occur. On Celo the
+> window this describes was ~4 minutes, not the ~51 an L1 reader would assume —
+> which is what motivated replacing the scheme. Kept for the record.
 
 `blockhash` only returns non-zero for the most recent 256 blocks. If no one calls
 `finalizeStart` within that window (e.g. the off-chain keeper is down), the first

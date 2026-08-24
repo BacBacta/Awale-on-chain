@@ -78,11 +78,21 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     // nothing and no window can expire. It also removes the sequencer's
     // influence: no block hash enters the derivation at all.
     //
-    // Residual, accepted: whoever reveals last can refuse to reveal rather than
-    // accept an unfavourable start. That does not get them a better start — the
-    // match simply never opens and {voidExpired} refunds BOTH players after the
-    // TTL, so the aborter only locks up their own stake for the TTL and gets the
-    // status quo back. Strictly better than the free re-roll it replaces.
+    // Residual, accepted — and it is a LIVENESS cost, not a fairness one:
+    //
+    // No player can condition their reveal on the result. Each sends its half
+    // to the server and never receives the other's, so the outcome is not
+    // computable by either of them until the flip is already fixed on chain.
+    // Withholding is therefore blind: it cannot buy a better start.
+    //
+    // What it does buy is a stall. Because {proposeResult} requires the first
+    // move to be fixed, a match that never starts has no forfeit path — the
+    // only exit is {voidExpired} at the TTL, which refunds BOTH players. So a
+    // joiner who changes their mind can force a guaranteed refund and tie up
+    // the creator's stake for matchTtl, where an abandonment AFTER the start
+    // would have cost them the match. The griefer pays the same TTL on their
+    // own stake and gains nothing, so this is a nuisance rather than an edge,
+    // but shortening matchTtl is the lever if it is ever abused in practice.
     //
     // Secrets MUST be freshly random per match. Reusing one across matches
     // reveals it, and an opponent who knows secret0 can grind secret1.

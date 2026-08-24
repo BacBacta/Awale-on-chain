@@ -114,7 +114,10 @@ const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? "";
  * can still call finalizeStart themselves, and an unrevealed match simply
  * refunds both stakes at the TTL rather than starting unfairly.
  *
- * Returns true once the server has accepted the reveal.
+ * @returns true once the flip is FIXED — both halves in and settled on chain —
+ * not merely that this half was accepted. The caller keeps retrying otherwise,
+ * because the server's reveal store is in-memory: a restart between the two
+ * reveals drops the pair, and only a re-post can supply it again.
  */
 export async function revealFlipSecret(matchId: bigint): Promise<boolean> {
   const secret = loadFlipSecret(matchId);
@@ -125,7 +128,12 @@ export async function revealFlipSecret(matchId: bigint): Promise<boolean> {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ matchId: matchId.toString(), secret }),
     });
-    return res.ok;
+    if (!res.ok) return false;
+    // ONLY `started` stops the retry. `ready` means the pair was complete and
+    // finalizeStart was submitted — if that transaction then failed, quitting
+    // here would leave the match unstarted.
+    const body = (await res.json()) as { started?: boolean };
+    return body.started === true;
   } catch {
     return false; // offline / server down — the keeper path still exists
   }

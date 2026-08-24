@@ -36,7 +36,10 @@ export async function POST(req: Request): Promise<Response> {
   }
   if (typeof name !== "string") return new Response(null, { status: 204 });
 
-  const country = req.headers.get("x-vercel-ip-country") ?? req.headers.get("cf-ipcountry");
+  // Vercel's edge overwrites this header on every inbound request, so a client
+  // cannot forge it. Deliberately NOT falling back to cf-ipcountry: nothing
+  // rewrites that here, so it would be whatever the caller typed.
+  const country = req.headers.get("x-vercel-ip-country");
 
   try {
     await fetch(`${SERVER_URL}/events`, {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { newFlipSecret, commitmentOf, persistFlipSecret, revealFlipSecret } from "../lib/flip.js";
+import { commitmentOf, ensureFlipSecret, revealFlipSecret } from "../lib/flip.js";
 import { STAKE_DECIMALS, STAKE_SYMBOL } from "../lib/stake.js";
 import Link from "next/link";
 import { type Socket } from "socket.io-client";
@@ -163,8 +163,13 @@ export function LiveMatch({
     let timer: ReturnType<typeof setTimeout> | undefined;
     let delay = 2000;
     const attempt = (): void => {
-      void revealFlipSecret(matchId).then((ok) => {
-        if (ok || cancelled) return;
+      void revealFlipSecret(matchId).then((done) => {
+        // Stop only when the server says the flip is FIXED — not merely that it
+        // accepted this half. The reveal store is in-memory, so a server
+        // restart between the two reveals drops the pair, and stopping at the
+        // first 200 would leave nobody to re-send it: the match would sit
+        // unstarted until its TTL. Re-posting is idempotent and tiny.
+        if (done || cancelled) return;
         delay = Math.min(delay * 2, 30_000); // an opponent may be a while coming
         timer = setTimeout(attempt, delay);
       });
@@ -600,9 +605,11 @@ export function LiveMatch({
       if (joinOffer.inviteLocked && !joinOffer.code) {
         throw new Error("this seat is reserved — open the full invite link your friend sent you (it contains the key)");
       }
-      // the joiner's half of the first-move flip, committed with the stake
-      const flipSecret = newFlipSecret();
-      persistFlipSecret(matchId, flipSecret);
+      // the joiner's half of the first-move flip, committed with the stake.
+      // ensureFlipSecret, not newFlipSecret: a retried join must re-commit the
+      // SAME secret, or the new commitment refers to a value the earlier
+      // attempt never stored and the player can never reveal.
+      const flipSecret = ensureFlipSecret(matchId);
       const jh = joinOffer.inviteLocked
         ? await joinMatchWithCode(wallet.current, {
             account: myAddress.current,

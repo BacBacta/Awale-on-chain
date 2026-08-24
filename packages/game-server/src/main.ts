@@ -612,7 +612,10 @@ const httpServer = createServer((req, res) => {
           abi: matchEscrowAbi,
           functionName: "getMatch",
           args: [id],
-        })) as { status: number; commit0: Hex; commit1: Hex };
+        })) as { status: number; startTurn: number; commit0: Hex; commit1: Hex };
+
+        // already settled: the app should stop re-posting its half
+        if (Number(m.startTurn) !== 255) return json(200, { revealed: true, ready: true, started: true });
 
         const result = reveals.submit(id, { status: Number(m.status), commit0: m.commit0, commit1: m.commit1 }, secret);
         if (!result.ok) {
@@ -624,8 +627,11 @@ const httpServer = createServer((req, res) => {
 
         if (result.ready && settlement) {
           try {
+            // Submission only — NOT confirmation. The pair is deliberately kept
+            // until the flip is observed fixed on chain (keeperTick), because a
+            // dropped or reverted finalizeStart would otherwise lose the only
+            // copy the server has and strand the match until its TTL.
             await settlement.finalizeStart(id, result.secret0, result.secret1);
-            reveals.forget(id); // spent — the flip is fixed on chain
           } catch {
             /* raced or already fixed; the keeper retries from the stored pair */
           }
@@ -1402,6 +1408,8 @@ async function keeperTick(): Promise<void> {
         // both players have revealed their committed halves
         flipReady: reveals.pair(BigInt(idStr)) !== null,
       });
+      // the flip is fixed on chain: only now are the secrets truly spent
+      if (Number(m.startTurn) !== 255) reveals.forget(BigInt(idStr));
     } catch {
       /* transient RPC error — retry next tick */
     }

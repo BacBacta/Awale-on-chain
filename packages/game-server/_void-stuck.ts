@@ -30,10 +30,13 @@ const matchTuple = {
     { name: "rakeBps", type: "uint16" },
     { name: "challengeDeadline", type: "uint64" },
     { name: "activeDeadline", type: "uint64" },
-    { name: "challengeWindow", type: "uint64" },
-    { name: "commit0", type: "bytes32" },
-    { name: "commit1", type: "bytes32" },
-    { name: "transcriptCommitment", type: "bytes32" },
+    // STOPS HERE ON PURPOSE. This script targets an OLDER escrow whose struct
+    // ends differently from the current one (v6 had revealBlock here;
+    // commit–reveal has challengeWindow/commit0/commit1). A static struct is
+    // encoded as consecutive words and viem decodes only what the ABI names,
+    // so a prefix reads correctly against every version — and this rescue tool
+    // must keep working against whatever it is pointed at. It only needs
+    // player0/player1/status/activeDeadline/stake, all of which are above.
   ],
   name: "m",
   type: "tuple",

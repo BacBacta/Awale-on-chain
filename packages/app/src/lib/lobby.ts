@@ -3,7 +3,7 @@
 // game (staked matchmaking), instead of only joining a match id a friend DM'd.
 
 import { readContract } from "viem/actions";
-import { commitmentOf, persistFlipSecret, newFlipSecret, ensureFlipSecret } from "./flip.js";
+import { commitmentOf, ensureFlipSecret } from "./flip.js";
 import type { Address } from "viem";
 import { publicClient } from "./minipay.js";
 import { joinMatch, approve, type WriteClient, type EscrowConfig } from "./escrow.js";
@@ -142,8 +142,7 @@ export async function joinCashMatch(opts: {
   await approveIfNeeded(client, wallet, account, cfg, token, stake, feeCurrency);
   const session = createSessionKey();
   persistSession(matchId, session);
-  const flipSecret = newFlipSecret();
-  persistFlipSecret(matchId, flipSecret);
+  const flipSecret = ensureFlipSecret(matchId); // a retried join re-commits the SAME secret
   recordLocalMatch(matchId);
   const jh = await sendWithStaleRetry("stake", () =>
     joinMatch(wallet, { account, escrow: cfg.escrow, matchId, session: session.address, commit: commitmentOf(flipSecret), feeCurrency }),

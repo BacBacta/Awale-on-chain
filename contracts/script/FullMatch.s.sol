@@ -11,7 +11,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 ///         nonces stay in order.
 contract FullMatch is Script {
     // demo script only — a real client MUST use fresh randomness per match
-    bytes32 internal constant SECRET0 = keccak256("awale.script.secret0");
+    // only player1's half: the creator's secret lives in their app, not here
     bytes32 internal constant SECRET1 = keccak256("awale.script.secret1");
 
     function run() external {
@@ -32,14 +32,19 @@ contract FullMatch is Script {
         IERC20(usdm).transfer(p1, stake);
         vm.stopBroadcast();
 
-        // player1 approves, joins, and proposes player 0 (the human) as winner
+        // player1 approves and joins, committing its half of the first-move flip
         vm.startBroadcast(p1Pk);
         IERC20(usdm).approve(escrowAddr, stake);
         escrow.joinMatch(matchId, address(0x0000000000000000000000000000000000000002), keccak256(abi.encode(SECRET1)));
-        // commitment = keccak of an empty move list (script only; real client passes the actual game hash)
-        escrow.proposeResult(matchId, 0, keccak256(abi.encode(matchId, uint8(0), new uint8[](0))));
         vm.stopBroadcast();
 
-        console2.log("joined + proposed winner=player0; finalize after the window");
+        // The script STOPS here. proposeResult requires the first move to be
+        // fixed, and fixing it needs BOTH secrets — secret0 belongs to whoever
+        // created the match in the app and is not this script's to know. Calling
+        // proposeResult here would simply revert with "start not finalized".
+        console2.log("joined. Match is Active, first move not yet fixed.");
+        console2.log("Next: the creator reveals in the app; the server then calls");
+        console2.log("finalizeStart(matchId, secret0, secret1). This script's half is:");
+        console2.logBytes32(SECRET1);
     }
 }
