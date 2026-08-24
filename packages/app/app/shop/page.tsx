@@ -34,7 +34,10 @@ import { erc20Abi } from "../../../protocol/src/abis.js";
 
 const tierIndex = (name?: string) => (name ? TIERS.findIndex((t) => t.name === name) : -1);
 
-const DECIMALS = STAKE_DECIMALS;
+// Fallback only, for the frame before the on-chain read lands. The live value
+// comes from Cosmetics.currencyDecimals() — the purchase currency is switchable
+// and USDm (18) / USDC / USDT (6) disagree, so assuming is a 1e12 mispricing.
+const FALLBACK_DECIMALS = STAKE_DECIMALS;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Wallet = any;
 
@@ -46,6 +49,10 @@ export default function Shop() {
   const [owned, setOwned] = useState<Record<number, boolean>>({});
   const [equipped, setEquippedState] = useState(getEquipped());
   const [currency, setCurrency] = useState<Address | null>(null);
+  const [currencyDecimals, setCurrencyDecimals] = useState<number | null>(null);
+  // the currency's real decimals once read; the fallback only covers the first
+  // frame, so a price is never rendered against a guessed scale for long
+  const dec = currencyDecimals ?? FALLBACK_DECIMALS;
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +80,7 @@ export default function Shop() {
     // separate eth_calls exhausted the public backup endpoints' rate limits.
     const calls = [
       { address: cos, abi: cosmeticsAbi, functionName: "currency" as const },
+      { address: cos, abi: cosmeticsAbi, functionName: "currencyDecimals" as const },
       ...paid.map((s) => ({ address: cos, abi: cosmeticsAbi, functionName: "items" as const, args: [BigInt(s.itemId)] })),
       ...(account
         ? paid.map((s) => ({ address: cos, abi: cosmeticsAbi, functionName: "balanceOf" as const, args: [account, BigInt(s.itemId)] }))
@@ -84,19 +92,22 @@ export default function Shop() {
     const cur = res[0];
     if (cur?.status === "success") setCurrency(cur.result as Address);
 
+    const decs = res[1];
+    if (decs?.status === "success") setCurrencyDecimals(Number(decs.result as number | bigint));
+
     const cat: Record<number, CatalogEntry> = {};
     paid.forEach((s, i) => {
-      const r = res[1 + i];
+      const r = res[2 + i];
       if (r?.status !== "success") return;
-      const [exists, price, maxSupply, minted] = r.result as readonly [boolean, bigint, bigint, bigint];
-      cat[s.itemId] = { onSale: exists && price > 0n, price, left: maxSupply > 0n ? Number(maxSupply - minted) : null };
+      const [exists, priceE18, maxSupply, minted] = r.result as readonly [boolean, bigint, bigint, bigint];
+      cat[s.itemId] = { onSale: exists && priceE18 > 0n, priceE18, left: maxSupply > 0n ? Number(maxSupply - minted) : null };
     });
     setCatalog(cat);
 
     if (!account) return;
     const o: Record<number, boolean> = {};
     paid.forEach((s, i) => {
-      const r = res[1 + paid.length + i];
+      const r = res[2 + paid.length + i];
       if (r?.status === "success") o[s.itemId] = (r.result as bigint) > 0n;
     });
     setOwned(o);
@@ -181,14 +192,14 @@ export default function Shop() {
     const fee = feeCurrency();
     void run("Adding test money", () =>
       sendWithStaleRetry("Mint", () =>
-        wallet.writeContract({ address: currency, abi: faucetAbi, functionName: "mint", args: [account, parseUnits("100", DECIMALS)], account, feeCurrency: fee }),
+        wallet.writeContract({ address: currency, abi: faucetAbi, functionName: "mint", args: [account, parseUnits("100", dec)], account, feeCurrency: fee }),
       ),
     );
   }
 
   function buy(s: Skin) {
     if (!wallet || !account || !cos || !currency) return;
-    const cost = purchaseCost(catalog[s.itemId], s.price, DECIMALS);
+    const cost = purchaseCost(catalog[s.itemId], s.price, dec);
     if (cost <= 0n) return;
     const fee = feeCurrency();
     void run(`Buying ${s.name}`, async () => {
@@ -326,7 +337,7 @@ export default function Shop() {
               onClick={() => buy(s)}
               disabled={busy}
             >
-              Buy · {priceTag(entry, s.price, DECIMALS)}
+              Buy · {priceTag(entry, s.price, dec)}
             </button>
           )}
         </div>

@@ -7,9 +7,17 @@ import { fmt } from "./money.js";
 
 /** On-chain catalogue entry for one item (from the Cosmetics `items` mapping). */
 export interface CatalogEntry {
-  onSale: boolean; // exists && price > 0
-  price: bigint; // base units
+  onSale: boolean; // exists && priceE18 > 0
+  priceE18: bigint; // NORMALISED 18-dec price — scale with `toCurrencyUnits`
   left: number | null; // remaining supply; null = unlimited
+}
+
+/** Scale a normalised 18-dec price into `decimals` base units. Mirrors
+ *  `Cosmetics._toCurrency` exactly — same truncation — so the price the shop
+ *  quotes is to the wei what `buy` will actually pull. */
+export function toCurrencyUnits(priceE18: bigint, decimals: number): bigint {
+  if (decimals >= 18) return priceE18;
+  return priceE18 / 10n ** BigInt(18 - decimals);
 }
 
 export type CardState = "equipped" | "equip" | "connect" | "locked" | "sold-out" | "coming-soon" | "buy";
@@ -50,7 +58,7 @@ export function isUnlocked(tierRank: number | undefined, playerRank: number | nu
 /** What a purchase would cost, in base units. On-chain price wins; the
  *  hardcoded fallback only bridges the gap before the catalogue loads. */
 export function purchaseCost(entry: CatalogEntry | undefined, fallbackPrice: number | undefined, decimals: number): bigint {
-  if (entry && entry.price > 0n) return entry.price;
+  if (entry && entry.priceE18 > 0n) return toCurrencyUnits(entry.priceE18, decimals);
   if (fallbackPrice != null && fallbackPrice > 0) return parseUnits(String(fallbackPrice) as `${number}`, decimals);
   return 0n;
 }

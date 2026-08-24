@@ -32,9 +32,12 @@ contract DeployCosmetics is Script {
 
         Cosmetics cos = new Cosmetics("Awale Skins", uri, currency, treasury, treasury, royaltyBps, owner);
 
-        // catalogue must match packages/app/src/lib/skins.ts (ids + prices, 18-dec).
-        // The shop reads these on-chain prices as the source of truth; they are
-        // adjustable any time via setItemPrice (owner) without a redeploy.
+        // catalogue must match packages/app/src/lib/skins.ts (ids + prices).
+        // Prices are NORMALISED to 18 decimals regardless of what CURRENCY is —
+        // 0.5 ether means $0.50 whether the currency is 18-dec USDm or 6-dec
+        // USDC/USDT, and stays $0.50 across a later setCurrency. The shop reads
+        // these on-chain prices as the source of truth; they are adjustable any
+        // time via setItemPrice (owner) without a redeploy.
         // board skins
         cos.createItem(1, 0.5 ether, 0); // Ebony
         cos.createItem(2, 0.5 ether, 0); // Pale Ash

@@ -560,12 +560,12 @@ contract MatchEscrowTest is Test {
     // ------------------------- stake floor ------------------------------- //
 
     function test_minStake_defaultsToZero_noFloor() public view {
-        assertEq(escrow.minStake(), 0);
+        assertEq(escrow.minStake(address(usdc)), 0);
     }
 
     function test_setMinStake_blocksDustMatches() public {
         vm.prank(owner);
-        escrow.setMinStake(STAKE); // floor at the standard stake
+        escrow.setMinStake(address(usdc), STAKE); // floor at the standard stake
 
         // below the floor reverts
         vm.prank(alice);
@@ -581,7 +581,43 @@ contract MatchEscrowTest is Test {
     function test_setMinStake_onlyOwner() public {
         vm.prank(alice);
         vm.expectRevert();
-        escrow.setMinStake(STAKE);
+        escrow.setMinStake(address(usdc), STAKE);
+    }
+
+    /// Regression: the floor must be PER TOKEN. A single global number cannot
+    /// serve an allowlist that mixes decimals — $10 of 6-dec USDC is 1e7 while
+    /// $10 of 18-dec USDm is 1e19, a factor of ~1e12 apart. One global value is
+    /// therefore either no floor at all for USDm or an unreachable one for USDC.
+    function test_setMinStake_isPerToken_acrossMixedDecimals() public {
+        MockERC20 usdm = new MockERC20("Mento Dollar", "USDm", 18);
+        vm.prank(owner);
+        escrow.setTokenAllowed(address(usdm), true);
+        usdm.mint(alice, 1_000 ether);
+        vm.prank(alice);
+        usdm.approve(address(escrow), type(uint256).max);
+
+        uint128 tenUsdc = 10e6; // $10 at 6 decimals
+        uint128 tenUsdm = 10 ether; // $10 at 18 decimals
+
+        vm.startPrank(owner);
+        escrow.setMinStake(address(usdc), tenUsdc);
+        escrow.setMinStake(address(usdm), tenUsdm);
+        vm.stopPrank();
+
+        assertEq(escrow.minStake(address(usdc)), tenUsdc);
+        assertEq(escrow.minStake(address(usdm)), tenUsdm);
+
+        // $10 of USDC clears its own floor — it is NOT measured against the
+        // (numerically vastly larger) USDm floor
+        vm.prank(alice);
+        uint256 id = escrow.createMatch(address(usdc), tenUsdc, session0);
+        assertEq(uint8(escrow.getMatch(id).status), uint8(MatchEscrow.Status.Open));
+
+        // and a hair under $10 of USDm is dust against ITS floor, even though
+        // that raw number dwarfs the entire USDC floor
+        vm.prank(alice);
+        vm.expectRevert(bytes("MatchEscrow: stake below floor"));
+        escrow.createMatch(address(usdm), tenUsdm - 1, session0);
     }
 
     function _buildPartialTranscript(uint256 matchId, uint8 startTurn, uint256 plies)

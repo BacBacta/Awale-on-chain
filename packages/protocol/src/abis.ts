@@ -133,7 +133,7 @@ export const matchEscrowAbi = [
     type: "function",
     name: "minStake",
     stateMutability: "view",
-    inputs: [],
+    inputs: [{ name: "token", type: "address" }],
     outputs: [{ type: "uint128" }],
   },
   {

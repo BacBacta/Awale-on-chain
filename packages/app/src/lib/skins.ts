@@ -105,6 +105,17 @@ export const cosmeticsAbi = [
     outputs: [{ type: "address" }],
   },
   {
+    // decimals of the *current* purchase currency. Read it rather than assuming:
+    // the currency is owner-switchable and the Celo stablecoins disagree
+    // (USDm 18, USDC/USDT 6), so a hardcoded guess misprices the whole shop by
+    // a factor of 1e12 the moment it is switched.
+    type: "function",
+    name: "currencyDecimals",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ type: "uint8" }],
+  },
+  {
     // public `items` mapping getter — the on-chain source of truth for price,
     // supply cap and units minted. Lets the shop show the real price (no drift
     // from the hardcoded fallbacks above), "sold out", and scarcity ("N left").
@@ -114,7 +125,7 @@ export const cosmeticsAbi = [
     inputs: [{ name: "id", type: "uint256" }],
     outputs: [
       { name: "exists", type: "bool" },
-      { name: "price", type: "uint256" },
+      { name: "priceE18", type: "uint256" },
       { name: "maxSupply", type: "uint256" },
       { name: "minted", type: "uint256" },
     ],

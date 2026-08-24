@@ -38,7 +38,10 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
   const [step, setStep] = useState<Step>("idle");
   const [balance, setBalance] = useState<bigint | null>(null);
   const [rakeBps, setRakeBps] = useState<number | null>(null); // null until confirmed — never show a made-up fee
-  const [minStake, setMinStake] = useState<bigint>(0n);
+  // one floor PER TOKEN: the escrow keys minStake by token because the stake
+  // tokens disagree on decimals (USDm 18, USDC/USDT 6), so a single number
+  // could never gate them all at the same real value. Indexed like TOKENS.
+  const [minStakes, setMinStakes] = useState<bigint[]>([]);
   const [copied, setCopied] = useState(false);
   const [sel, setSel] = useState(0); // index into TOKENS
   const [showJoin, setShowJoin] = useState(false); // join-by-number is the rare path
@@ -91,9 +94,15 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
     readWithRetry(() => readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "rakeBps" }))
       .then((rake) => setRakeBps(Number(rake)))
       .catch(() => setRakeBps(null));
-    readWithRetry(() => readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "minStake" }))
-      .then((floor) => setMinStake(floor as bigint))
-      .catch(() => {});
+    Promise.all(
+      TOKENS.map((t) =>
+        readWithRetry(() => readContract(client, { address: cfg.escrow, abi: matchEscrowAbi, functionName: "minStake", args: [t.address] })),
+      ),
+    )
+      .then((floors) => setMinStakes(floors as bigint[]))
+      .catch(() => {
+        /* floor preview is best-effort; the client floor still applies */
+      });
     Promise.all(
       TOKENS.map((t) =>
         readWithRetry(() => readContract(client, { address: t.address, abi: erc20Abi, functionName: "balanceOf", args: [account] })),
@@ -282,7 +291,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
 
   // the floor the UI enforces: the higher of the client minimum (kills dust
   // matches even when the contract's minStake is 0) and the on-chain minStake.
-  const floor = (): bigint => stakeFloor(minStake, dec);
+  const floor = (): bigint => stakeFloor(minStakes[sel] ?? 0n, dec);
 
   function validateStake(): bigint | null {
     const amount = parseStake(stake || "0", dec);

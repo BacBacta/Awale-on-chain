@@ -80,7 +80,14 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     uint64 public challengeWindow;
     uint64 public matchTtl; // how long an Active match may sit unsettled before it can be voided
     uint64 public openTtl; // how long an Open match may wait for a joiner before ANYONE can refund the creator
-    uint128 public minStake; // floor on the per-player stake; 0 ⇒ no floor (default)
+    /// @notice Minimum per-player stake, keyed BY TOKEN and denominated in that
+    ///         token's own units. Must be per-token: the allowlist deliberately
+    ///         mixes 18-dec (USDm) with 6-dec (USDC/USDT), so a single global
+    ///         floor cannot mean the same thing twice — a value that gates USDC
+    ///         sensibly is ~1e-13 of a USDm (no floor at all), while one that
+    ///         gates USDm would demand hundreds of billions of USDC (staking
+    ///         that token bricked outright). 0 ⇒ no floor for that token.
+    mapping(address => uint128) public minStake;
 
     uint256 public nextMatchId = 1;
     mapping(uint256 => Match) public matches;
@@ -106,7 +113,7 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
     event FeeCollected(uint256 indexed matchId, address indexed token, uint256 amount);
 
     event RakeUpdated(uint16 rakeBps);
-    event MinStakeUpdated(uint128 minStake);
+    event MinStakeUpdated(address indexed token, uint128 minStake);
     event ChallengeWindowUpdated(uint64 challengeWindow);
     event MatchTtlUpdated(uint64 matchTtl);
     event OpenTtlUpdated(uint64 openTtl);
@@ -168,8 +175,9 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         require(allowedToken[token], "MatchEscrow: token not allowed");
         require(stake > 0, "MatchEscrow: stake zero");
         // a stake floor kills dust matches whose rake rounds to ~0 yet still cost
-        // gas + infra to settle (negative-margin); 0 disables the floor
-        require(stake >= minStake, "MatchEscrow: stake below floor");
+        // gas + infra to settle (negative-margin); 0 disables the floor. Read
+        // per-token so the threshold is the same real value in every stablecoin.
+        require(stake >= minStake[token], "MatchEscrow: stake below floor");
         require(session0 != address(0), "MatchEscrow: session zero");
 
         matchId = nextMatchId++;
@@ -459,11 +467,12 @@ contract MatchEscrow is ReentrancyGuard, Ownable {
         emit RakeUpdated(rakeBps_);
     }
 
-    /// @notice Set the minimum per-player stake. Only gates new matches; in-flight
-    ///         matches keep their terms. 0 disables the floor.
-    function setMinStake(uint128 minStake_) external onlyOwner {
-        minStake = minStake_;
-        emit MinStakeUpdated(minStake_);
+    /// @notice Set the minimum per-player stake for `token`, in THAT token's own
+    ///         units — so 5e6 is $5 of USDC and 5e18 is $5 of USDm. Only gates new
+    ///         matches; in-flight matches keep their terms. 0 disables the floor.
+    function setMinStake(address token, uint128 minStake_) external onlyOwner {
+        minStake[token] = minStake_;
+        emit MinStakeUpdated(token, minStake_);
     }
 
     function setChallengeWindow(uint64 challengeWindow_) external onlyOwner {

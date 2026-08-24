@@ -1,11 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { parseUnits } from "viem";
-import { cardState, isUnlocked, purchaseCost, priceTag, type CatalogEntry } from "./shop-logic.js";
+import { cardState, isUnlocked, purchaseCost, priceTag, toCurrencyUnits, type CatalogEntry } from "./shop-logic.js";
 
 const DEC = 18;
+// catalogue prices arrive NORMALISED to 18 dec, whatever the currency is
 const onSale = (price: string, left: number | null = null): CatalogEntry => ({
   onSale: true,
-  price: parseUnits(price as `${number}`, DEC),
+  priceE18: parseUnits(price as `${number}`, 18),
   left,
 });
 
@@ -31,7 +32,7 @@ describe("cardState", () => {
   });
 
   it("catalogue says not on sale → coming-soon (a buy would fail)", () => {
-    expect(cardState({ ...base, entry: { onSale: false, price: 0n, left: null } })).toBe("coming-soon");
+    expect(cardState({ ...base, entry: { onSale: false, priceE18: 0n, left: null } })).toBe("coming-soon");
   });
 
   it("no catalogue AND no fallback price → coming-soon, never an empty Buy button", () => {
@@ -100,5 +101,35 @@ describe("priceTag", () => {
     expect(priceTag(onSale("0.25"), undefined, DEC)).toBe("$0.25");
     expect(priceTag(undefined, 0.5, DEC)).toBe("$0.5");
     expect(priceTag(undefined, undefined, DEC)).toBe("");
+  });
+});
+
+describe("toCurrencyUnits", () => {
+  it("is a no-op for an 18-dec currency", () => {
+    expect(toCurrencyUnits(parseUnits("0.5", 18), 18)).toBe(parseUnits("0.5", 18));
+  });
+
+  it("scales a normalised price down to a 6-dec currency", () => {
+    expect(toCurrencyUnits(parseUnits("0.5", 18), 6)).toBe(parseUnits("0.5", 6));
+  });
+
+  it("truncates rather than rounding up against the buyer", () => {
+    // 1e-9 of a dollar cannot be expressed at 6 decimals
+    expect(toCurrencyUnits(1_000_000_000n, 6)).toBe(0n);
+  });
+});
+
+describe("purchaseCost across currency decimals", () => {
+  // the regression: one stored price must mean the same MONEY in either
+  // currency. Before normalisation this pair differed by 1e12.
+  it("quotes the same real price in 18-dec and 6-dec currencies", () => {
+    const entry = onSale("0.25");
+    expect(purchaseCost(entry, undefined, 18)).toBe(parseUnits("0.25", 18));
+    expect(purchaseCost(entry, undefined, 6)).toBe(parseUnits("0.25", 6));
+  });
+
+  it("renders the same tag regardless of the currency's decimals", () => {
+    expect(priceTag(onSale("0.25"), undefined, 6)).toBe("$0.25");
+    expect(priceTag(onSale("0.25"), undefined, 18)).toBe("$0.25");
   });
 });
