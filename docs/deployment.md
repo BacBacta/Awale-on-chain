@@ -61,6 +61,57 @@ Verified contracts with sample tx hashes are a MiniPay listing requirement.
 
 ---
 
+## 1b. Redeploying after the commit–reveal change
+
+Four signatures changed, so the deployed escrow and Cosmetics are **not**
+compatible with the current app and must be replaced together:
+
+| Then | Now |
+|---|---|
+| `createMatch(token, stake, session0)` | `createMatch(token, stake, session0, commit0)` |
+| `joinMatch(id, session1)` | `joinMatch(id, session1, commit1)` |
+| `finalizeStart(id)` | `finalizeStart(id, secret0, secret1)` |
+| `Cosmetics.buy(id, amount)` | `Cosmetics.buy(id, amount, maxCost)` |
+
+`ReplayVerifier`, `Treasury`, `WeeklyPrizes`, `TournamentEscrow` and
+`HarvestVault` are unchanged, but `script/Deploy.s.sol` redeploys the verifier
+and treasury alongside the escrow — that is fine and keeps the set consistent.
+
+**In-flight matches on the old escrow cannot migrate.** Their stakes live in the
+old contract, whose settlement paths still work. Let them drain (or void them
+past their TTL) before pointing the app at the new address, and keep the old
+address in `NEXT_PUBLIC_LEGACY_ESCROW_ADDRESSES` afterwards so player history
+survives the cut — reads across versions go through `matchEscrowCompatAbi`,
+which decodes both struct shapes.
+
+Order of operations:
+
+```bash
+cd contracts
+forge test                      # never deploy money contracts on an unrun suite
+forge script script/Deploy.s.sol --rpc-url celo_sepolia --broadcast --verify
+forge script script/DeployCosmetics.s.sol --rpc-url celo_sepolia --broadcast --verify
+```
+
+Then, before anything else touches the new contracts:
+
+1. **Move the old escrow** into `NEXT_PUBLIC_LEGACY_ESCROW_ADDRESSES` (append,
+   comma-separated) and set `NEXT_PUBLIC_ESCROW_ADDRESS` /
+   `NEXT_PUBLIC_VERIFIER_ADDRESS` / `NEXT_PUBLIC_COSMETICS_ADDRESS` to the new
+   ones, in the app **and** the game server.
+2. **Set `ESCROW_FROM_BLOCK`** to the new escrow's deploy block, or `/stats`
+   scans from 0 and the public RPC's ~10k-block history cap makes it fall back
+   to an empty snapshot.
+3. **Set the stake floors** — `minStake` is now per token and defaults to 0:
+   `setMinStake(USDC, 150000)` is $0.15 at 6 decimals, `setMinStake(USDm, 15e16)`
+   is the same $0.15 at 18. A value set for one decimals class is meaningless
+   for the other, which is the bug the per-token mapping fixed.
+4. **Re-verify on Celoscan** if `--verify` was skipped or failed, and
+   **recapture** [sample-transactions.md](sample-transactions.md) from a fresh
+   end-to-end match — the intake form asks for a contract address and sample tx
+   links, and the old ones now point at a contract the app no longer speaks to.
+5. **Re-run PageSpeed** on the production URL once redeployed.
+
 ## 2. Configure the off-chain services
 
 Fastest: generate the env files straight from the broadcast —
