@@ -176,7 +176,7 @@ export function PlayerStats({ hideRank }: { hideRank?: boolean } = {}) {
     <div className="stack" style={{ gap: 12 }}>
       {!connected && (
         <div className="row">
-          <span className="chip">connect wallet for full stats</span>
+          <span className="chip">Open in MiniPay for your full record</span>
         </div>
       )}
 

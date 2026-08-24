@@ -43,3 +43,32 @@ export async function getStats(): Promise<StatsSnapshot> {
     return emptySnapshot();
   }
 }
+
+export interface OpsCounters {
+  failedTxRate: number;
+  topCountries: { country: string; count: number }[];
+}
+
+/**
+ * Server-side operational counters (failed-tx rate, top countries) that the
+ * on-chain indexer cannot derive: a reverted transaction emits no logs, and
+ * geography never touches the chain at all.
+ *
+ * Never throws — /stats must render even when the game server is down, since
+ * MiniPay's reviewers need the page reachable at all times.
+ */
+export async function getOpsCounters(): Promise<OpsCounters | null> {
+  const base = process.env.NEXT_PUBLIC_SERVER_URL;
+  if (!base) return null;
+  try {
+    const res = await fetch(`${base}/events`, { next: { revalidate: 60 } });
+    if (!res.ok) return null;
+    const body = (await res.json()) as Partial<OpsCounters>;
+    return {
+      failedTxRate: typeof body.failedTxRate === "number" ? body.failedTxRate : 0,
+      topCountries: Array.isArray(body.topCountries) ? body.topCountries : [],
+    };
+  } catch {
+    return null;
+  }
+}

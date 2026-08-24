@@ -8,6 +8,7 @@
 
 import { getTransactionReceipt } from "viem/actions";
 import type { Hex } from "viem";
+import { countEvent } from "./analytics.js";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Client = any;
@@ -68,11 +69,15 @@ export async function sendWithStaleRetry(label: string, send: () => Promise<Hex>
   let lastErr: unknown;
   for (let attempt = 0; attempt < 8; attempt++) {
     try {
-      return await send();
+      const hash = await send();
+      countEvent("tx_sent"); // denominator of the public failed-tx rate
+      return hash;
     } catch (e) {
       lastErr = e;
       const text = String(e);
-      // user said no in the wallet — don't hammer them with more popups
+      // user said no in the wallet — don't hammer them with more popups.
+      // NOT counted as a failure: declining a prompt is a choice, and folding
+      // it into the rate would make a cautious user look like a broken app.
       if (/user rejected|denied|4001/i.test(text)) throw e;
       // Anything that smells like a stale node view gets retried: unseen
       // approve (allowance), unseen match (not open / no such), unseen
@@ -88,8 +93,11 @@ export async function sendWithStaleRetry(label: string, send: () => Promise<Hex>
         await sleep(4000);
         continue;
       }
+      countEvent("tx_failed");
       throw e;
     }
   }
+  // every retry exhausted — a real failure, not a transient one
+  countEvent("tx_failed");
   throw lastErr;
 }

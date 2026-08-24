@@ -1,12 +1,21 @@
-import { getStats } from "../../src/lib/stats.js";
+import { getStats, getOpsCounters } from "../../src/lib/stats.js";
 import { CELO_MAINNET_TOKENS, formatAmount } from "../../../protocol/src/tokens.js";
 import { PlayerStats } from "../../src/components/PlayerStats.js";
 import { Leaderboard } from "../../src/components/Leaderboard.js";
-import { OperatorOnly } from "../../src/components/OperatorOnly.js";
 
-// Public stats page — a MiniPay listing requirement. Metrics come from the
-// indexer (chunked eth_getLogs over the settlement events). Network fees paid
-// and failed-transaction rate need receipt-level data and are shown as "—".
+// Public stats page — a MiniPay listing requirement.
+//
+// The operator metrics are PUBLIC and need no wallet. They used to sit behind
+// OperatorOnly, which failed the requirement outright: MiniPay asks for a
+// stats page whose numbers are "fresh and reachable", and a reviewer has no
+// operator wallet, so they saw an empty page. The original worry — a wall of
+// zeros at cold start reading as a dead app — is handled by the `empty` guard
+// below, which shows em-dashes and an explanatory line instead of "0 users".
+//
+// Match/volume/revenue figures come from the indexer (chunked eth_getLogs).
+// Failed-tx rate and country split cannot come from logs — a revert emits none
+// and geography never touches the chain — so they come from the game server's
+// anonymous counters, and read "—" when it is unreachable.
 export const revalidate = 60;
 
 function pct(x: number): string {
@@ -19,7 +28,7 @@ function decimalsForSymbol(symbol?: string): number {
 }
 
 export default async function Stats() {
-  const s = await getStats();
+  const [s, ops] = await Promise.all([getStats(), getOpsCounters()]);
 
   // Operator metrics (MiniPay listing requirement). A wall of raw zeros reads
   // as "dead app" — when the indexer has nothing yet (cold start, or an RPC
@@ -34,6 +43,14 @@ export default async function Stats() {
     {
       label: "D1 / D7 / D30 retention",
       value: dash(`${pct(s.retention.d1)} / ${pct(s.retention.d7)} / ${pct(s.retention.d30)}`),
+    },
+    {
+      label: "Failed transactions",
+      value: ops ? `${(ops.failedTxRate * 100).toFixed(1)}%` : "—",
+    },
+    {
+      label: "Top countries",
+      value: ops && ops.topCountries.length > 0 ? ops.topCountries.map((c) => c.country).join(" · ") : "—",
     },
   ];
 
@@ -51,14 +68,11 @@ export default async function Stats() {
       </div>
       <Leaderboard />
 
-      {/* operator dashboard (DAU/MAU, retention, volume, fees) — visible only
-          to the operator wallet. Players get their record + the leaderboard;
-          the ops numbers were noise to them and, at cold start, read as a
-          dead app. */}
-      <OperatorOnly>
-        <span className="h2" style={{ marginTop: 8 }}>
-          Global
-        </span>
+      {/* Operator dashboard — deliberately public and wallet-free, because
+          MiniPay's readiness review has to be able to read these numbers. */}
+      <span className="h2" style={{ marginTop: 8 }}>
+        Global
+      </span>
         {rows.map((m) => (
           <div className="card row" key={m.label}>
             <span className="muted">{m.label}</span>
@@ -83,12 +97,11 @@ export default async function Stats() {
           })
         )}
 
-        <span className="muted" style={{ textAlign: "center" }}>
-          {empty
-            ? "Early days — these numbers fill in as games settle on-chain."
-            : "Computed from public match results · updated every minute."}
-        </span>
-      </OperatorOnly>
+      <span className="muted" style={{ textAlign: "center" }}>
+        {empty
+          ? "Early days — these numbers fill in as games settle on-chain."
+          : "Computed from public match results · updated every minute."}
+      </span>
     </main>
   );
 }

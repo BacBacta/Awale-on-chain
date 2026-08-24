@@ -241,12 +241,18 @@ export default function Lobby() {
               )}
               <MatchActions wallet={wallet} account={address} cfg={cfg} />
             </>
-          ) : hasProvider && cfg ? (
-            // a desktop wallet (MetaMask & co) is installed but hasn't
-            // approved the site — an explicit connect makes money play
-            // testable outside MiniPay
+          ) : hasProvider && cfg && !inMiniPay ? (
+            // Desktop-only fallback: a browser wallet (MetaMask & co) is
+            // installed but hasn't approved the site, and an explicit connect
+            // makes money play testable outside MiniPay.
+            //
+            // The `!inMiniPay` guard is a LISTING REQUIREMENT, not a nicety:
+            // MiniPay rejects any "Connect Wallet" button shown when
+            // window.ethereum.isMiniPay is true. Auto-connect already means
+            // this branch is unreachable there, but the guard makes that a
+            // property of the code rather than a coincidence of ordering.
             <div className="card stack" style={{ gap: 10, alignItems: "center", textAlign: "center" }}>
-              <span className="muted">A wallet is installed — connect it to play for money.</span>
+              <span className="muted">Playing for money on desktop needs your browser wallet.</span>
               <button
                 className="btn block"
                 onClick={async () => {
@@ -261,7 +267,7 @@ export default function Lobby() {
                   }
                 }}
               >
-                <Icon name="wallet" size={17} /> Connect wallet
+                <Icon name="wallet" size={17} /> Use my browser wallet
               </button>
             </div>
           ) : (

@@ -26,19 +26,19 @@ export interface Skin {
 
 export const BOARD_SKINS: Skin[] = [
   { key: "classic", kind: "board", name: "Classic Honey", asset: "/assets/wood.webp", itemId: 0 },
-  { key: "ebony", kind: "board", name: "Ebony", asset: "/assets/wood-ebony.png", itemId: 1, price: 0.5 },
-  { key: "pale", kind: "board", name: "Pale Ash", asset: "/assets/wood-pale.png", itemId: 2, price: 0.5, tier: "Harvester" },
+  { key: "ebony", kind: "board", name: "Ebony", asset: "/assets/wood-ebony.webp", itemId: 1, price: 0.5 },
+  { key: "pale", kind: "board", name: "Pale Ash", asset: "/assets/wood-pale.webp", itemId: 2, price: 0.5, tier: "Harvester" },
   // flagship trophy: NOT for sale — minted only to the weekly-league champion
   // (ownerMint). Status you can't buy, visible to every opponent on your board;
   // limited by construction (one per week). The purest desire lever.
-  { key: "midnight", kind: "board", name: "Midnight", asset: "/assets/wood-dark.png", itemId: 3, limited: true, champion: true },
+  { key: "midnight", kind: "board", name: "Midnight", asset: "/assets/wood-dark.webp", itemId: 3, limited: true, champion: true },
 ];
 
 export const SEED_SKINS: Skin[] = [
   { key: "amber", kind: "seed", name: "Amber", asset: "/assets/seed.webp", itemId: 0 },
-  { key: "jade", kind: "seed", name: "Jade", asset: "/assets/seed-jade.png", itemId: 10, price: 0.25 },
-  { key: "pearl", kind: "seed", name: "Pearl", asset: "/assets/seed-pearl.png", itemId: 11, price: 0.25, tier: "Sower" },
-  { key: "onyx", kind: "seed", name: "Onyx", asset: "/assets/seed-onyx.png", itemId: 12, price: 0.25, tier: "Captor" },
+  { key: "jade", kind: "seed", name: "Jade", asset: "/assets/seed-jade.webp", itemId: 10, price: 0.25 },
+  { key: "pearl", kind: "seed", name: "Pearl", asset: "/assets/seed-pearl.webp", itemId: 11, price: 0.25, tier: "Sower" },
+  { key: "onyx", kind: "seed", name: "Onyx", asset: "/assets/seed-onyx.webp", itemId: 12, price: 0.25, tier: "Captor" },
 ];
 
 export const ALL_SKINS = [...BOARD_SKINS, ...SEED_SKINS];

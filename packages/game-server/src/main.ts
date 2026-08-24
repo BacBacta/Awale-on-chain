@@ -18,6 +18,7 @@ import { SettlementClient } from "./chain.js";
 import { SettlementCoordinator } from "./settlement-coordinator.js";
 import { keeperActions, runKeeper, idsToRescan, EscrowStatus, type KeeperMatch } from "./keeper.js";
 import { RevealStore } from "./flip-reveal.js";
+import { countryFromHeaders, failedTxRate, topCountries } from "./ops-metrics.js";
 import { AsyncMatchService } from "./async-match.js";
 import { InMemoryMatchStore, type MatchStore } from "./persistence/store.js";
 import { InMemoryLiveMatchStore } from "./store/memory.js";
@@ -387,8 +388,33 @@ const FUNNEL_EVENTS = new Set([
   "match_created",
   "match_joined",
   "daily_solved",
+  // money-write outcomes — the failed-tx rate MiniPay's readiness review asks
+  // for. A revert emits no logs, so the indexer cannot see these; the app
+  // reports what it submitted. User cancellations are NOT counted: declining a
+  // wallet prompt is a choice, not a failure.
+  "tx_sent",
+  "tx_failed",
 ]);
 const evKey = (day: string, name: string) => `awale:ev:${day}:${name}`;
+// per-country hit counters (ISO-3166-1 alpha-2, never an IP) — MiniPay weighs
+// the geographic split because availability differs per market
+const geoKey = (day: string, country: string) => `awale:geo:${day}:${country}`;
+const GEO_INDEX = "awale:geo:seen"; // which country codes have ever been seen
+async function bumpCountry(country: string): Promise<void> {
+  const day = new Date().toISOString().slice(0, 10);
+  const cur = Number((await kv.get(geoKey(day, country))) ?? 0);
+  await kv.set(geoKey(day, country), String(cur + 1));
+  const seen = String((await kv.get(GEO_INDEX)) ?? "");
+  if (!seen.split(",").includes(country)) {
+    await kv.set(GEO_INDEX, seen ? `${seen},${country}` : country);
+  }
+}
+async function readCountries(day: string): Promise<Record<string, number>> {
+  const seen = String((await kv.get(GEO_INDEX)) ?? "").split(",").filter(Boolean);
+  const out: Record<string, number> = {};
+  for (const c of seen) out[c] = Number((await kv.get(geoKey(day, c))) ?? 0);
+  return out;
+}
 async function bumpEvent(name: string): Promise<void> {
   const day = new Date().toISOString().slice(0, 10);
   const cur = Number((await kv.get(evKey(day, name))) ?? 0);
@@ -726,11 +752,17 @@ const httpServer = createServer((req, res) => {
   //     players drop off instead of guessing (name whitelist, address hashed
   //     into a per-day unique set via the profile store's redis) ---
   if (req.method === "POST" && url.pathname === "/events") {
+    // read the country BEFORE the body promise so the headers are still in scope
+    const country = countryFromHeaders(req.headers as Record<string, string | string[] | undefined>);
     readJson(req)
-      .then((b) => {
+      .then(async (b) => {
         const { name } = b as { name: string };
         if (!name || !FUNNEL_EVENTS.has(name)) throw new Error("unknown event");
-        return bumpEvent(name);
+        await bumpEvent(name);
+        // count the market once per session, on the app-open beacon only —
+        // counting every event would weight a country by how much its players
+        // click rather than how many of them there are
+        if (country && name === "app_open") await bumpCountry(country);
       })
       .then(() => json(200, { ok: true }))
       .catch((e) => json(400, { error: (e as Error).message }));
@@ -741,7 +773,14 @@ const httpServer = createServer((req, res) => {
     (async () => {
       const out: Record<string, number> = {};
       for (const name of FUNNEL_EVENTS) out[name] = await readEvent(day, name);
-      json(200, { day, events: out });
+      const counts = await readCountries(day);
+      json(200, {
+        day,
+        events: out,
+        // derived operational metrics for the public stats page
+        failedTxRate: failedTxRate(out.tx_sent ?? 0, out.tx_failed ?? 0),
+        topCountries: topCountries(counts),
+      });
     })().catch((e) => json(500, { error: (e as Error).message }));
     return;
   }

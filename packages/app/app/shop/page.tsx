@@ -9,6 +9,7 @@
 //     error detail goes to the console, not the screen.
 
 import { Icon } from "../../src/components/Icon.js";
+import { openDeposit } from "../../src/lib/deeplinks.js";
 import { STAKE_DECIMALS } from "../../src/lib/stake.js";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -204,6 +205,18 @@ export default function Shop() {
     const fee = feeCurrency();
     void run(`Buying ${s.name}`, async () => {
       const client = publicClient(cfg!.rpcUrl, cfg!.chainId);
+      // Check funds BEFORE spending a tx on it. The purchase used to be sent
+      // regardless and simply revert, which burns a network fee and dead-ends
+      // the user — MiniPay's rules require routing a low balance to Deposit.
+      const held = (await readWithRetry(() =>
+        readContract(client, { address: currency, abi: erc20Abi, functionName: "balanceOf", args: [account] }),
+      )) as bigint;
+      if (held < cost) {
+        // inside MiniPay this navigates to Deposit and the throw never renders;
+        // outside it, the message is the fallback the user actually needs
+        openDeposit();
+        throw new Error("Not enough money — tap Deposit to add some.");
+      }
       // the allowance read is the first RPC hop and the one flaky endpoints
       // drop most — retry it before giving up.
       const allowance = (await readWithRetry(() =>

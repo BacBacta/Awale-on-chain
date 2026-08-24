@@ -1,5 +1,25 @@
 # Sample transactions — MatchEscrow v4 (Celo Sepolia)
 
+> ## ⚠️ These samples are STALE — recapture before submitting
+>
+> `createMatch`, `joinMatch` and `finalizeStart` have all changed signature
+> since these transactions were recorded. The first move is now settled by a
+> two-party commit–reveal instead of a future blockhash, so each player commits
+> `keccak256(secret)` when they stake and the flip is revealed afterwards:
+>
+> | Then | Now |
+> |---|---|
+> | `createMatch(token, stake, session0)` | `createMatch(token, stake, session0, commit0)` |
+> | `joinMatch(id, session1)` | `joinMatch(id, session1, commit1)` |
+> | `finalizeStart(id)` | `finalizeStart(id, secret0, secret1)` |
+> | `buy(id, amount)` (Cosmetics) | `buy(id, amount, maxCost)` |
+>
+> The escrow must therefore be **redeployed and re-verified on Celoscan**, and a
+> fresh end-to-end match recorded here, before the MiniPay intake form is
+> submitted — otherwise the contract address and the transaction links on the
+> form go stale within days of sending it. The table below documents the flow
+> that the new run should reproduce; it is kept for shape, not for its hashes.
+
 Real end-to-end money flow on the live v4 escrow, for the MiniPay listing intake
 (which asks for verified contracts + sample tx hashes). One full match, settled
 by the happy path: two players stake 1 aUSD each, the winner is paid the pot

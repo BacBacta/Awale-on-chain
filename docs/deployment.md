@@ -182,12 +182,33 @@ public URL. Verified: the container boots against live Celo Sepolia and serves
       Mock USDm that is NOT in Celo Sepolia's feeCurrency whitelist, so testnet
       txs necessarily fall back to native CELO; this clears on mainnet's real
       whitelisted tokens.
-- [x] 360×640, SVG/WebP, bundle ≤ 2 MB (First Load JS ≈ 87–213 kB), **PageSpeed 93**
+- [x] Images are **100% WebP/SVG** — `public/assets` is 60 kB total. The five paid
+      board/seed skins shipped as PNG (≈695 kB) until they were converted; the
+      default board was already WebP, which is why this line previously read as
+      satisfied. Favicons under `public/exported-logo/` stay PNG, as the format
+      requires.
+- [x] 360×640, bundle ≤ 2 MB (First Load JS ≈ 87–213 kB), **PageSpeed 93**
       (mobile, pagespeed.web.dev) — A11y 100 / best-practices 96 / SEO 100. Cleared
       the 90+ gate via WebP hero assets + LCP preload + socket.io lazy-load; see
       [pagespeed.md](pagespeed.md).
-- [~] Public `/stats` page — DAU / volume / revenue live; **MAU / retention /
-      failed-tx still to add** (optional for listing, nice for the readiness call).
+- [x] Public `/stats` page — DAU, MAU, D1/D7/D30 retention, unique players,
+      matches, volume + revenue per currency, **failed-tx rate** and **top
+      countries**. The operator block used to sit behind `OperatorOnly`, which
+      failed the requirement outright (a reviewer has no operator wallet and saw
+      an empty page); it is now public and wallet-free, with the cold-start
+      em-dash guard kept so early zeros don't read as a dead app. Failed-tx and
+      country split come from the game server's anonymous counters, since
+      neither is derivable from logs.
+- [x] **Low balance routes to Deposit** — `openDeposit()` sends the user to the
+      Add Cash deeplink from the two staking paths and the shop, instead of
+      dead-ending on "not enough". The shop also checks the balance *before*
+      spending a network fee on a purchase that would revert.
+- [x] **Origin manifest** — [origins.md](origins.md): no third-party scripts,
+      styles, fonts or CDN; the only outbound origins are the RPC (+ fallbacks),
+      the game server, and MiniPay deeplinks as navigation targets.
+- [x] No "Connect Wallet" inside MiniPay — the desktop-wallet fallback is now
+      explicitly guarded on `!inMiniPay`, so it is unreachable there by
+      construction rather than by ordering.
 - [x] In-app support, ToS/Privacy — `/tos` + `/privacy` pages, footer links, and
       support email live; 24h critical-fix SLA stated in the ToS.
 - [ ] Submit the intake form at `minipay.to/mini-apps`; complete the readiness
@@ -204,8 +225,15 @@ These are tracked in code/audits and must be closed before real-money mainnet:
 
 - **External audit** of all contracts (especially the `HarvestVault` lending
   integration) — the in-repo `audits/` are self-reviews, not a substitute.
-- **VRF** for the first-mover instead of the `prevrandao` placeholder
-  (`MatchEscrow` L-01).
+- ~~**VRF** for the first-mover~~ — **done differently, and closed.** The flip
+  was a future blockhash, which on Celo's ~1s blocks left only a ~4-minute
+  window in which the result was computable but not yet committed — enough for
+  a player to stall for a free re-roll. It is now a two-party **commit–reveal**
+  (`MatchEscrow.finalizeStart(id, secret0, secret1)`), which needs no oracle.
+  VRF was never available: Chainlink does not support Celo (its Celo docs cover
+  CCIP only) and Supra's dVRF lists Celo **testnet** only, so `VRFFirstMover.sol`
+  could never have been activated as its comments described. It is retained as
+  reference only — see `docs/scaffolds-vrf-odis.md`.
 - **Timelock + multisig** ownership (L-02 across contracts). Run
   `script/Govern.s.sol` (env: `MULTISIG`, `TIMELOCK_DELAY`) to deploy a
   TimelockController and transfer MatchEscrow + Treasury ownership to it; admin

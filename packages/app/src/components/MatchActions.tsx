@@ -9,7 +9,7 @@ import { publicClient, effectiveFeeCurrency } from "../lib/minipay.js";
 import { createMatch, joinMatch, approve, cancelMatch, parseStake, type WriteClient, type EscrowConfig } from "../lib/escrow.js";
 import { createSessionKey, persistSession } from "../lib/session.js";
 import { newFlipSecret, commitmentOf, persistFlipSecret, stashPendingSecret, claimPendingSecret } from "../lib/flip.js";
-import { receiptDeeplink } from "../lib/deeplinks.js";
+import { receiptDeeplink, openDeposit } from "../lib/deeplinks.js";
 import { computePayout, fmt, rakePct, stakeFloor } from "../lib/money.js";
 import { humanizeError } from "../lib/errors.js";
 import { recordLocalMatch, listLocalMatches } from "../lib/matches.js";
@@ -312,7 +312,10 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       return null;
     }
     if (balance !== null && amount > balance) {
-      setError(`Not enough ${sym} — add money to MiniPay first.`);
+      // MiniPay listing rule: a low balance routes to Deposit, never dead-ends
+      if (!openDeposit(sym ? [sym] : undefined)) {
+        setError(`Not enough ${sym} — tap Deposit to add money.`);
+      }
       return null;
     }
     return amount;
@@ -484,7 +487,11 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
       if (amount <= 0n) return setError("Enter an amount greater than zero.");
       const min = floor();
       if (amount < min) return setError(`Minimum stake is ${fmt(min, dec)} ${sym}.`);
-      if (balance !== null && amount > balance) return setError(`Not enough ${sym} — add money to MiniPay first.`);
+      if (balance !== null && amount > balance) {
+        // MiniPay listing rule: route to Deposit instead of a dead-end message
+        if (!openDeposit(sym ? [sym] : undefined)) setError(`Not enough ${sym} — tap Deposit to add money.`);
+        return;
+      }
       const client = publicClient(cfg.rpcUrl, cfg.chainId);
 
       const session = createSessionKey();
@@ -778,7 +785,7 @@ export function MatchActions({ wallet, account, cfg }: { wallet: WriteClient; ac
         ) : (
           <button className="btn block" disabled>
             {step === "approving"
-              ? "Confirm in your wallet…"
+              ? "Confirm in MiniPay…"
               : step === "staking"
                 ? "Placing your stake…"
                 : matchedStake !== null

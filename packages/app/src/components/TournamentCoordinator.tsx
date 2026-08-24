@@ -40,12 +40,12 @@ export function TournamentCoordinator({ id }: { id: string }) {
     const cfg = escrowConfig();
     const provider = getInjectedProvider();
     if (!provider || !cfg) {
-      setView({ kind: "waiting", label: "Connect a wallet to play the tournament." });
+      setView({ kind: "waiting", label: "Open this in MiniPay to play the tournament." });
       return;
     }
     connect(provider, cfg.chainId)
       .then((c) => setAccount(c.address))
-      .catch(() => setView({ kind: "waiting", label: "Connect a wallet to play the tournament." }));
+      .catch(() => setView({ kind: "waiting", label: "Open this in MiniPay to play the tournament." }));
   }, []);
 
   // poll the bracket for the current obligation

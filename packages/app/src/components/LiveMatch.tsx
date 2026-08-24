@@ -523,7 +523,7 @@ export function LiveMatch({
       setCollectReady(false);
       setChainEnded("won");
       setOutcome(0);
-      setClaimStatus("Paid ✓ — your winnings are in your wallet.");
+      setClaimStatus("Paid ✓ — your winnings are in your balance.");
     } catch (e) {
       setClaimStatus(humanizeError(e));
     }
@@ -703,7 +703,7 @@ export function LiveMatch({
           setTimedOut(false);
           setTheirClaim(null);
           setCollectReady(false);
-          setClaimStatus(won ? "Paid ✓ — your winnings are in your wallet." : null);
+          setClaimStatus(won ? "Paid ✓ — your winnings are in your balance." : null);
           setStatus(won ? "You win — paid out ✅" : "You lose — out of time");
         } else if (
           st === 3 &&

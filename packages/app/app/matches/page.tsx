@@ -273,7 +273,7 @@ export default function Matches() {
     const token = stakeTokens()[0];
     if (!cfg || !token || stakeCreating) return;
     if (!wallet || !account) {
-      setError("Open in MiniPay (or connect a wallet) to stake.");
+      setError("Open this in MiniPay to stake.");
       return;
     }
     setStakeCreating(true);

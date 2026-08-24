@@ -135,7 +135,7 @@ export function PrizeCollect({ address }: { address: Address | null }) {
           </span>
           <span className="muted">
             {onchain
-              ? "Your prize is escrowed on-chain — collect it to your wallet."
+              ? "Your prize is escrowed on-chain — collect it to your balance."
               : `You finished ${bestRank > 0 ? `#${bestRank}` : "in the money"} last week — your prize is ready to collect.`}
           </span>
           <button className="btn block" onClick={collect} disabled={claiming}>
